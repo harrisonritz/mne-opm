@@ -1,0 +1,33 @@
+
+dirs:
+        data_dir: /Users/hr0283/Projects/mne-opm/data/raw
+        emptyroom_dir: /Users/hr0283/Projects/mne-opm/data/raw
+        anat_path: /Users/hr0283/Projects/mne-opm/data/raw/sub-004/mri/t1w.nii
+        bids_dir: /Users/hr0283/Projects/mne-opm/data/bids
+
+session:
+        ids: 4
+        task: "AVpilot"
+        session: "01"
+
+run_prefix: 
+        - "20250221_155344"
+        - "20250221_160103"
+        - "20250221_160425"
+        - "20250221_160709"
+        - "20250221_161209"
+
+emptyroom_prefix: "20250221_143401"
+
+trigger:
+        find_events: false
+
+        rename_annot: true
+        event_desc:
+                "Trigger 2": "iti"
+                "Trigger 3": "vis"
+                "Trigger 4": "aud"
+                "Trigger 5": "audvis" 
+
+        recording_info:        
+            line_freq: 60.0
