@@ -25,7 +25,7 @@ recording_info:
 
         line_freq: 60.0
 
-        bads: 
+        bads: # CONFIRM!
           - 'C6 2B X'
           - 'C6 2B Y'
           - 'C6 2B Z'
