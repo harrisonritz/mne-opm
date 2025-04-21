@@ -3,9 +3,13 @@
 from collections.abc import Callable, Sequence
 from typing import Annotated, Any, Literal
 
-from annotated_types import Ge, Interval, Len, MinLen
-from mne import Covariance
-from mne_bids import BIDSPath
+# from annotated_types import Ge, Interval, Len, MinLen
+# from mne import Covariance
+# from mne_bids import BIDSPath
+
+from dotenv import find_dotenv, load_dotenv
+import os
+
 
 # from mne_bids_pipeline.typing import (
 #     ArbitraryContrast,
@@ -14,10 +18,25 @@ from mne_bids import BIDSPath
 #     PathLike,
 # )
 
-# %%
+# %% set up environment
+
+print("\n\n\nloading configuration ---------------------------------------------------\n")
+
+# set up env
+load_dotenv(find_dotenv('env-vars.env', usecwd=True), verbose=True, override=True)
+
+
+if os.environ.get('TSX_BIDS'):
+    BIDS_DIR = f"{os.environ.get('TSX_BIDS')}"
+    print('bids dir from environment variables')
+else:
+    BIDS_DIR = "/Volumes/hritz/2025_TSX_Pilot/bids"
+    print('bids dir from local variables')
+
+# %% set config
 
 """
-RUN: $ mne_bids_pipeline --steps=preprocessing --config='/Users/hr0283/Projects/mne-opm/config/config-preproc_sub-004.py'
+RUN: $ mne_bids_pipeline --steps=preprocessing --config='path_to_config.py'
 
 preproc options: https://mne.tools/mne-bids-pipeline/stable/settings/general.html
 """
@@ -27,21 +46,22 @@ interactive = False
 n_jobs = 16
 process_empty_room = True
 
-bids_root = "/Users/hr0283/Projects/mne-opm/data/bids"
-deriv_root = f'{bids_root}/derivatives/preproc'
+bids_root = BIDS_DIR
+deriv_root = f'{bids_root}/derivatives/preproc-trial'
 subjects_dir = f'{bids_root}/derivatives/freesurfer/subjects'
 
 subjects = ['004']
 ch_types = ['mag']
 conditions = ['vis', 'aud', 'audvis', 'read', 'listen']
 
+
 # preproc setting
 
 # breaks
 find_breaks = True
-min_break_duration = 10.01
-t_break_annot_start_after_previous_event = 5
-t_break_annot_stop_before_next_event = 5
+min_break_duration = 8
+t_break_annot_start_after_previous_event = 2.5
+t_break_annot_stop_before_next_event = 2.5
 
 # Bad channel detection
 find_flat_channels_meg = True
@@ -54,10 +74,11 @@ mf_ctc_missing = "warn"
 # Maxwell filter
 use_maxwell_filter = True
 mf_st_duration = 10.0
-mf_int_order = 4
+mf_int_order = 8
 
 mf_reference_run = '01'
 
+# TODO: eSSS doesn't work
 mf_esss = 0  # extended SSS
 mf_esss_reject = None
 mf_extra_kws = {'ignore_ref': True}
@@ -71,29 +92,30 @@ notch_freq = [60, 120, 180]
 
 
 # Resampling
-epochs_decim = 2
+epochs_decim = 1
 
 # Epoching
 epochs_tmin = -.200
 epochs_tmax = .600
-baseline = (-.150, .050)
+# baseline = (-.150, .050)
 event_repeated = 'merge'
 
 
 # SSP, ICA, and artifact regression
+# TODO: artifact rejection doesn't work yet (eg regressing out ref channels)
 # regress_artifact = {"picks": "mag", "picks_artifact": "ref_meg"}
 
+# TODO: autoreject doesn't work yet
 # ica_reject = 'autoreject_local'
-
 spatial_filter = 'ica'
 ica_algorithm = 'picard-extended_infomax'
 ica_l_freq = 1.0
 ica_max_iterations = 1000
 ica_n_components = .99
-ica_decim = 4
+ica_decim = 2
 
 
-
+# TODO: autoreject doesn't work yet
 # Amplitude-based artifact rejection
 # reject = "autoreject_local"
 # autoreject_n_interpolate = [2, 4, 8]

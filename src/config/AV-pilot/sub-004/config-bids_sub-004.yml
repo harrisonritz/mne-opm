@@ -1,0 +1,31 @@
+
+session:
+
+        ids: 4
+        task: "AVpilot"
+        session: "01"
+
+
+trigger:  
+
+        rename_annot: true 
+
+        trigger_desc: # CONFIRM!
+                4: "iti"
+                8: "vis"
+                16: "aud"
+                32: "audvis" 
+                
+        response_desc:
+                BNC 2 Z: 'response/left'
+                BNC 5 Z: 'response/right'
+
+
+recording_info:
+
+        line_freq: 60.0
+
+        bads: 
+          - 'C6 2B X'
+          - 'C6 2B Y'
+          - 'C6 2B Z'
