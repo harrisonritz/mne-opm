@@ -14,8 +14,8 @@ Development branch for mne-opm, with bleeding-edge version of opm-compatible pip
 1. set-up your environment variables for your local pathing (used `env-vars.env.example` template to generate `env-vars.env`)
 
 2. create the conda environment
-	- **Reccomended**: install from included environment file (`conda env create -f environment.yml`)
-	- follow the steps in `old_install.sh`
+	- [Reccomended]: follow the steps in `old_install.sh`
+	- [WIP]: install from included environment file (`conda env create -f conda-env.yml`)
 
 
 ## preprocessing setup
