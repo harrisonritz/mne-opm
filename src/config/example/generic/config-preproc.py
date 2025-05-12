@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 
 from dotenv import find_dotenv, load_dotenv
 import os
+from glob import glob
 
 import pandas as pd
 import numpy as np
@@ -28,9 +29,10 @@ print("\n\n\nloading configuration ---------------------------------------------
 found_env = load_dotenv(find_dotenv('TSX_env.env', usecwd=True), verbose=True, override=True)
 if found_env:
     BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
+    RAW_DIR = f"{os.environ.get('RAW_DIR')}"
     print('bids dir from environment variables\n\n')
 else:
-    raise ValueError('could not find environment variables')
+    raise ValueError('could not find env variables')
     BIDS_DIR = "/Volumes/hritz/2025_TSX_Pilot/bids"
     print('bids dir from local variables\n\n')
 
@@ -52,9 +54,10 @@ bids_root = BIDS_DIR
 deriv_root = f'{bids_root}/derivatives/{_name}'
 subjects_dir = f'{bids_root}/derivatives/freesurfer/subjects'
 
-subjects = ['003']
+subjects = [os.environ.get('SUBJECT')]
 sessions = ['01']
 ch_types = ['mag']
+task = "TSXpilot"
 
 # conditions = [
 #     'feedback', 
@@ -82,8 +85,14 @@ conditions = [
     'trial/listen_read',
     ]
 
-# load metadata
-metadata_path =  "/Volumes/hritz/2025_TSX_Pilot/raw/2025-03-21_TSX-Pilot_003/behav/sub_3_2025-03-21_15h20.38.918.csv"
+# load metadata #TODO: make the programatic
+metadata_path = glob(os.path.join(
+    RAW_DIR, 
+    f'*_TSX-Pilot_{subjects[0]}', 
+    'metadata', 
+    f'sub_{subjects[0]}_*.csv'
+    ))[0]
+
 meta_df = pd.read_csv(metadata_path)
 meta_df = meta_df[meta_df['mini_block_type'].notna()].replace({np.nan: None}) # block type not None
 
@@ -92,69 +101,84 @@ del meta_df, metadata_path
 
 
 
-# sensor setting
-
-# contrasts
-contrasts = [{
-        'name': 'task',
-        'conditions': [
-            'read_read','read_listen',
-            'listen_listen','listen_read',
-        ],
-        'weights': [.5, .5, -.5, -.5]
-    },
-    {
-        'name': 'switch',
-        'conditions': [
-            'read_read','read_listen',
-            'listen_listen','listen_read',
-        ],
-        'weights': [.5, -.5, .5, -.5]
-    },
-    {
-        'name': 'taskRepeat',
-        'conditions': [
-            'read_read',
-            'listen_listen',
-        ],
-        'weights': [.5, -.5]
-    },
-    {
-        'name': 'taskSwitch',
-        'conditions': [
-            'read_listen',
-            'listen_read',
-        ],
-        'weights': [.5, -.5]
-    },
-    ]
+# CUSTOM SETTINGS
+_manual_bads = True # manually check bad channels
+_manual_ica = True # manually check ica components
 
 
-# time-frequency
-time_frequency_conditions = [
-    'read_read', 
-    'listen_listen',
-    'read_listen',
-    'listen_read',
-    ]
+# PREPROC SETTINGS ------------------------------
 
-time_frequency_freq_min = 1
-time_frequency_freq_max = 40
+# breaks
+find_breaks = True
+min_break_duration = 8
+t_break_annot_start_after_previous_event = 2.5
+t_break_annot_stop_before_next_event = 2.5
 
-# decoding
-decode = True
-decoding_time_generalization = True
-decoding_time_generalization_decim = 10
-decoding_csp = True
-decoding_csp_freqs = {
-    'delta': [1, 4],
-    'theta': [4, 8],
-    'alpha': [8, 12],
-    'beta': [12, 30],
-}
+# Bad channel detection
+find_flat_channels_meg = True
+find_noisy_channels_meg = True
+find_bad_channels_extra_kws = {'ignore_ref': True}
 
-# make noise cov
-noise_cov = 'emptyroom'
+mf_cal_missing = "warn"
+mf_ctc_missing = "warn"
+
+# Maxwell filter
+use_maxwell_filter = True
+mf_st_duration = 10.0
+mf_int_order = 9
+mf_ext_order = 3
+
+mf_reference_run = '01'
+
+# TODO: eSSS doesn't work
+mf_esss = 0  # extended SSS
+mf_esss_reject = None
+mf_extra_kws = {'ignore_ref': True}
+
+
+
+# Filtering
+l_freq = .1
+h_freq = 50.0
+notch_freq = [60, 120, 180]
+
+
+# Resampling
+epochs_decim = 1
+
+# Epoching
+epochs_tmin = -.200
+epochs_tmax = 1.0
+baseline = (-0.150, -0.050)
+event_repeated = 'merge'
+reject = dict(mag=2e-10)
+
+epochs_metadata_query='trial!=1'
+
+# SSP, ICA, and artifact regression
+# TODO: artifact rejection doesn't work yet (eg regressing out ref channels)
+# regress_artifact = {"picks": "mag", "picks_artifact": "ref_meg"}
+
+# TODO: autoreject doesn't work yet
+# ica_reject = 'autoreject_local'
+spatial_filter = 'ica'
+ica_algorithm = 'picard-extended_infomax'
+ica_l_freq = 1.0
+ica_max_iterations = 1000
+ica_n_components = .99
+ica_decim = 2
+ica_reject = dict(mag=2e-10)
+
+
+# TODO: autoreject doesn't work yet
+# Amplitude-based artifact rejection
+# reject = "autoreject_local"
+# autoreject_n_interpolate = [2, 4, 8]
+
+
+
+
+
 
 # # General settings
 

@@ -3,9 +3,16 @@
 from collections.abc import Callable, Sequence
 from typing import Annotated, Any, Literal
 
-from annotated_types import Ge, Interval, Len, MinLen
-from mne import Covariance
-from mne_bids import BIDSPath
+# from annotated_types import Ge, Interval, Len, MinLen
+# from mne import Covariance
+# from mne_bids import BIDSPath
+
+from dotenv import find_dotenv, load_dotenv
+import os
+from glob import glob
+
+import pandas as pd
+import numpy as np
 
 # from mne_bids_pipeline.typing import (
 #     ArbitraryContrast,
@@ -14,37 +21,85 @@ from mne_bids import BIDSPath
 #     PathLike,
 # )
 
-# %%
+# %% set up environment
+print("\n\n\nloading configuration ---------------------------------------------------\n")
+# set up env
+found_env = load_dotenv(find_dotenv('TSX_env.env', usecwd=True), verbose=True, override=True)
+if found_env:
+    BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
+    print('bids dir from environment variables\n\n')
+else:
+    raise ValueError('could not find environment variables')
+    BIDS_DIR = "/Volumes/hritz/2025_TSX_Pilot/bids"
+    print('bids dir from local variables\n\n')
+
+# %% set config
 
 """
-RUN: $ mne_bids_pipeline --steps=source --config='/Users/hr0283/Projects/mne-opm/config/config-source_sub-004.py'
+RUN: $ mne_bids_pipeline --steps=preprocessing --config='path_to_config.py'
 
 preproc options: https://mne.tools/mne-bids-pipeline/stable/settings/general.html
 """
 
 # generic
-interactive=False
+interactive = False
 n_jobs = 16
 process_empty_room = True
+_name = 'trial-repeat'
 
-bids_root = "/Users/hr0283/Projects/mne-opm/data/bids"
-deriv_root = f'{bids_root}/derivatives/preproc'
+bids_root = BIDS_DIR
+deriv_root = f'{bids_root}/derivatives/{_name}'
 subjects_dir = f'{bids_root}/derivatives/freesurfer/subjects'
 
-subjects = ['004']
+subjects = [os.environ.get('SUBJECT')]
+sessions = ['01']
 ch_types = ['mag']
-conditions = ['vis', 'aud', 'audvis', 'read', 'listen']
+task = 'TSXpilot'
+
+# conditions = [
+#     'feedback', 
+#     'ITI',
+#     'CSI',
+#     'trial/read_noresp',
+#     'trial/listen_noresp',
+#     'trial/av_noresp',
+#     'trial/unimodal_read',
+#     'trial/bimodal_read',
+#     'trial/unimodal_listen',
+#     'trial/bimodal_listen',
+#     'trial/read_read',
+#     'trial/listen_listen',
+#     'trial/read_listen',
+#     'trial/listen_read',
+#     'response/left',
+#     'response/right',
+#     ]
+
+conditions = [
+    'trial/read_read',
+    'trial/listen_listen',
+    'trial/read_listen',
+    'trial/listen_read',
+    ]
 
 
 
-# source recon
-freesurfer_verbose = True  # Enable verbose output for FreeSurfer processing
-use_template_mri = "sub-004"
 
+# SOURCE SETTINGS ------------------------------
 run_source_estimation = True
-noise_cov = "emptyroom"
+# recreate_bem = True
+freesurfer_verbose=True
+
+adjust_coreg = True
+inverse_method = 'dSPM'
+noise_cov = 'emptyroom'
 
 
+
+
+
+
+# depth=dict(limit_depth_chs='whiten')
 
 # # General settings
 

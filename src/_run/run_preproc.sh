@@ -1,29 +1,56 @@
-
 ## activate environment ----------------------------------------
 conda init
 conda activate mne-opm
+export MPLBACKEND=agg
 
 
-## run preproc pipeline ----------------------------------------
-# edit the configuration settings in `config`
-
-mne_bids_pipeline --steps=preprocessing --config="../config/TSX-pilot/sub-004/config-preproc_sub-004.py"
-
-
-## run freesurfer pipeline ----------------------------------------
-# edit the configuration settings in `config/config_preproc_sub-004.py`
-# call the right location for `config_preproc`
-
-# does not not work yet
-# mne_bids_pipeline --steps=freesurfer --config="/Users/hr0283/Projects/mne-opm/config/sub-004/config-freesurfer_sub-004.py"
+# parameters ----------
+export SUBJECT=$1
+# ---------------------
 
 
+# run checks
+if [ ! ${SUBJECT} ]; then
+  echo "Error: please provide a subject number"
+  exit 1
+fi
 
-## run source recon pipeline ----------------------------------------
-# edit the configuration settings in `config/config_preproc_sub-004.py`
-# call the right location for `config_preproc`
+
+# set config
+# config_path="../config/TSX-pilot/sub-${SUBJECT}/config-preproc_sub-${SUBJECT}.py"
+config_path="../config/example/generic/config-preproc.py"
 
 
-# does not not work yet
-# mne_bids_pipeline --steps=source --config="/Users/hr0283/Projects/mne-opm/config/sub-004/config-source_sub-004.py"
+## find bad segments (OSL) ----------------------------------------
+echo "---------------------- Running OSL preprocessing for bad segments detection ----------------------"
+python ../scripts/aux_preproc.py --analysis=bad_segments --config=$config_path
 
+
+## find bad channels (OSL) ----------------------------------------
+echo "---------------------- Running OSL preprocessing for bad channels detection ----------------------"
+python ../scripts/aux_preproc.py --analysis=bad_channels --config=$config_path
+
+
+## manually select channels  ----------------------------------------
+echo "---------------------- Manual bad channel selection ----------------------"
+python ../scripts/aux_preproc.py --analysis=manual_channel --config=$config_path
+
+
+## run mne_bids_pipeline ----------------------------------------
+echo "---------------------- Running MNE BIDS pipeline ----------------------"
+mne_bids_pipeline --steps=preprocessing --config=$config_path
+
+
+## manually select ICA components  ----------------------------------------
+echo "---------------------- Manual ICA selection ----------------------"
+python ../scripts/aux_preproc.py --analysis=manual_ica --config=$config_path
+
+
+## run mne_bids_pipeline ----------------------------------------
+echo "---------------------- Re-Running MNE BIDS pipeline to remove ICA components ----------------------"
+mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,preprocessing/ptp_reject --config=$config_path
+
+
+# ## find bad epochs (OSL) ----------------------------------------
+echo "---------------------- Running OSL post-processing for bad epochs detection ----------------------"
+python ../scripts/aux_preproc.py --analysis=bad_epochs --config=$config_path

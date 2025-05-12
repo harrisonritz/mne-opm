@@ -43,18 +43,29 @@ if SESSION is None:
     # SESSION = "01"
     raise ValueError("Please set the SESSION environment variable.")
 
+print(f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
+
+
 # get info
-print(SUBJECT_NUM)
-print(SESSION)
-print(BIDS_DIR)
-print(TASK)
 fname_raw = mne_bids.find_matching_paths(
+    root=BIDS_DIR,
     subjects=SUBJECT_NUM,
     sessions=SESSION,
-    root=BIDS_DIR,
     tasks=TASK,
+    ignore_nosub=True,
     extensions=".fif",
 )[0]
+
+print('paths: ', mne_bids.find_matching_paths(
+    root=BIDS_DIR,
+    subjects=SUBJECT_NUM,
+    sessions=SESSION,
+    tasks=TASK,
+    ignore_nosub=True,
+    extensions=".fif",
+))
+
+
 info = read_info(fname_raw)
 
 # %% inspect dataset
@@ -76,14 +87,20 @@ plot_kwargs = dict(
 )
 
 
+
 # automatic coregistration
+try:
+    coreg = mne.gui.coregistration(inst=fname_raw, subject=SUBJECT, subjects_dir=SUBJECTS_DIR, block=True)
+except Exception as e:
+    print(f"------ Error in GUI coregistration: {e}")
+
 coreg = mne.coreg.Coregistration(info, SUBJECT, SUBJECTS_DIR, fiducials='estimated')
 
 coreg.set_scale_mode('Uniform')
 coreg.fit_fiducials(verbose=True)
 coreg.omit_head_shape_points(distance=5.0 / 1e3)  # distance is in meters
 
-coreg.set_scale_mode('Uniform')
+coreg.set_scale_mode('3-axis')
 coreg.fit_icp(n_iterations=100, verbose=True)
 fig = mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
 # fig.save(
