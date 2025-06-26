@@ -16,31 +16,22 @@ from dotenv import load_dotenv, find_dotenv
 from glob import glob
 
 # %% get info
-found_env = load_dotenv(find_dotenv('TSX_env.env', usecwd=True), verbose=True, override=True)
-if found_env:
-    BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
-    SUBJECTS_DIR = f"{os.environ.get('SUBJECTS_DIR')}" 
-    print('data & bids dirs from environment variables')
-else:
-    raise ValueError("Please set the TSX_BIDS environment variable.")
-    # BIDS_DIR = "/Volumes/hritz/2025_TSX_Pilot/bids"
-    # print('data & bids dir from local variables')
+
+BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
+SUBJECTS_DIR = f"{os.environ.get('SUBJECTS_DIR')}" 
 
 # get SUBJECT enviromental veriable
-SUBJECT = os.environ.get("SUBJECT")
+SUBJECT = f"{os.environ.get('SUBJECT')}"
 if SUBJECT is None:
-    # SUBJECT='sub-003'
     raise ValueError("Please set the SUBJECT environment variable.")
 SUBJECT_NUM = SUBJECT.split('_')[0].split('-')[1]
 
-TASK = os.environ.get("TASK")
+TASK = os.environ.get("EXPERIMENT")
 if TASK is None:
-    # TASK = "TSXpilot"
     raise ValueError("Please set the TASK environment variable.")
 
 SESSION = os.environ.get("SESSION")
 if SESSION is None:
-    # SESSION = "01"
     raise ValueError("Please set the SESSION environment variable.")
 
 print(f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")

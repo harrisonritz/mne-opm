@@ -29,20 +29,9 @@ def set_bids_params(config_path=""):
 
     # set-up configuration ==========================================================================================================
     print("\n\n\nloading configuration ---------------------------------------------------\n")
-
-    # set up env
-    found_env = load_dotenv(find_dotenv('TSX_env.env', usecwd=True), verbose=True, override=True)
-
-    if found_env:
-        RAW_DIR = f"{os.environ.get('RAW_DIR')}"
-        BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
-        print('data & bids dirs from environment variables')
-    else:
-        raise ValueError('No environment variables found.')
-        # RAW_DIR = "/Volumes/hritz/2025_TSX_Pilot/raw"
-        # BIDS_DIR = "/Volumes/hritz/2025_TSX_Pilot/bids"
-        # print('data & bids dir from local variables')
-
+    RAW_DIR = f"{os.environ.get('RAW_DIR')}"
+    BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
+    
     # Create flat configuration as SimpleNamespace with all parameters at top level
     config = SimpleNamespace(
         # Directory paths
@@ -50,36 +39,20 @@ def set_bids_params(config_path=""):
         bids_dir=BIDS_DIR,
         
         # Session information
-        ids=3,
-        task="TSXpilot",
-        session="01",
+        ids=0,
+        task="",
+        session="",
         
         # Trigger information
         rename_annot=True,
         trigger_desc={
-            1: 'feedback',
-            2: 'ITI',
-            5: 'CSI',
-            4: 'trial/read_noresp',
-            8: 'trial/listen_noresp',
-            16: 'trial/av_noresp',
-            32: 'trial/unimodal_read',
-            64: 'trial/bimodal_read',
-            6: 'trial/unimodal_listen',
-            10: 'trial/bimodal_listen',
-            9: 'trial/read_read',
-            17: 'trial/listen_listen',
-            33: 'trial/read_listen',
-            65: 'trial/listen_read'
         },
         response_desc={
-            'BNC 2 Z': 'response/left',
-            'BNC 5 Z': 'response/right'
         },
         
         # Recording information
         line_freq=60.0,
-        bads=['C6 2B X', 'C6 2B Y', 'C6 2B Z']
+        bads=[],
     )
 
     # Load config file if provided

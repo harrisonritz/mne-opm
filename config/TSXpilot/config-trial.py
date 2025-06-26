@@ -1,82 +1,42 @@
-# Default settings for data processing and analysis.
-
-from collections.abc import Callable, Sequence
-from typing import Annotated, Any, Literal
-
-# from annotated_types import Ge, Interval, Len, MinLen
-# from mne import Covariance
-# from mne_bids import BIDSPath
-
-from dotenv import find_dotenv, load_dotenv
-import os
-from glob import glob
-
-import pandas as pd
-import numpy as np
-
-# from mne_bids_pipeline.typing import (
-#     ArbitraryContrast,
-#     DigMontageType,
-#     FloatArrayLike,
-#     PathLike,
-# )
-
-# %% set up environment
-
-print("\n\n\nloading configuration ---------------------------------------------------\n")
-
-# set up env
-found_env = load_dotenv(find_dotenv('TSX_env.env', usecwd=True), verbose=True, override=True)
-if found_env:
-    BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
-    RAW_DIR = f"{os.environ.get('RAW_DIR')}"
-    print('bids dir from environment variables\n\n')
-else:
-    raise ValueError('could not find env variables')
-    BIDS_DIR = "/Volumes/hritz/2025_TSX_Pilot/bids"
-    print('bids dir from local variables\n\n')
-
-# %% set config
-
-"""
+# %% CONFIGURATION FILE
+"""bash
 RUN: $ mne_bids_pipeline --steps=preprocessing --config='path_to_config.py'
 
 preproc options: https://mne.tools/mne-bids-pipeline/stable/settings/general.html
 """
 
-# generic
-interactive = False
-n_jobs = 16
-process_empty_room = True
-_name = 'trial-repeat'
 
-bids_root = BIDS_DIR
-deriv_root = f'{bids_root}/derivatives/{_name}'
-subjects_dir = f'{bids_root}/derivatives/freesurfer/subjects'
 
-subjects = [os.environ.get('SUBJECT')]
-sessions = ['01']
-ch_types = ['mag']
-task = "TSXpilot"
+# %% IMPORTS ---------------------------------------------------
+# from collections.abc import Callable, Sequence
+# from typing import Annotated, Any, Literal
+# from mne_bids import BIDSPath
+from dotenv import find_dotenv, load_dotenv
+import os
+from glob import glob
+import pandas as pd
+import numpy as np
 
-# conditions = [
-#     'feedback', 
-#     'ITI',
-#     'CSI',
-#     'trial/read_noresp',
-#     'trial/listen_noresp',
-#     'trial/av_noresp',
-#     'trial/unimodal_read',
-#     'trial/bimodal_read',
-#     'trial/unimodal_listen',
-#     'trial/bimodal_listen',
-#     'trial/read_read',
-#     'trial/listen_listen',
-#     'trial/read_listen',
-#     'trial/listen_read',
-#     'response/left',
-#     'response/right',
-#     ]
+
+# %% set up environment ---------------------------------------------------
+print("\n\n\nloading configuration ---------------------------------------------------\n")
+
+# load variables from environmental variables
+ROOT_DIR = f"{os.environ.get('ROOT_DIR')}"
+EXPERIMENT = f"{os.environ.get('EXPERIMENT')}"
+BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
+RAW_DIR = f"{os.environ.get('RAW_DIR')}"
+SUBJECTS_DIR = f"{os.environ.get('SUBJECTS_DIR')}"
+SUBJECT = f"{os.environ.get('SUBJECT')}"
+
+
+# MAJOR SETTINGS --------------------------------------------------------
+
+_version = "noBaseline"
+_ANALYSIS_NAME = f"{os.environ.get('ANALYSIS')}-{_version}"
+print(f'RUNNING: {_ANALYSIS_NAME}')
+
+task = EXPERIMENT
 
 conditions = [
     'trial/read_read',
@@ -85,75 +45,142 @@ conditions = [
     'trial/listen_read',
     ]
 
-# load metadata #TODO: make the programatic
-metadata_path = glob(os.path.join(
+contrasts = [{
+        'name': 'task',
+        'conditions': [
+            'read_read','read_listen',
+            'listen_listen','listen_read',
+        ],
+        'weights': [.5, .5, -.5, -.5]
+    },
+    {
+        'name': 'switch',
+        'conditions': [
+            'read_read','read_listen',
+            'listen_listen','listen_read',
+        ],
+        'weights': [.5, -.5, .5, -.5]
+    },
+    {
+        'name': 'taskRepeat',
+        'conditions': [
+            'read_read',
+            'listen_listen',
+        ],
+        'weights': [.5, -.5]
+    },
+    {
+        'name': 'taskSwitch',
+        'conditions': [
+            'read_listen',
+            'listen_read',
+        ],
+        'weights': [.5, -.5]
+    },
+    ]
+
+epochs_tmin = -.200
+epochs_tmax = 1.0
+baseline = None #(-0.150, -0.050)
+
+
+# %% METADATA ------------------------------------------------------------
+
+# metadata
+_metadata_dir = os.path.join(
     RAW_DIR, 
-    f'*_TSX-Pilot_{subjects[0]}', 
+    f'*_{SUBJECT}', 
     'metadata', 
-    f'sub_{subjects[0]}_*.csv'
-    ))[0]
+    f'sub-{SUBJECT}_*.csv'
+    )
 
-meta_df = pd.read_csv(metadata_path)
-meta_df = meta_df[meta_df['mini_block_type'].notna()].replace({np.nan: None}) # block type not None
+_metadata_path = glob(_metadata_dir)
+assert len(_metadata_path)>0, f"no metadata found at {_metadata_dir}"
 
-epochs_custom_metadata = meta_df
-del meta_df, metadata_path
+_meta_df = pd.read_csv(_metadata_path[0])
+_meta_df = _meta_df[_meta_df['mini_block_type'].notna()]  # -------- SET METADATA SELECTION --------
+_meta_df = _meta_df.replace({np.nan: None})
 
 
+epochs_custom_metadata = _meta_df
+del _meta_df
 
-# CUSTOM SETTINGS
+
+# %% Required Settings ------------------------------------------------------------
+
+interactive = False
+n_jobs = 16
+process_empty_room = True
+
+bids_root = BIDS_DIR
+deriv_root = f'{bids_root}/derivatives/{_ANALYSIS_NAME}'
+subjects_dir = SUBJECTS_DIR
+
+subjects = [SUBJECT]
+sessions = ['01']
+ch_types = ['mag']
+
+
+# %% CUSTOM SETTINGS ------------------------------------------------------------
+
+_do_HFC = False # called at the end of `manual_bads`
+_hfc_order = 3
+
 _manual_bads = True # manually check bad channels
 _manual_ica = True # manually check ica components
 
 
-# PREPROC SETTINGS ------------------------------
+# %% PREPROC SETTINGS ------------------------------------------------------------
 
 # breaks
 find_breaks = True
-min_break_duration = 8
-t_break_annot_start_after_previous_event = 2.5
-t_break_annot_stop_before_next_event = 2.5
+min_break_duration = 5
+t_break_annot_start_after_previous_event = 1
+t_break_annot_stop_before_next_event = 1
+
+
+# Maxwell filter
+use_maxwell_filter = True
+if not use_maxwell_filter:
+    print('\n----- not using maxwell filter -----\n')
+
+mf_st_duration = 60.0
+mf_int_order = 9
+mf_ext_order = 3
+
+mf_reference_run = '01'
+mf_extra_kws = {'ignore_ref': True, 'st_overlap': True}
+
+# TODO: eSSS doesn't work
+mf_esss = 0  # extended SSS
+mf_esss_reject = None
 
 # Bad channel detection
-find_flat_channels_meg = True
-find_noisy_channels_meg = True
+find_flat_channels_meg = use_maxwell_filter
+find_noisy_channels_meg = use_maxwell_filter
 find_bad_channels_extra_kws = {'ignore_ref': True}
 
 mf_cal_missing = "warn"
 mf_ctc_missing = "warn"
 
-# Maxwell filter
-use_maxwell_filter = True
-mf_st_duration = 10.0
-mf_int_order = 9
-mf_ext_order = 3
-
-mf_reference_run = '01'
-
-# TODO: eSSS doesn't work
-mf_esss = 0  # extended SSS
-mf_esss_reject = None
-mf_extra_kws = {'ignore_ref': True}
-
-
 
 # Filtering
-l_freq = .1
-h_freq = 50.0
-notch_freq = [60, 120, 180]
+l_freq = 0.5
+h_freq = 40.0
+bandpass_extra_kws = {'fir_window': 'blackman'}
 
+zapline_fline = 60.0
+zapline_iter = True
 
 # Resampling
-epochs_decim = 1
+epochs_decim = 2
 
 # Epoching
-epochs_tmin = -.200
-epochs_tmax = 1.0
-baseline = (-0.150, -0.050)
-event_repeated = 'merge'
-reject = dict(mag=2e-10)
+event_repeated = 'drop'
+reject = dict(mag=5e-12)
 
-epochs_metadata_query='trial!=1'
+# epochs_metadata_query='trial>1 & block_type == "switch"'
+
 
 # SSP, ICA, and artifact regression
 # TODO: artifact rejection doesn't work yet (eg regressing out ref channels)
@@ -162,13 +189,13 @@ epochs_metadata_query='trial!=1'
 # TODO: autoreject doesn't work yet
 # ica_reject = 'autoreject_local'
 spatial_filter = 'ica'
-ica_algorithm = 'picard-extended_infomax'
+ica_algorithm = 'picard'
 ica_l_freq = 1.0
 ica_max_iterations = 1000
 ica_n_components = .99
 ica_decim = 2
-ica_reject = dict(mag=2e-10)
-
+ica_reject = dict(mag=5e-12)
+ica_ecg_threshold = 0.10
 
 # TODO: autoreject doesn't work yet
 # Amplitude-based artifact rejection
@@ -176,11 +203,47 @@ ica_reject = dict(mag=2e-10)
 # autoreject_n_interpolate = [2, 4, 8]
 
 
+# SENSOR SETTINGS ------------------------------------------------------------
+
+# time-frequency
+time_frequency_conditions = conditions
+
+time_frequency_freq_min = 1
+time_frequency_freq_max = 40
+
+# decoding
+decode = True
+# decoding_time_generalization = True
+# decoding_time_generalization_decim = 6
+
+decoding_csp = True
+# decoding_csp_freqs = {
+#     'delta': [1, 4],
+#     'theta': [4, 8],
+#     'alpha': [8, 12],
+#     'beta': [12, 30],
+# }
+
+# make noise cov
+noise_cov = 'emptyroom'
+
+
+# SOURCE SETTINGS ------------------------------------------------------------
+run_source_estimation = True
+# recreate_bem = True
+freesurfer_verbose=True
+
+spacing='oct6'
+mindist=5
+
+
+adjust_coreg = False
+inverse_method = 'dSPM'
+noise_cov = 'emptyroom'
 
 
 
-
-# # General settings
+# # CONFIG OPTIONS ------------------------------------------------------------
 
 # bids_root: PathLike | None = None
 # """

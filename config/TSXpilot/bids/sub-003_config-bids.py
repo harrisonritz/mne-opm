@@ -4,7 +4,7 @@ Harrison Ritz 2025
 """
 
 # Session information (previously under session:)
-ids = 4
+ids = 3
 task = "TSXpilot"
 session = "01"
 
@@ -29,10 +29,21 @@ trigger_desc = {
 }
 
 response_desc = {
-    'BNC 1 Z': 'response/left',
+    'BNC 2 Z': 'response/left',
     'BNC 5 Z': 'response/right'
 }
 
 # Recording information (previously under recording_info:)
 line_freq = 60.0
-bads = ''
+bads = ['C6 2B X', 'C6 2B Y', 'C6 2B Z',
+        'Pz 25 Z', 'Pz 25 Y', 'Pz 25 X', 
+        'P2 26 Z', 'P2 26 Y', 'P2 26 X', 
+        'C4 2C Z', 'C4 2C Y', 'C4 2C X', 
+        'AFz 2G Z', 'AFz 2G Y', 'AFz 2G X', 
+        'T10 2I Z', 'T10 2I Y', 'T10 2I X', 
+        'F10 2O Z', 'F10 2O Y', 'F10 2O X', 
+        'C3 37 Z', 'C3 37 Y', 'C3 37 X', 
+        'F9 3G X', 'F9 3G Y', 'F9 3G Z', 
+        'Fpz 3K Z', 'Fpz 3K Y', 'Fpz 3K X'
+        ]
+

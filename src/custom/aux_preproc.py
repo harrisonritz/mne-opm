@@ -148,6 +148,16 @@ def run_analysis(cfg, args, data_dict):
         if args.analysis == 'badsegments':
             # Detect bad segments in the data
 
+            # annotate breaks
+            if task != 'noise' and cfg.find_breaks:
+                mne.preprocessing.annotate_break(
+                    data, 
+                    min_break_duration=cfg.min_break_duration, 
+                    t_start_after_previous=cfg.t_break_annot_start_after_previous_event, 
+                    t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
+                )
+
+            # remove bad segments
             clean_data = bad_segments(
                 data, 
                 picks=cfg.ch_types[0],
@@ -203,11 +213,11 @@ def run_analysis(cfg, args, data_dict):
             show_options=True,
             show=True,
             block=True,
-            # highpass=cfg.l_freq,
-            # lowpass=cfg.h_freq,
+            highpass=cfg.l_freq,
+            lowpass=cfg.h_freq,
             decim=5,
             use_opengl=True,
-            scalings=dict(mag=2e-12),
+            scalings=dict(mag=1e-11),
         )
         
         # update bads based on selections to the raw data
@@ -223,6 +233,15 @@ def run_analysis(cfg, args, data_dict):
         if cfg.process_empty_room:
             results_dict['noise'] = data_dict['noise']
             results_dict['noise'].info['bads'] = results_dict['bads']
+
+
+        # do HFC
+        if cfg._do_HFC:
+            print('************** running HFC **************')
+            projs = mne.preprocessing.compute_proj_hfc(data_dict[cfg.task].info, order=cfg._hfc_order)
+            data_dict[cfg.task].add_proj(projs).apply_proj()
+            if cfg.process_empty_room:
+                data_dict['noise'].add_proj(projs).apply_proj()
 
 
 
@@ -242,7 +261,7 @@ def run_analysis(cfg, args, data_dict):
         # plot components and sources
         ica.plot_components(
             inst=data,
-            nrows=6,
+            nrows=5,
         )
 
         ica.plot_sources(
@@ -426,7 +445,7 @@ def main():
     cfg = SimpleNamespace()
     _update_config_from_path(config=cfg, config_path=args.config)
 
-    if (args.analysis == 'rawplot' and not cfg._manual_bads):
+    if (args.analysis == 'manualchannel' and not cfg._manual_bads):
         print("Skipping raw plot analysis as it is not enabled in the configuration.")
         return None
 
