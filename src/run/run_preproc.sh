@@ -59,7 +59,7 @@ mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 echo ""
 echo "======================= Manual: ICA selection =============================================="
 echo ""
-python ../src/aux_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
+python  $ROOT_DIR/src/custom/aux_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
 
 
 
@@ -73,7 +73,7 @@ mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,prepro
 echo ""
 echo "======================= OSL: bad epochs =============================================="
 echo ""
-python ../src/aux_preproc.py --analysis=bad_epochs --config=$CONFIG_PATH
+python  $ROOT_DIR/src/custom/aux_preproc.py --analysis=bad_epochs --config=$CONFIG_PATH
 
 
 

@@ -4,7 +4,7 @@
 PIPELINE="preproc" # default pipeline
 EXPERIMENT="TSXpilot"
 ANALYSIS="trial"
-SUBJECT="011"
+SUBJECT="05"
 SESSION="01"
 CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
 DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"
@@ -97,6 +97,7 @@ if [ ! ${CONFIG_BASE} ]; then
     exit 1
 fi
 
+
 # export variables
 export EXPERIMENT
 export SUBJECT
@@ -120,9 +121,8 @@ if [ ! ${T1W_PATH} ]; then
 fi
 
 # run the analysis pipeline
-echo "\nStarting '${PIPELINE}' pipeline on experiment '${EXPERIMENT}' for subject ${SUBJECT}\n"
+echo "\nStarting '${PIPELINE}' pipeline on experiment '${EXPERIMENT}' for subject ${SUBJECT}\n--------------\n"
 source "./src/run/run_$PIPELINE.sh"
-echo "\nPipeline '${PIPELINE}' completed for experiment '${EXPERIMENT}' and subject ${SUBJECT}.\n"
 
 
 
