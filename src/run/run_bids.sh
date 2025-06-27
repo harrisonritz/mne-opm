@@ -46,4 +46,4 @@ echo "SUBJECTS_DIR: $SUBJECTS_DIR"
 echo "--------------------------------------------------"
 echo ""
 
-python ./src/custom/format_bids.py --config=$CONFIG_PATH
+python $ROOT_DIR/src/custom/format_bids.py --config=$CONFIG_PATH

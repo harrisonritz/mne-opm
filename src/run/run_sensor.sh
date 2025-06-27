@@ -3,47 +3,47 @@
 
 
 ## activate environment ----------------------------------------
-conda activate mne-opm
+source activate mne-opm
 
 ## fixed variables
 export MPLBACKEND=agg
-export SESSION=01
+# export SESSION=01
 
 
 ## import variables
-export EXPERIMENT=$1
-if [ ! ${EXPERIMENT} ]; then
-  echo "Error: please provide a experiment name"
-  exit 1
-fi
+# export EXPERIMENT=$1
+# if [ ! ${EXPERIMENT} ]; then
+#   echo "Error: please provide a experiment name"
+#   exit 1
+# fi
 
-export ANALYSIS=$2
-if [ ! ${ANALYSIS} ]; then
-  echo "Error: please provide an analysis name"
-  exit 1
-fi
+# export ANALYSIS=$2
+# if [ ! ${ANALYSIS} ]; then
+#   echo "Error: please provide an analysis name"
+#   exit 1
+# fi
 
-export SUBJECT=$3
-if [ ! ${SUBJECT} ]; then
-  echo "Error: please provide a subject number"
-  exit 1
-fi
+# export SUBJECT=$3
+# if [ ! ${SUBJECT} ]; then
+#   echo "Error: please provide a subject number"
+#   exit 1
+# fi
 
 
 ## activate environment file
-source ../experiments/$EXPERIMENT/$EXPERIMENT.env
-if [ ! ${ROOT_DIR} ]; then
-  echo "Error: please check that the environmental variables are available at '../{$EXPERIMENT}.env'"
-  exit 1
-fi
+# source ../experiments/$EXPERIMENT/$EXPERIMENT.env
+# if [ ! ${ROOT_DIR} ]; then
+#   echo "Error: please check that the environmental variables are available at '../{$EXPERIMENT}.env'"
+#   exit 1
+# fi
 
 
 
 # set config
-export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
-export RAW_DIR=$(eval echo $RAW_DIR)
-export BIDS_DIR=$(eval echo $BIDS_DIR)
-export SUBJECTS_DIR=$(eval echo $SUBJECTS_DIR)
+# export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
+# export RAW_DIR=$(eval echo $RAW_DIR)
+# export BIDS_DIR=$(eval echo $BIDS_DIR)
+# export SUBJECTS_DIR=$(eval echo $SUBJECTS_DIR)
 
 ## RUN PREPROCESSING ------------------
 echo ""
