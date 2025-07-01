@@ -3,7 +3,7 @@
 
 
 ## activate environment ----------------------------------------
-source activate mne-opm
+conda activate mne-opm
 
 
 # ## import variables

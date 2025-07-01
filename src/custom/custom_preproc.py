@@ -252,12 +252,7 @@ def run_analysis(cfg, args, data_dict):
         ica = data_dict['manualica']
         data = data_dict[cfg.task]
 
-
-        # ica.find_bads_ref(
-        #     inst=data, 
-        #     ch_name='ref_meg', 
-        #     threshold=2.0)
-
+        
         # plot components and sources
         ica.plot_components(
             inst=data,
@@ -272,9 +267,6 @@ def run_analysis(cfg, args, data_dict):
         )
 
         results_dict['ica'] = ica
-
-
-
 
     return results_dict
 

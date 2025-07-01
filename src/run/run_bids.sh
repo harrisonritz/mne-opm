@@ -4,7 +4,7 @@
 
 ## activate environment ----------------------------------------
 # source activate base
-source activate mne-opm
+conda activate mne-opm
 
 
 export CONFIG_PATH="$CONFIG_DIR/bids/sub-${SUBJECT}_config-bids.py"

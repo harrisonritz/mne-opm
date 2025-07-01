@@ -10,22 +10,22 @@ conda activate mne-opm
 # add packages here
 
 
-# install dev mne-bids ----------------------------------------
+# mne-bids (dev) ----------------------------------------
 pip3 install git+https://github.com/mne-tools/mne-bids.git
 
 
-# install dev mne-bids-pipeline ----------------------------------------
-# pip3 install git+https://github.com/mne-tools/mne-bids-pipeline.git
-pip3 install git+https://github.com/harrisonritz/mne-bids-pipeline.git@custom_metadata
+# mne-bids-pipeline (dev) ----------------------------------------
+pip3 install git+https://github.com/mne-tools/mne-bids-pipeline.git
 
 
-# install dev osl-ephys
+# osl-ephys (dev) ----------------------------------------
 pip3 install git+https://github.com/harrisonritz/osl-ephys.git
 
 
-# install dev mne-python ----------------------------------------
+# mne-python (dev) ----------------------------------------
+# re-run if you update other packages, as they will set to a specific mne version
 # pip3 install git+https://github.com/mne-tools/mne-python.git
-pip3 install git+https://github.com/harrisonritz/mne-python.git@opm-maxwell-er
+pip3 install git+https://github.com/harrisonritz/mne-python.git@mne-opm
 
 
 # check installation

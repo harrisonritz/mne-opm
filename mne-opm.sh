@@ -3,8 +3,8 @@
 # Defaults
 PIPELINE="preproc" # default pipeline
 EXPERIMENT="TSXpilot"
-ANALYSIS="trial"
-SUBJECT="05"
+ANALYSIS="CSI"
+SUBJECT="007"
 SESSION="01"
 CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
 DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"

@@ -3,13 +3,13 @@
 
 
 ## activate environment ----------------------------------------
-source activate mne-opm
+conda activate mne-opm
 
 ## fixed variables
 export MPLBACKEND=agg
 
 
-# # set config
+# set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 
 
@@ -28,24 +28,24 @@ echo "--------------------------"
 echo ""
 
 
-echo ""
-echo "======================= OSL: bad segment =============================================="
-echo ""
-python $ROOT_DIR/src/custom/aux_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
+# echo ""
+# echo "======================= OSL: bad segment =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= OSL: bad channels =============================================="
-echo ""
-python $ROOT_DIR/src/custom/aux_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
+# echo ""
+# echo "======================= OSL: bad channels =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= Manual: bad channel =============================================="
-echo ""
-python $ROOT_DIR/src/custom/aux_preproc.py --analysis=manual_channel --config=$CONFIG_PATH
+# echo ""
+# echo "======================= Manual: bad channel =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_channel --config=$CONFIG_PATH
 
 
 
@@ -59,7 +59,7 @@ mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 echo ""
 echo "======================= Manual: ICA selection =============================================="
 echo ""
-python  $ROOT_DIR/src/custom/aux_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
+python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
 
 
 
@@ -73,7 +73,7 @@ mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,prepro
 echo ""
 echo "======================= OSL: bad epochs =============================================="
 echo ""
-python  $ROOT_DIR/src/custom/aux_preproc.py --analysis=bad_epochs --config=$CONFIG_PATH
+python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_epochs --config=$CONFIG_PATH
 
 
 
