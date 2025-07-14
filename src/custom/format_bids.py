@@ -6,7 +6,6 @@
 # - update tigger/annotation mapping
 
 
-
 # %% import -------------------------------------------------------------------
 
 from dotenv import load_dotenv, find_dotenv
@@ -22,34 +21,30 @@ from types import SimpleNamespace
 from mne_bids_pipeline._config_import import _update_config_from_path
 
 
-
 # %% import parameters
 
-def set_bids_params(config_path=""):
 
+def set_bids_params(config_path=""):
     # set-up configuration ==========================================================================================================
-    print("\n\n\nloading configuration ---------------------------------------------------\n")
+    print(
+        "\n\n\nloading configuration ---------------------------------------------------\n"
+    )
     RAW_DIR = f"{os.environ.get('RAW_DIR')}"
     BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
-    
+
     # Create flat configuration as SimpleNamespace with all parameters at top level
     config = SimpleNamespace(
         # Directory paths
         raw_dir=RAW_DIR,
         bids_dir=BIDS_DIR,
-        
         # Session information
         ids=0,
         task="",
         session="",
-        
         # Trigger information
         rename_annot=True,
-        trigger_desc={
-        },
-        response_desc={
-        },
-        
+        trigger_desc={},
+        response_desc={},
         # Recording information
         line_freq=60.0,
         bads=[],
@@ -63,26 +58,28 @@ def set_bids_params(config_path=""):
             _update_config_from_path(config=config, config_path=config_path)
         except Exception as e:
             # Fall back to YAML for backward compatibility
-            if config_path.endswith('.yml') or config_path.endswith('.yaml'):
+            if config_path.endswith(".yml") or config_path.endswith(".yaml"):
                 print(f"Falling back to YAML loading for: {config_path}")
-                with open(config_path, 'r') as stream:
+                with open(config_path, "r") as stream:
                     yaml_config = yaml.safe_load(stream)
-                    
+
                 # Flatten the YAML structure for backward compatibility
-                if 'dirs' in yaml_config:
-                    for k, v in yaml_config['dirs'].items():
+                if "dirs" in yaml_config:
+                    for k, v in yaml_config["dirs"].items():
                         setattr(config, k, v)
-                if 'session' in yaml_config:
-                    for k, v in yaml_config['session'].items():
+                if "session" in yaml_config:
+                    for k, v in yaml_config["session"].items():
                         setattr(config, k, v)
-                if 'trigger' in yaml_config:
-                    for k, v in yaml_config['trigger'].items():
+                if "trigger" in yaml_config:
+                    for k, v in yaml_config["trigger"].items():
                         setattr(config, k, v)
-                if 'recording_info' in yaml_config:
-                    for k, v in yaml_config['recording_info'].items():
+                if "recording_info" in yaml_config:
+                    for k, v in yaml_config["recording_info"].items():
                         setattr(config, k, v)
             else:
-                raise ValueError(f"Could not load config file: {config_path}. Error: {e}")
+                raise ValueError(
+                    f"Could not load config file: {config_path}. Error: {e}"
+                )
 
     # Return the config directly as SimpleNamespace (no need to convert to dict anymore)
     print('\nconfig:"\n', config)
@@ -90,22 +87,21 @@ def set_bids_params(config_path=""):
     return config
 
 
-
 def convert_triggers(raw, cfg):
     """
     Converts trigger data from multiple channels into a combined trigger channel and annotations.
-    
+
     Parameters:
         raw (mne.io.Raw): Raw data to process
         cfg (SimpleNamespace): Configuration with trigger_desc and response_desc
-    
+
     Returns:
         mne.io.Raw: Raw data with updated annotations
     """
 
     print("\n\n\nconverting triggers ----------------------\n")
     # Extract data from trigger channels
-    trigger_channels = [f'Trigger {i}' for i in range(1, 9)]
+    trigger_channels = [f"Trigger {i}" for i in range(1, 9)]
 
     trigger_data = []
     for ch_name in trigger_channels:
@@ -119,27 +115,33 @@ def convert_triggers(raw, cfg):
     stacked_triggers[stacked_triggers > 2] = 1
 
     # convert to binary pattern to integer at each time point
-    powers_of_two = 2 ** np.arange(len(trigger_channels))[:, np.newaxis]  # Column vector
+    powers_of_two = (
+        2 ** np.arange(len(trigger_channels))[:, np.newaxis]
+    )  # Column vector
     integer_triggers = np.sum(stacked_triggers * powers_of_two, axis=0).astype(int)
 
     # add combined trigger to raw
-    raw.add_channels([mne.io.RawArray(
-        integer_triggers.reshape(1, -1), 
-        mne.create_info(['Trigger Combined'], raw.info['sfreq'], ['stim'])
-    )], force_update_info=True)
+    raw.add_channels(
+        [
+            mne.io.RawArray(
+                integer_triggers.reshape(1, -1),
+                mne.create_info(["Trigger Combined"], raw.info["sfreq"], ["stim"]),
+            )
+        ],
+        force_update_info=True,
+    )
 
     # extract events
-    events = mne.find_events(raw, 
-                            stim_channel='Trigger Combined', 
-                            min_duration=0.001,
-                            consecutive=True)
+    events = mne.find_events(
+        raw, stim_channel="Trigger Combined", min_duration=0.001, consecutive=True
+    )
 
     # convert to annotation
     new_annotations = mne.annotations_from_events(
         events,
         event_desc=cfg.trigger_desc,
-        sfreq=raw.info['sfreq'],
-        orig_time=raw.info['meas_date'],
+        sfreq=raw.info["sfreq"],
+        orig_time=raw.info["meas_date"],
     )
 
     # Remove annotations related to trigger channels
@@ -156,7 +158,7 @@ def convert_triggers(raw, cfg):
         onset=old_annotations.onset[trigger_ch_mask],
         duration=old_annotations.duration[trigger_ch_mask],
         description=old_annotations.description[trigger_ch_mask],
-        orig_time=old_annotations.orig_time
+        orig_time=old_annotations.orig_time,
     )
 
     # Set the new annotations
@@ -169,37 +171,29 @@ def convert_triggers(raw, cfg):
     return raw
 
 
-
-
-
-
-
-
-
-
 def bids_conversion(cfg):
     """
     Converts raw OPM MEG data files to BIDS format using configuration parameters provided in the cfg namespace.
     This function performs the following steps:
         1. Extracts necessary configuration parameters such as subject ID, session information, and task name.
         2. Locates the empty room file, task file(s), and anatomical scan file using glob pattern matching.
-        3. Reads and processes the empty room file if found. The empty room raw data is read, its line 
-           frequency updated based on cfg.line_freq, bad channels set, and then 
+        3. Reads and processes the empty room file if found. The empty room raw data is read, its line
+           frequency updated based on cfg.line_freq, bad channels set, and then
            written to a BIDS-compatible directory structure.
         4. Processes task files:
             - Reads the raw data and updates its metadata (line frequency and subject information).
             - Appends the processed raw data for later concatenation.
         5. Concatenates the individual raw run data into a single raw object and prints the recording duration.
-        6. Converts triggers and renames annotations if cfg.rename_annot is True using the 
+        6. Converts triggers and renames annotations if cfg.rename_annot is True using the
            convert_triggers function.
         7. Sets bad channels from the configuration.
         8. Writes the concatenated raw data to the BIDS directory with empty room reference if available.
         9. If an anatomical scan is found, writes the anatomical image to the BIDS structure.
-    
+
     Parameters:
         cfg (SimpleNamespace): A configuration namespace containing settings required for the conversion
             with all parameters as top-level attributes.
-    
+
     Returns:
         None
     """
@@ -209,56 +203,54 @@ def bids_conversion(cfg):
     subj = cfg.ids
     task = cfg.task
 
-    emptyroom_path =  glob.glob(
-        os.path.join(
-            cfg.raw_dir,
-            f"*_{subj:03}",
-            "*_noise",
-            "*_meg.fif"
-            ))  # Take the first match
-    emptyroom_path = emptyroom_path[0] if emptyroom_path else False  # Take the first match or False if not found
-    
-    task_path =  glob.glob(
-        os.path.join(
-            cfg.raw_dir,
-            f"*_{subj:03}",
-            "*_task",
-            "*_meg.fif"
-            ))  # Take the first match
+    emptyroom_path = glob.glob(
+        os.path.join(cfg.raw_dir, f"*_{subj:03}", "*_noise", "*_meg.fif")
+    )  # Take the first match
+    emptyroom_path = (
+        emptyroom_path[0] if emptyroom_path else False
+    )  # Take the first match or False if not found
+
+    task_path = glob.glob(
+        os.path.join(cfg.raw_dir, f"*_{subj:03}", "*_task", "*_meg.fif")
+    )  # Take the first match
     task_path = task_path if task_path else False
 
     anat_path = glob.glob(
-        os.path.join(
-            cfg.raw_dir,
-            f"*_{subj:03}",
-            "*",
-            "*_t1w.nii*"
-            ))  # Take the first match
-    anat_path = anat_path[0] if anat_path else False  # Take the first match or False if not found
-
+        os.path.join(cfg.raw_dir, f"*_{subj:03}", "*", "*_t1w.nii*")
+    )  # Take the first match
+    anat_path = (
+        anat_path[0] if anat_path else False
+    )  # Take the first match or False if not found
 
     raw_list = list()
-    print(  "\nparticipant: ", subj,
-            "\ntask: ", task,
-            "\ndata dir: ", cfg.raw_dir,
-            "\nbids dir: ", cfg.bids_dir,
-            "\ntask path: ", task_path,
-            "\nemptyroom path: ", emptyroom_path,
-            "\nanat path: ", anat_path,
-            "\n--------\n")
-    
+    print(
+        "\nparticipant: ",
+        subj,
+        "\ntask: ",
+        task,
+        "\ndata dir: ",
+        cfg.raw_dir,
+        "\nbids dir: ",
+        cfg.bids_dir,
+        "\ntask path: ",
+        task_path,
+        "\nemptyroom path: ",
+        emptyroom_path,
+        "\nanat path: ",
+        anat_path,
+        "\n--------\n",
+    )
 
     # Process empty room data ------------------------------------------------
 
     if emptyroom_path:
-
         raw_empty_room = mne.io.read_raw_fif(emptyroom_path)
         raw_empty_room.info["line_freq"] = cfg.line_freq
-        
+
         # set bad channels
         if cfg.bads:
-            raw_empty_room.info['bads'] = cfg.bads
-        
+            raw_empty_room.info["bads"] = cfg.bads
+
         # make bids path
         emptyroom_bids_path = mne_bids.BIDSPath(
             subject=f"{subj:03}",
@@ -266,7 +258,7 @@ def bids_conversion(cfg):
             task="noise",
             root=cfg.bids_dir,
         )
-        
+
         # Write empty room data to BIDS
         mne_bids.write_raw_bids(
             raw_empty_room,
@@ -276,43 +268,39 @@ def bids_conversion(cfg):
             events=None,
             format="FIF",
         )
-    
+
     # Concatenate data for this subject -----------------------------------------
-    
-    
+
     for rr, (fn) in enumerate(task_path):
         print("\nrun: ", rr, "---------------------------------------------------\n")
-        
+
         # get path
         raw = mne.io.read_raw_fif(fn)
-        
+
         raw.info["line_freq"] = cfg.line_freq
         raw.info["subject_info"] = {
             "id": int(subj),
             "his_id": f"{subj:03}",
-            }
-        
-        # append raw to list
-        raw_list.append(raw)  
+        }
 
+        # append raw to list
+        raw_list.append(raw)
 
     # Concatenate raws for all runs of this subject
     all_raw = mne.concatenate_raws(raw_list, preload=True, on_mismatch="raise")
 
     recording_duration = all_raw.times[-1] - all_raw.times[0]
-    print(f"Recording duration for subject {subj}: {(recording_duration/60):.2f} minutes")
-
+    print(
+        f"Recording duration for subject {subj}: {(recording_duration / 60):.2f} minutes"
+    )
 
     # Rename annotations
     if cfg.rename_annot:
         all_raw = convert_triggers(all_raw, cfg)
 
-
     # set bad channels
     if cfg.bads:
-        all_raw.info['bads'] = cfg.bads
-    
-
+        all_raw.info["bads"] = cfg.bads
 
     # Write to BIDS -----------------------------------------------------------
     # set bids path
@@ -334,7 +322,6 @@ def bids_conversion(cfg):
         empty_room=emptyroom_bids_path,
     )
 
-
     # Write anatomical image to BIDS --------------------------------------
     if anat_path:
         anat_bids_path = mne_bids.BIDSPath(
@@ -345,35 +332,40 @@ def bids_conversion(cfg):
         )
 
         mne_bids.write_anat(
-            image=anat_path, 
-            bids_path=anat_bids_path, 
+            image=anat_path,
+            bids_path=anat_bids_path,
             overwrite=True,
-            )
-        
-        print('saved to anat path: ', anat_path)
+        )
 
-    
-        
+        print("saved to anat path: ", anat_path)
 
-        
-            
-    
+
 # %% main ---------------------------------------------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Convert OPM data to BIDS format')
-    parser.add_argument('--config', dest='config_path', type=str,
-                      help='Path to the Python or YAML configuration file', default="")
-    
+    parser = argparse.ArgumentParser(description="Convert OPM data to BIDS format")
+    parser.add_argument(
+        "--config",
+        dest="config_path",
+        type=str,
+        help="Path to the Python or YAML configuration file",
+        default="",
+    )
+
     # For backward compatibility, allow positional argument as well
-    parser.add_argument('config_pos', nargs='?', type=str, default="", 
-                      help='Path to the configuration file (positional, for backward compatibility)')
-    
+    parser.add_argument(
+        "config_pos",
+        nargs="?",
+        type=str,
+        default="",
+        help="Path to the configuration file (positional, for backward compatibility)",
+    )
+
     args = parser.parse_args()
-    
+
     # Use the named argument if provided, otherwise use positional
     config_path = args.config_path if args.config_path else args.config_pos
-    
-    print('config path: ', config_path)
+
+    print("config path: ", config_path)
     cfg = set_bids_params(config_path)
     bids_conversion(cfg)
 

@@ -1,13 +1,13 @@
 # !/bin/bash
 
 # Defaults
-PIPELINE="preproc" # default pipeline
-EXPERIMENT="TSXpilot"
-ANALYSIS="CSI"
-SUBJECT="007"
-SESSION="01"
-CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
-DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"
+PIPELINE="" # default pipeline
+EXPERIMENT=""
+ANALYSIS=""
+SUBJECT=""
+SESSION=""
+CONFIG_BASE=""
+DATA_BASE=""
 FREESURFER_HOME=/Applications/freesurfer/8.0.0
 
 
