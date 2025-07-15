@@ -9,13 +9,11 @@ SESSION=""
 CONFIG_BASE=""
 DATA_BASE=""
 FREESURFER_HOME=/Applications/freesurfer/8.0.0
-
+MAX_WORKERS=4
 
 usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--t1w <T1w image path>] [--help]"
 
 # Parse arguments
-# PIPELINE=$1 # e.g., bids, coreg, freesurfer, preproc, sensor, source
-
 while [[ $# -gt 0 ]]; do
     case $1 in
         bids|coreg|freesurfer|preproc|sensor|source)
@@ -52,6 +50,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --t1w)
             T1W_PATH=$2
+            shift 2
+            ;;
+        --t2w)
+            T2W_PATH=$2
+            shift 2
+            ;;
+        -w|--workers)
+            MAX_WORKERS=$2
             shift 2
             ;;
         -h|--help)
@@ -101,7 +107,7 @@ fi
 # export variables
 export EXPERIMENT
 export SUBJECT
-export SUBJECT_NUM=sub-${SUBJECT#"${SUBJECT%%[!0]*}"}
+export SUBJECT_NUM=sub-$SUBJECT
 export ANALYSIS
 export SESSION
 
@@ -114,10 +120,26 @@ export DATA_DIR="$DATA_BASE/$EXPERIMENT"
 export RAW_DIR="$DATA_DIR/raw"
 export BIDS_DIR="$DATA_DIR/bids"
 export SUBJECTS_DIR="$DATA_DIR/bids/derivatives/freesurfer/subjects"
+export MAX_WORKERS
 
 export T1W_PATH
 if [ ! ${T1W_PATH} ]; then
-    export T1W_PATH=$BIDS_DIR/${SUBJECT_NUM}/ses-01/anat/${SUBJECT_NUM}_ses-01_T1w.nii.gz
+    DEFAULT_T1W_PATH=$BIDS_DIR/${SUBJECT_NUM}/ses-01/anat/${SUBJECT_NUM}_ses-01_T1w.nii.gz
+    if [ -f "$DEFAULT_T1W_PATH" ]; then
+        export T1W_PATH=$DEFAULT_T1W_PATH
+    else
+        export T1W_PATH=""
+    fi
+fi
+
+export T2W_PATH
+if [ ! ${T2W_PATH} ]; then
+    DEFAULT_T2W_PATH=$BIDS_DIR/${SUBJECT_NUM}/ses-01/anat/${SUBJECT_NUM}_ses-01_T2w.nii.gz
+    if [ -f "$DEFAULT_T2W_PATH" ]; then
+        export T2W_PATH=$DEFAULT_T2W_PATH
+    else
+        export T2W_PATH=""
+    fi
 fi
 
 # run the analysis pipeline

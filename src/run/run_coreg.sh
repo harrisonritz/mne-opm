@@ -8,6 +8,9 @@ conda activate mne-opm
 ## fixed variables
 export MPLBACKEND=agg
 
+old_sub=$SUBJECT
+export SUBJECT=${SUBJECT_NUM}_ses-${SESSION}
+
 
 # ## import variables
 # export EXPERIMENT=$1
@@ -49,3 +52,7 @@ echo "--------------------------"
 echo ""
 
 python $ROOT_DIR/src/custom/auto_coreg.py
+
+
+# revert to original subject formatting
+export SUBJECT=$old_sub
