@@ -215,12 +215,22 @@ def bids_conversion(cfg):
     )  # Take the first match
     task_path = task_path if task_path else False
 
-    anat_path = glob.glob(
+    # T1w
+    t1w_path = glob.glob(
         os.path.join(cfg.raw_dir, f"*_{subj:03}", "*", "*_t1w.nii*")
     )  # Take the first match
-    anat_path = (
-        anat_path[0] if anat_path else False
+    t1w_path = (
+        t1w_path[0] if t1w_path else False
     )  # Take the first match or False if not found
+
+    # T2w
+    t2w_path = glob.glob(
+        os.path.join(cfg.raw_dir, f"*_{subj:03}", "*", "*_t2w.nii*")
+    )  # Take the first match
+    t2w_path = (
+        t2w_path[0] if t2w_path else False
+    )  # Take the first match or False if not found
+
 
     raw_list = list()
     print(
@@ -237,7 +247,7 @@ def bids_conversion(cfg):
         "\nemptyroom path: ",
         emptyroom_path,
         "\nanat path: ",
-        anat_path,
+        t1w_path,
         "\n--------\n",
     )
 
@@ -323,7 +333,7 @@ def bids_conversion(cfg):
     )
 
     # Write anatomical image to BIDS --------------------------------------
-    if anat_path:
+    if t1w_path:
         anat_bids_path = mne_bids.BIDSPath(
             subject=f"{subj:03}",
             session=cfg.session,
@@ -332,12 +342,30 @@ def bids_conversion(cfg):
         )
 
         mne_bids.write_anat(
-            image=anat_path,
+            image=t1w_path,
             bids_path=anat_bids_path,
             overwrite=True,
+            verbose=True,
         )
 
-        print("saved to anat path: ", anat_path)
+        print("saved t1w: ", t1w_path)
+
+    if t2w_path:
+        anat_bids_path = mne_bids.BIDSPath(
+            subject=f"{subj:03}",
+            session=cfg.session,
+            suffix="T2w",
+            root=cfg.bids_dir,
+        )
+
+        mne_bids.write_anat(
+            image=t2w_path,
+            bids_path=anat_bids_path,
+            overwrite=True,
+            verbose=True,
+        )
+
+        print("saved t2w: ", t2w_path)
 
 
 # %% main ---------------------------------------------------------------------
