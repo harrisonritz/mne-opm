@@ -102,6 +102,7 @@ def load_data(cfg, args):
             print(f"Successfully loaded {task} data for subject {cfg.subjects[0]}")
 
     elif args.analysis in ["badepochs", "manualica"]:
+        
         bids_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
             subjects=cfg.subjects,
@@ -112,29 +113,48 @@ def load_data(cfg, args):
             processings="clean",
             extensions=".fif",
         )[0]
-        print(f"Found epochs path: {bids_path}")
 
         epochs = mne.read_epochs(bids_path, preload=True)
         data_dict[cfg.task] = epochs
-        print(f"Successfully loaded TSXpilot epochs for subject {cfg.subjects[0]}")
+        print(f"Successfully loaded {cfg.task} data for subject {cfg.subjects[0]}")
 
-        if args.analysis == "manualica":
-            # Load ICA data
-            bids_path = mne_bids.find_matching_paths(
-                root=cfg.deriv_root,
-                subjects=cfg.subjects,
-                tasks=cfg.task,
-                sessions=cfg.sessions,
-                datatypes="meg",
-                suffixes="ica",
-                processings="ica",
-                extensions=".fif",
-            )[0]
-            print(f"Found ICA path: {bids_path}")
 
-            ica = mne.preprocessing.read_ica(bids_path)
-            data_dict["manualica"] = ica
-            print(f"Successfully loaded ICA data for subject {cfg.subjects[0]}")
+    elif args.analysis == "manualica":
+
+        # load raw data
+        bids_path = mne_bids.find_matching_paths(
+            root=cfg.deriv_root,
+            subjects=cfg.subjects,
+            tasks=cfg.task,
+            sessions=cfg.sessions,
+            datatypes="meg",
+            suffixes="raw",
+            processings="clean",
+            extensions=".fif",
+        )[0]
+
+        raw = mne.io.read_raw(bids_path, preload=True, decim=cfg.ica_decim)
+        data_dict[cfg.task] = raw
+        print(f"Successfully loaded {cfg.task} data for subject {cfg.subjects[0]}")
+
+
+
+        # Load ICA data
+        bids_path = mne_bids.find_matching_paths(
+            root=cfg.deriv_root,
+            subjects=cfg.subjects,
+            tasks=cfg.task,
+            sessions=cfg.sessions,
+            datatypes="meg",
+            suffixes="ica",
+            processings="ica",
+            extensions=".fif",
+        )[0]
+        print(f"Found ICA path: {bids_path}")
+
+        ica = mne.preprocessing.read_ica(bids_path)
+        data_dict["manualica"] = ica
+        print(f"Successfully loaded ICA data for subject {cfg.subjects[0]}")
 
     else:
         raise ValueError(

@@ -8,10 +8,12 @@ conda activate mne-opm
 
 # basic install
 # add packages here
+pip3 install dotenv
+pip3 install ipykernel
 
 
 # mne-bids (dev) ----------------------------------------
-pip3 install git+https://github.com/mne-tools/mne-bids.git
+pip3 install git+https://github.com/harrisonritz/mne-bids.git@T2w
 
 
 # mne-bids-pipeline (dev) ----------------------------------------

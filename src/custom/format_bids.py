@@ -8,6 +8,7 @@
 
 # %% import -------------------------------------------------------------------
 
+from ast import Call
 from dotenv import load_dotenv, find_dotenv
 import mne
 import mne_bids
@@ -57,6 +58,7 @@ def set_bids_params(config_path=""):
         try:
             _update_config_from_path(config=config, config_path=config_path)
         except Exception as e:
+            print('error loading config from Python file:', e)
             # Fall back to YAML for backward compatibility
             if config_path.endswith(".yml") or config_path.endswith(".yaml"):
                 print(f"Falling back to YAML loading for: {config_path}")
@@ -214,6 +216,10 @@ def bids_conversion(cfg):
         os.path.join(cfg.raw_dir, f"*_{subj:03}", "*_task", "*_meg.fif")
     )  # Take the first match
     task_path = task_path if task_path else False
+    if not task_path:
+        raise FileNotFoundError(
+            f"No task files found for subject {subj} in {cfg.raw_dir}. Please check the directory structure."
+        )
 
     # T1w
     t1w_path = glob.glob(
@@ -231,6 +237,13 @@ def bids_conversion(cfg):
         t2w_path[0] if t2w_path else False
     )  # Take the first match or False if not found
 
+    # eyetracking
+    eye_path = glob.glob(
+            os.path.join(cfg.raw_dir, f"*_{subj:03}", "*", "*.asc")
+        )  # Take the first match
+    eye_path = (
+        eye_path[0] if eye_path else False
+    )  # Take the first match or False if not found
 
     raw_list = list()
     print(
@@ -246,8 +259,12 @@ def bids_conversion(cfg):
         task_path,
         "\nemptyroom path: ",
         emptyroom_path,
-        "\nanat path: ",
+        "\nT1w path: ",
         t1w_path,
+        "\nT2w path: ",
+        t2w_path,
+        "\nEye-tracking path: ",
+        eye_path,
         "\n--------\n",
     )
 
@@ -311,6 +328,35 @@ def bids_conversion(cfg):
     # set bad channels
     if cfg.bads:
         all_raw.info["bads"] = cfg.bads
+
+    # get eyetracking data
+    if eye_path:
+
+        # load data
+        print("Loading eye-tracking data from: ", eye_path)
+        eye = mne.io.read_raw_eyelink(eye_path, create_annotations=True)
+       
+        # set calibration info
+        cal = mne.preprocessing.eyetracking.read_eyelink_calibration(eye_path)[0]
+        cal["screen_resolution"] = (1920, 1080)
+        cal["screen_size"] = (0.53, 0.3)
+        cal["screen_distance"] = 0.9
+        mne.preprocessing.eyetracking.convert_units(eye, calibration=cal, to="radians")
+
+        # align from events
+        eye_events = mne.find_events(eye, min_duration=0.01, uint_cast=True)
+        eye_times = eye_events[:, 0] / eye.info["sfreq"]
+
+        mag_events = mne.find_events(raw, min_duration=0.01, uint_cast=True)
+        mag_times = mag_events[:, 0] / raw.info["sfreq"]
+
+        mne.preprocessing.realign_raw(
+            eye, raw, eye_times, mag_times, verbose="error"
+        )
+
+        # add channels to raw
+        raw.add_channels([eye], force_update_info=True)
+        del eye
 
     # Write to BIDS -----------------------------------------------------------
     # set bids path
