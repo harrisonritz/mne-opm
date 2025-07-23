@@ -1,5 +1,17 @@
 # !/bin/bash
 
+echo ""
+echo ""
+echo ""
+echo ""
+echo ""
+echo ""
+echo "-------------- MNE-OPM --------------"
+echo ""
+echo ""
+echo ""
+
+
 # Defaults
 PIPELINE="preproc" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
 EXPERIMENT="TSXpilot"

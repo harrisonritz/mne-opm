@@ -299,7 +299,6 @@ def bids_conversion(cfg):
     # Concatenate data for this subject -----------------------------------------
 
     for rr, (fn) in enumerate(task_path):
-        print("\nrun: ", rr, "---------------------------------------------------\n")
 
         # get path
         raw = mne.io.read_raw_fif(fn)
@@ -339,24 +338,52 @@ def bids_conversion(cfg):
         # set calibration info
         cal = mne.preprocessing.eyetracking.read_eyelink_calibration(eye_path)[0]
         cal["screen_resolution"] = (1920, 1080)
-        cal["screen_size"] = (0.53, 0.3)
-        cal["screen_distance"] = 0.9
+        cal["screen_size"] = (.606, 0.341)
+        cal["screen_distance"] = .895
         mne.preprocessing.eyetracking.convert_units(eye, calibration=cal, to="radians")
 
         # align from events
-        eye_events = mne.find_events(eye, min_duration=0.01, uint_cast=True)
-        eye_times = eye_events[:, 0] / eye.info["sfreq"]
+        eye_events, eye_id  = mne.events_from_annotations(eye, regexp='response')
+        eye_shape = eye_events.shape[0]
+        print('eye events: ', eye_shape)
 
-        mag_events = mne.find_events(raw, min_duration=0.01, uint_cast=True)
-        mag_times = mag_events[:, 0] / raw.info["sfreq"]
+        mag_events, mag_id = mne.events_from_annotations(raw, regexp='response')
+        mag_shape = mag_events.shape[0]
+        print('mag events: ', mag_shape)
 
+        eye_0 = 0 if eye_shape< mag_shape else eye_shape - mag_shape
+        mag_0 = 0 if mag_shape< eye_shape else mag_shape - eye_shape
+
+        eye_times = eye_events[eye_0:, 0] / eye.info["sfreq"]
+        mag_times = mag_events[mag_0:, 0] / raw.info["sfreq"]
+
+
+        # realign the raw data
+        print("Realigning eye-tracking data to OPM data...")
         mne.preprocessing.realign_raw(
-            eye, raw, eye_times, mag_times, verbose="error"
+            raw, eye, mag_times, eye_times, verbose="error"
         )
 
         # add channels to raw
         raw.add_channels([eye], force_update_info=True)
         del eye
+
+        if 'xpos_right' in raw.ch_names:
+            mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, 
+                                                                    {
+                                                                        'xpos_right':('eyegaze', 'rad', 'right', 'x'),
+                                                                        'ypos_right':('eyegaze', 'rad', 'right', 'y'),
+                                                                        'pupil_right':('pupil', 'rad', 'right'),
+                                                                    })
+        elif 'xpos_left' in raw.ch_names:
+            mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, 
+                                                                    {
+                                                                        'xpos_left':('eyegaze', 'rad', 'left', 'x'),
+                                                                        'ypos_left':('eyegaze', 'rad', 'left', 'y'),
+                                                                        'pupil_left':('pupil', 'rad', 'left'),
+                                                                    })
+        else:
+            raise ValueError("No eye-tracking channels found in raw data.")
 
     # Write to BIDS -----------------------------------------------------------
     # set bids path
