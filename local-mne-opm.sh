@@ -6,7 +6,9 @@ echo ""
 echo ""
 echo ""
 echo ""
-echo "-------------- MNE-OPM --------------"
+echo "      ~~~~~~~~~~~~~~         ~~~~~~~~~~~~~~"
+echo "      ~~~~~~~~~~~~~~ MNE-OPM ~~~~~~~~~~~~~~"
+echo "      ~~~~~~~~~~~~~~         ~~~~~~~~~~~~~~"                                                                                  
 echo ""
 echo ""
 echo ""
@@ -19,9 +21,9 @@ ANALYSIS="CSI"
 SUBJECT="007"
 SESSION="01"
 CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
-DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/opm_data/data"
+DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"
 FREESURFER_HOME=/Applications/freesurfer/8.0.0
-MAX_WORKERS=8
+MAX_WORKERS=16
 
 usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--t1w <T1w image path>] [--help]"
 

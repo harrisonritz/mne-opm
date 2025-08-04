@@ -6,7 +6,6 @@ conda create --name=mne-opm python=3.12
 conda activate mne-opm
 
 
-# basic install
 # add packages here
 pip3 install dicom2nifti
 pip3 install dotenv
@@ -14,7 +13,8 @@ pip3 install ipykernel
 
 
 # mne-bids (dev) ----------------------------------------
-pip3 install git+https://github.com/harrisonritz/mne-bids.git@T2w
+# pip3 install git+https://github.com/mne-tools/mne-bids.git
+pip3 install git+https://github.com/harrisonritz/mne-bids.git@mne-opm
 
 
 # mne-bids-pipeline (dev) ----------------------------------------
@@ -26,7 +26,7 @@ pip3 install git+https://github.com/harrisonritz/osl-ephys.git
 
 
 # mne-python (dev) ----------------------------------------
-# re-run if you update other packages, as they will set to a specific mne version
+# NOTE: re-run if you update other packages, as they will set to a specific mne version
 # pip3 install git+https://github.com/mne-tools/mne-python.git
 pip3 install git+https://github.com/harrisonritz/mne-python.git@mne-opm
 
