@@ -1,8 +1,14 @@
 #  RUN COREG
 
+HAIR_GROW = 5.0
+OMIT_DISTANCE = 2.5/1e3
+N_ROUNDS = 3
+
+
 # %% imports
 from dataclasses import dataclass
 import os
+from click import pause
 import mne
 import numpy as np
 from mne.io import read_info
@@ -69,7 +75,7 @@ info = read_info(fname_raw)
 plot_kwargs = dict(
     subject=SUBJECT,
     subjects_dir=SUBJECTS_DIR,
-    surfaces="head-dense",
+    surfaces=dict(seghead=0.95),
     dig=True,
     eeg=[],
     meg="sensors",
@@ -87,28 +93,31 @@ except Exception as e:
 
 coreg = mne.coreg.Coregistration(info, SUBJECT, SUBJECTS_DIR, fiducials='estimated')
 
+# fit fiducials
 coreg.set_scale_mode('Uniform')
 coreg.fit_fiducials(verbose=True)
-coreg.omit_head_shape_points(distance=5.0 / 1e3)  # distance is in meters
 
+# fit head shape points
 coreg.set_scale_mode('3-axis')
-coreg.fit_icp(n_iterations=100, verbose=True)
-fig = mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
-# fig.save(
-#     os.path.join(
-#         BIDS_DIR,
-#         "derivatives",
-#         "figures",
-#         f"coreg_{SUBJECT}.png",
-#     ),
-#     dpi=300,
-# )
+coreg.set_grow_hair(HAIR_GROW)
 
-dists = coreg.compute_dig_mri_distances() * 1e3  # in mm
-print(
-    f"Distance between HSP and MRI (mean/min/max):\n{np.mean(dists):.2f} mm "
-    f"/ {np.min(dists):.2f} mm / {np.max(dists):.2f} mm"
-)
+
+for rr in range(N_ROUNDS):
+    coreg.omit_head_shape_points(distance=OMIT_DISTANCE)  # distance is in meters
+    coreg.fit_icp(n_iterations=100, verbose=True)
+
+    dists = coreg.compute_dig_mri_distances() * 1e3  # in mm
+    print(
+        f"[round {rr}] Distance between HSP and MRI (mean/median/max):"
+        f"\n{np.mean(dists):.2f} mm "
+        f"/ {np.median(dists):.2f} mm / {np.max(dists):.2f} mm"
+    )
+
+fig = mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
+pause("\n\nPress any key to continue after inspecting the coregistration plot...\n")
+
+
+
 
 # %% save t1w info
 
