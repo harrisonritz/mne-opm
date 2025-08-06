@@ -2,6 +2,7 @@
 import matplotlib
 import mne
 import mne_bids
+import numpy as np
 
 
 fn = "/Users/hr0283/Projects/TSX_OPM/data/TSXpilot/bids/sub-008/ses-01/meg/sub-008_ses-01_task-TSXpilot_run-01_meg.fif"
@@ -78,12 +79,43 @@ raw = mne_bids.read_raw_bids(save_path, verbose='INFO')
 raw.info
 
 
-
-# %% PLOT --------------------------------------------------------------------
-
+# %% COMPUTE PSD -------------------------------------------------------------
 %matplotlib qt
 
-stims = raw.copy().crop(tmax=100).plot()
+raw = mne.io.read_raw_fif(fn, preload=True)
 
-stims = raw.copy().crop(tmax=100).get_data(picks='stim')
+print(raw.copy().info)
+print(raw.copy().pick('data').info)
+
+spec = raw.compute_psd()
+spec.plot()
+
+
+# %% PLOT --------------------------------------------------------------------
+%matplotlib qt
+
+raw = mne.io.read_raw_fif(fn, preload=True)
+stims = raw.copy().crop(tmin=500,tmax=1000).plot(scalings=dict(mag=1e-11,eyegaze=1e-3), show_options=True)
+
+
+# convert annotations to events, then plot annotations
+event1,event_id1 = mne.events_from_annotations(raw, regexp="response_onset")
+event2,event_id2 = mne.events_from_annotations(raw, regexp="response/")
+event2[:,2]=2
+
+# cat event1 and event2
+mne.viz.plot_events(np.concatenate((event1[:10],event2[:10]), axis=0), sfreq=raw.info['sfreq'])
+
+# for each event id (third col of events), plot the derivative on the onset (first col of events) using matplotlib
+# import matplotlib.pyplot as plt
+# import numpy as np
+# plt.figure()
+# for event in [[1,2],[3]]:
+#     plt.plot(np.log(np.diff(events[events[:, 2] == event,0])), label=event)
+#     plt.xlabel('Time (s)')
+#     plt.ylabel('Amplitude')
+#     plt.legend()
+#     plt.show()
+
+
 # %%

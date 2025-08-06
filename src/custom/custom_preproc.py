@@ -101,7 +101,7 @@ def load_data(cfg, args):
             data_dict[task] = raw
             print(f"Successfully loaded {task} data for subject {cfg.subjects[0]}")
 
-    elif args.analysis in ["badepochs", "manualica"]:
+    elif args.analysis == "badepochs":
         
         bids_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
@@ -133,7 +133,7 @@ def load_data(cfg, args):
             extensions=".fif",
         )[0]
 
-        raw = mne.io.read_raw(bids_path, preload=True, decim=cfg.ica_decim)
+        raw = mne_bids.read_raw_bids(bids_path, extra_params={"preload": True})
         data_dict[cfg.task] = raw
         print(f"Successfully loaded {cfg.task} data for subject {cfg.subjects[0]}")
 
@@ -239,9 +239,9 @@ def run_analysis(cfg, args, data_dict):
             block=True,
             highpass=cfg.l_freq,
             lowpass=cfg.h_freq,
-            decim=5,
+            decim=2,
             use_opengl=True,
-            scalings=dict(mag=1e-11),
+            scalings=dict(mag=1e-11, eyegaze=1e-3),
         )
 
         # update bads based on selections to the raw data

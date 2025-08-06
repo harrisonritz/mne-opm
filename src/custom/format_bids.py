@@ -328,64 +328,99 @@ def bids_conversion(cfg):
     if cfg.bads:
         all_raw.info["bads"] = cfg.bads
 
-    # get eyetracking data
+    # get eyetracking data TODO: split off into separate function
     if eye_path:
 
         print("\n\n\nformatting eyetracker ----------------------\n")
 
 
         # load data
-        print("Loading eye-tracking data from: ", eye_path)
+        print("\nLoading eye-tracking data from: ", eye_path, "...")
         eye = mne.io.read_raw_eyelink(eye_path, 
                                       create_annotations=True, 
                                       apply_offsets=True, 
                                       find_overlaps=True)
-        
-        print(eye.info)
-       
+               
         # set calibration info
-        cal = mne.preprocessing.eyetracking.read_eyelink_calibration(eye_path)[0]
+        print("\nCalibrating recording...")
+        try:    
+            cals = mne.preprocessing.eyetracking.read_eyelink_calibration(eye_path)
+            print(f'found {len(cals)} calibrations: {cals}, using first one')
+            cal = cals[0] # take first calibration
+        except Exception as e:
+            print('***** error reading eyelink calibration:', e)
+            cal = mne.preprocessing.eyetracking.Calibration(
+                onset=0,
+                model="HV13",
+                eye="right",
+                avg_error=0.0,
+                max_error=0.0,
+                positions=None,
+                offsets=None,
+                gaze=None,
+                )
         cal["screen_resolution"] = (1920, 1080)
         cal["screen_size"] = (.606, 0.341)
         cal["screen_distance"] = .895
+        print(cal)
         mne.preprocessing.eyetracking.convert_units(eye, calibration=cal, to="radians")
 
+        # set onset times
+        # raw.set_meas_date(None)
+        # raw._cropped_samp = 0
+        # eye.set_meas_date(None)
+        # eye._cropped_samp = 0
+
         # interpolate blinks
-        # mne.preprocessing.eyetracking.interpolate_blinks(eye, 
-        #                                                  buffer=(0.05, 0.1), 
-        #                                                  interpolate_gaze=True
-        #                                                 )
+        print()
+        mne.preprocessing.eyetracking.interpolate_blinks(eye, 
+                                                         buffer=(0.05, 0.1), 
+                                                         interpolate_gaze=True
+                                                        )
 
         # align from events
-        eye_events, eye_id  = mne.events_from_annotations(eye, regexp='response')
+        eye_events, eye_id  = mne.events_from_annotations(eye, regexp='stim_onset')
         eye_shape = eye_events.shape[0]
-        print('\neye events: ', eye_shape)
-        print('eye id : ', eye_id, '\n')
 
-        mag_events, mag_id = mne.events_from_annotations(raw, regexp='response')
+        mag_events, mag_id = mne.events_from_annotations(raw, regexp='trial')
         mag_shape = mag_events.shape[0]
-        print('mag events: ', mag_shape, '\n')
 
         eye_onset = 0 if eye_shape< mag_shape else eye_shape - mag_shape
-        eye_times = eye_events[eye_onset:, 0] / eye.info["sfreq"]
+        eye_times = eye_events[eye_onset:, 0] / eye.info["sfreq"] - eye.first_time
         mag_onset = 0 if mag_shape< eye_shape else mag_shape - eye_shape
-        mag_times = mag_events[mag_onset:, 0] / raw.info["sfreq"]
+        mag_times = mag_events[mag_onset:, 0] / raw.info["sfreq"] - raw.first_time
+
 
         # realign the raw data
         print("\nRealigning OPM data to eye-tracking data...")
-        
-        # mne.preprocessing.realign_raw(
-        #     raw, eye, mag_times, eye_times, verbose=True
-        # )
         mne.preprocessing.realign_raw(
             eye, raw, eye_times, mag_times, verbose=True
         )
-    
+
+     
         # add channels to raw
         print("\nadding eyetracking channels to OPM data...")
         raw.add_channels([eye], force_update_info=True)
-        print(raw.info)
+
+        cfg.eye_annotations = ['blink', 'saccade']        
+        eye_anot = eye.annotations.copy()
+        mask = np.array([desc in cfg.eye_annotations for desc in eye_anot.description])
+        new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] - (eye.first_samp / eye.info['sfreq']),
+                                       duration=eye_anot.duration[mask],
+                                       description=eye_anot.description[mask])
+
+        
+        # print summary of new_eye_anot
+        print(f'\nEye-tracking annotations to be added ({len(new_eye_anot)}): ')
+        for desc in np.unique(new_eye_anot.description):
+            count = np.sum(new_eye_anot.description == desc)
+            print(f'  {desc}: {count}')
+        print()
+
+
+        raw.set_annotations(raw.annotations + new_eye_anot)
         del eye
+
 
         # set coil types for 'DIN' to stim
         if 'DIN' in raw.ch_names:
@@ -408,6 +443,7 @@ def bids_conversion(cfg):
                                                                         'ypos_right':('eyegaze', 'rad', 'right', 'y'),
                                                                         'pupil_right':('pupil', 'rad', 'right'),
                                                                     })
+            
         elif 'xpos_left' in raw.ch_names:
             mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, 
                                                                     {
@@ -415,21 +451,15 @@ def bids_conversion(cfg):
                                                                         'ypos_left':('eyegaze', 'rad', 'left', 'y'),
                                                                         'pupil_left':('pupil', 'rad', 'left'),
                                                                     })
+
         else:
             raise ValueError(
                 "No eyegaze channels found. Please check the eye-tracking data."
             )
         
-        # if 'x_head' in raw.ch_names:
-        #     mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, 
-        #                                                             {
-        #                                                                 'xhead':('head', 'mm', 'x'),
-        #                                                                 'yhead':('head', 'mm', 'y'),
-        #                                                                 'distance':('head', 'mm'),
-        #                                                             })
+    
 
-
-        print('\nupdated info: \n', raw.info, '\n----------------------\n')
+        print('\nupdated info ----------------------\n',raw.info,'\n----------------------\n')
 
 
     # Write to BIDS -----------------------------------------------------------
@@ -443,14 +473,23 @@ def bids_conversion(cfg):
     )
 
     # write raw data to BIDS
-    mne_bids.write_raw_bids(
-        all_raw,
-        bids_path,
-        allow_preload=True,
-        overwrite=True,
-        format="FIF",
-        empty_room=emptyroom_bids_path,
-    )
+    if emptyroom_path:
+        mne_bids.write_raw_bids(
+            all_raw,
+            bids_path,
+            allow_preload=True,
+            overwrite=True,
+            format="FIF",
+            empty_room=emptyroom_bids_path,
+        )
+    else:
+        mne_bids.write_raw_bids(
+            all_raw,
+            bids_path,
+            allow_preload=True,
+            overwrite=True,
+            format="FIF",
+        )
 
     # Write anatomical image to BIDS --------------------------------------
     if t1w_path:
@@ -468,7 +507,7 @@ def bids_conversion(cfg):
             verbose=True,
         )
 
-        print("saved t1w: ", t1w_path)
+        print("\n-------------\nsaved t1w: ", t1w_path)
 
     if t2w_path:
         anat_bids_path = mne_bids.BIDSPath(
@@ -486,6 +525,7 @@ def bids_conversion(cfg):
         )
 
         print("saved t2w: ", t2w_path)
+    print()
 
 
 # %% main ---------------------------------------------------------------------

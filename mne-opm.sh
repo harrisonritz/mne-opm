@@ -16,7 +16,7 @@ usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        bids|coreg|freesurfer|preproc|sensor|source)
+        nifti|coreg|freesurfer|bids|preproc|sensor|source)
             PIPELINE=$1
             shift 1
             ;;

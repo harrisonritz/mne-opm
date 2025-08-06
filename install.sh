@@ -7,7 +7,7 @@ conda activate mne-opm
 
 
 # add packages here
-pip3 install dicom2nifti
+pip3 install dcm2niix
 pip3 install dotenv
 pip3 install ipykernel
 
