@@ -29,17 +29,17 @@ echo ""
 
 
 
-echo ""
-echo "======================= OSL: bad segment =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
+# echo ""
+# echo "======================= OSL: bad segment =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= OSL: bad channels =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
+# echo ""
+# echo "======================= OSL: bad channels =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
 
 
 
@@ -50,38 +50,38 @@ python $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_channel --config
 
 
 
-echo ""
-echo "======================= MNE: preprocessing =============================================="
-echo ""
-mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
+# echo ""
+# echo "======================= MNE: preprocessing =============================================="
+# echo ""
+# mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= Manual: ICA selection =============================================="
-echo ""
-python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
+# echo ""
+# echo "======================= Manual: ICA selection =============================================="
+# echo ""
+# python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= MNE: apply ICA =============================================="
-echo ""
-mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,preprocessing/ptp_reject --config=$CONFIG_PATH
+# echo ""
+# echo "======================= MNE: apply ICA =============================================="
+# echo ""
+# mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,preprocessing/ptp_reject --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= OSL: bad epochs =============================================="
-echo ""
-python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_epochs --config=$CONFIG_PATH
+# echo ""
+# echo "======================= OSL: bad epochs =============================================="
+# echo ""
+# python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_epochs --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= MNE: prep source space =============================================="
-echo ""
-mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
+# echo ""
+# echo "======================= MNE: prep source space =============================================="
+# echo ""
+# mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
 
 
 

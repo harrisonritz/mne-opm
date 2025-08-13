@@ -349,6 +349,7 @@ def bids_conversion(cfg):
             cal = cals[0] # take first calibration
         except Exception as e:
             print('***** error reading eyelink calibration:', e)
+            print('warning: assuming zero calibration error')
             cal = mne.preprocessing.eyetracking.Calibration(
                 onset=0,
                 model="HV13",
@@ -402,7 +403,7 @@ def bids_conversion(cfg):
         print("\nadding eyetracking channels to OPM data...")
         raw.add_channels([eye], force_update_info=True)
 
-        cfg.eye_annotations = ['blink', 'saccade']        
+        cfg.eye_annotations = ['blink']        
         eye_anot = eye.annotations.copy()
         mask = np.array([desc in cfg.eye_annotations for desc in eye_anot.description])
         new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] - (eye.first_samp / eye.info['sfreq']),

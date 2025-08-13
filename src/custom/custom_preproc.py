@@ -241,7 +241,7 @@ def run_analysis(cfg, args, data_dict):
             lowpass=cfg.h_freq,
             decim=2,
             use_opengl=True,
-            scalings=dict(mag=1e-11, eyegaze=1e-3),
+            scalings=dict(mag=1e-11, eyegaze=1e3),
         )
 
         # update bads based on selections to the raw data
@@ -262,7 +262,10 @@ def run_analysis(cfg, args, data_dict):
         if cfg._do_HFC:
             print("************** running HFC **************")
             projs = mne.preprocessing.compute_proj_hfc(
-                data_dict[cfg.task].info, order=cfg._hfc_order
+                data_dict[cfg.task].info, 
+                order=cfg._hfc_order,
+                picks=cfg.ch_types[0],
+                exclude='bads',
             )
             data_dict[cfg.task].add_proj(projs).apply_proj()
             if cfg.process_empty_room:
