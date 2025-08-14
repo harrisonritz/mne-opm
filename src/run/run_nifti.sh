@@ -9,7 +9,7 @@ conda activate mne-opm
 
 
 SUBJ_RAW_PATH=$(find $RAW_DIR -type d -path "*$SUBJECT")
-DICOM_PATH=$SUBJ_RAW_PATH/dcm
+DICOM_PATH=$SUBJ_RAW_PATH/dicom
 NIFTI_PATH=$SUBJ_RAW_PATH/anat
 mkdir -p $NIFTI_PATH
 

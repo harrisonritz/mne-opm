@@ -239,9 +239,9 @@ def run_analysis(cfg, args, data_dict):
             block=True,
             highpass=cfg.l_freq,
             lowpass=cfg.h_freq,
-            decim=2,
+            decim=4,
             use_opengl=True,
-            scalings=dict(mag=1e-11, eyegaze=1e3),
+            scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
         )
 
         # update bads based on selections to the raw data
@@ -260,16 +260,33 @@ def run_analysis(cfg, args, data_dict):
 
         # do HFC
         if cfg._do_HFC:
-            print("************** running HFC **************")
+
+            print("\n\n************** running HFC **************")
             projs = mne.preprocessing.compute_proj_hfc(
                 data_dict[cfg.task].info, 
                 order=cfg._hfc_order,
                 picks=cfg.ch_types[0],
-                exclude='bads',
             )
-            data_dict[cfg.task].add_proj(projs).apply_proj()
+
+            data_dict[cfg.task].add_proj(projs=projs).apply_proj()
+
+            # plot HFC
+            data_dict[cfg.task].plot(
+                n_channels=64,
+                show_options=True,
+                show=True,
+                block=True,
+                highpass=cfg.l_freq,
+                lowpass=cfg.h_freq,
+                decim=4,
+                use_opengl=True,
+                scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
+            )
+
             if cfg.process_empty_room:
-                data_dict["noise"].add_proj(projs).apply_proj()
+                data_dict["noise"].add_proj(projs=projs).apply_proj()
+
+
 
     elif args.analysis == "manualica":
         # Run ICA on the data

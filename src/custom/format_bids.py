@@ -10,6 +10,7 @@
 
 from ast import Call
 from dotenv import load_dotenv, find_dotenv
+import matplotlib
 import mne
 import mne_bids
 import os
@@ -345,7 +346,7 @@ def bids_conversion(cfg):
         print("\nCalibrating recording...")
         try:    
             cals = mne.preprocessing.eyetracking.read_eyelink_calibration(eye_path)
-            print(f'found {len(cals)} calibrations: {cals}, using first one')
+            print(f'found {len(cals)}, using first one')
             cal = cals[0] # take first calibration
         except Exception as e:
             print('***** error reading eyelink calibration:', e)
@@ -363,6 +364,7 @@ def bids_conversion(cfg):
         cal["screen_resolution"] = (1920, 1080)
         cal["screen_size"] = (.606, 0.341)
         cal["screen_distance"] = .895
+        print('calibration:')
         print(cal)
         mne.preprocessing.eyetracking.convert_units(eye, calibration=cal, to="radians")
 
@@ -373,12 +375,66 @@ def bids_conversion(cfg):
         # eye._cropped_samp = 0
 
         # interpolate blinks
+
+
+        # for ch_name in eye.ch_names:
+        #     ch_data = eye[ch_name][0]
+        #     nans = np.isnan(ch_data).sum()
+        #     print(f"Channel '{ch_name}': {nans} NaN timepoints")
+
+
         print()
         mne.preprocessing.eyetracking.interpolate_blinks(eye, 
-                                                         buffer=(0.05, 0.1), 
-                                                         interpolate_gaze=True
+                                                         buffer=(0.05, 0.1),
+                                                         match=['BAD_blink'],
+                                                         interpolate_gaze=False,
                                                         )
+        
+        print('interpolate remaining nans....')
+        data = eye.get_data()  # Get all data at once
+        for ch_idx, ch_name in enumerate(eye.ch_names):
+            # get nan indices
+            ch_data = data[ch_idx, :]
+            nan_mask = np.isnan(ch_data)
 
+            # Skip if no NaN values
+            if not np.any(nan_mask):
+                continue
+            
+            # Skip if all values are NaN
+            if np.all(nan_mask):
+                print(f"Warning: All values are NaN for channel '{ch_name}', skipping interpolation")
+                continue
+
+            # Get valid (non-NaN) data points
+            valid_mask = ~nan_mask
+            valid_indices = np.where(valid_mask)[0]
+            nan_indices = np.where(nan_mask)[0]
+
+            # Only interpolate if we have enough non-NaN values
+            if len(valid_indices) > 1:
+                # Linear interpolation using valid timepoints and data
+                # interpolated_values = np.interp(
+                #     nan_indices,  # x-coordinates where we want interpolated values
+                #     valid_indices,  # x-coordinates of known data points
+                #     ch_data[valid_indices]  # y-coordinates of known data points
+                # )
+                from scipy.interpolate import CubicSpline
+                cs = CubicSpline(valid_indices, ch_data[valid_indices])
+                interpolated_values = cs(nan_indices)
+
+                # Update the data in place
+                data[ch_idx, nan_indices] = interpolated_values
+            elif len(valid_indices) == 1:
+                # If only one valid point, fill NaNs with that value
+                data[ch_idx, nan_indices] = ch_data[valid_indices[0]]
+                print(f"Warning: Only one valid data point for channel '{ch_name}', using constant interpolation")
+            else:
+                print(f"Warning: No valid data points for interpolation in channel '{ch_name}'")
+        
+        # Update the raw object with interpolated data
+        eye._data = data
+       
         # align from events
         eye_events, eye_id  = mne.events_from_annotations(eye, regexp='stim_onset')
         eye_shape = eye_events.shape[0]
@@ -394,8 +450,11 @@ def bids_conversion(cfg):
 
         # realign the raw data
         print("\nRealigning OPM data to eye-tracking data...")
+        # mne.preprocessing.realign_raw(
+        #     eye, raw, eye_times, mag_times, verbose=True
+        # )
         mne.preprocessing.realign_raw(
-            eye, raw, eye_times, mag_times, verbose=True
+            raw, eye, mag_times, eye_times, verbose=True
         )
 
      
@@ -429,12 +488,12 @@ def bids_conversion(cfg):
             raw.drop_channels('DIN')
         
         # set head channels to eyetrack
-        if 'x_head' in raw.ch_names:
-            raw.set_channel_types({'x_head': 'misc'})
-        if 'y_head' in raw.ch_names:
-            raw.set_channel_types({'y_head': 'misc'})
-        if 'distance' in raw.ch_names:
-            raw.set_channel_types({'distance': 'misc'})
+        # if 'x_head' in raw.ch_names:
+        #     raw.set_channel_types({'x_head': 'misc'})
+        # if 'y_head' in raw.ch_names:
+        #     raw.set_channel_types({'y_head': 'misc'})
+        # if 'distance' in raw.ch_names:
+        #     raw.set_channel_types({'distance': 'misc'})
 
 
         if 'xpos_right' in raw.ch_names:
@@ -461,6 +520,9 @@ def bids_conversion(cfg):
     
 
         print('\nupdated info ----------------------\n',raw.info,'\n----------------------\n')
+        eye_epochs = mne.make_fixed_length_epochs(raw, duration=1)
+        mne.viz.eyetracking.plot_gaze(eye_epochs, sigma=10, calibration=cal)
+        del eye_epochs
 
 
     # Write to BIDS -----------------------------------------------------------
