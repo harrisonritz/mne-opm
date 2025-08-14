@@ -382,12 +382,12 @@ def bids_conversion(cfg):
         #     print(f"Channel '{ch_name}': {nans} NaN timepoints")
 
 
-        # print()
-        # mne.preprocessing.eyetracking.interpolate_blinks(eye, 
-        #                                                  buffer=(0.05, 0.1),
-        #                                                  match=['BAD_blink'],
-        #                                                  interpolate_gaze=True,
-        #                                                 )
+        print()
+        mne.preprocessing.eyetracking.interpolate_blinks(eye, 
+                                                         buffer=(0.05, 0.1),
+                                                         match=['BAD_blink'],
+                                                         interpolate_gaze=True,
+                                                        )
     
 
         print('\nInterpolating remaining nans....')
@@ -445,12 +445,11 @@ def bids_conversion(cfg):
         raw_events, raw_id = mne.events_from_annotations(raw, regexp='trial')
         raw_shape = raw_events.shape[0]
 
-
         raw_onset = 0 if raw_shape< eye_shape else raw_shape - eye_shape
-        raw_times = (raw_events[raw_onset:, 0]-raw.first_time) / raw.info["sfreq"]
+        raw_times = (raw_events[raw_onset:, 0] / raw.info["sfreq"]) - raw.first_time
 
         eye_onset = 0 if eye_shape< raw_shape else eye_shape - raw_shape
-        eye_times = (eye_events[eye_onset:, 0]-eye.first_time) / eye.info["sfreq"]
+        eye_times = (eye_events[eye_onset:, 0] / eye.info["sfreq"]) - eye.first_time
     
         # realign the raw data
         print("\nRealigning eye-tracking data to OPM...")
@@ -487,9 +486,13 @@ def bids_conversion(cfg):
         # TODO: STILL DONT HAVE A MATCH BETEWEEN ANNOTATIONS AND DATA!!
         #       EITHER MATCHES WITHIN EYE (BLINK TO BLINK), OR BETWEEN EYE-RAW (STIM TO STIM)
 
-        new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] + (raw.first_samp-eye.first_samp)/eye.info["sfreq"],
-                                       duration=eye_anot.duration[mask],
-                                       description=eye_anot.description[mask])
+        # new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] + (raw.first_samp-eye.first_samp)/eye.info["sfreq"],
+        #                                duration=eye_anot.duration[mask],
+        #                                description=eye_anot.description[mask])
+        
+        new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] + (raw.first_time - eye.first_time),
+                                    duration=eye_anot.duration[mask],
+                                    description=eye_anot.description[mask])
 
         
         # print summary of new_eye_anot
