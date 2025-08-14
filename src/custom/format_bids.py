@@ -22,7 +22,6 @@ import argparse
 from types import SimpleNamespace
 from mne_bids_pipeline._config_import import _update_config_from_path
 
-
 # %% import parameters
 
 
@@ -318,7 +317,7 @@ def bids_conversion(cfg):
 
     recording_duration = all_raw.times[-1] - all_raw.times[0]
     print(
-        f"\n----------\nRecording duration for subject {subj}: {(recording_duration / 60):.2f} minutes\n----------\n"
+        f"\n\n*************\nRecording duration for subject {subj}: {(recording_duration / 60):.2f} minutes\n*************\n\n"
     )
 
     # Rename annotations
@@ -383,14 +382,15 @@ def bids_conversion(cfg):
         #     print(f"Channel '{ch_name}': {nans} NaN timepoints")
 
 
-        print()
-        mne.preprocessing.eyetracking.interpolate_blinks(eye, 
-                                                         buffer=(0.05, 0.1),
-                                                         match=['BAD_blink'],
-                                                         interpolate_gaze=False,
-                                                        )
-        
-        print('interpolate remaining nans....')
+        # print()
+        # mne.preprocessing.eyetracking.interpolate_blinks(eye, 
+        #                                                  buffer=(0.05, 0.1),
+        #                                                  match=['BAD_blink'],
+        #                                                  interpolate_gaze=True,
+        #                                                 )
+    
+
+        print('\nInterpolating remaining nans....')
         data = eye.get_data()  # Get all data at once
         for ch_idx, ch_name in enumerate(eye.ch_names):
             # get nan indices
@@ -414,14 +414,14 @@ def bids_conversion(cfg):
             # Only interpolate if we have enough non-NaN values
             if len(valid_indices) > 1:
                 # Linear interpolation using valid timepoints and data
-                # interpolated_values = np.interp(
-                #     nan_indices,  # x-coordinates where we want interpolated values
-                #     valid_indices,  # x-coordinates of known data points
-                #     ch_data[valid_indices]  # y-coordinates of known data points
-                # )
-                from scipy.interpolate import CubicSpline
-                cs = CubicSpline(valid_indices, ch_data[valid_indices])
-                interpolated_values = cs(nan_indices)
+                interpolated_values = np.interp(
+                    nan_indices,  # x-coordinates where we want interpolated values
+                    valid_indices,  # x-coordinates of known data points
+                    ch_data[valid_indices]  # y-coordinates of known data points
+                )
+                # from scipy.interpolate import CubicSpline
+                # cs = CubicSpline(valid_indices, ch_data[valid_indices])
+                # interpolated_values = cs(nan_indices)
 
                 # Update the data in place
                 data[ch_idx, nan_indices] = interpolated_values
@@ -434,38 +434,60 @@ def bids_conversion(cfg):
         
         # Update the raw object with interpolated data
         eye._data = data
-       
+
+        print("Removing 'BAD_' from BAD_blink.")
+        eye.annotations.rename({"BAD_blink": "blink"})
+
         # align from events
         eye_events, eye_id  = mne.events_from_annotations(eye, regexp='stim_onset')
         eye_shape = eye_events.shape[0]
 
-        mag_events, mag_id = mne.events_from_annotations(raw, regexp='trial')
-        mag_shape = mag_events.shape[0]
-
-        eye_onset = 0 if eye_shape< mag_shape else eye_shape - mag_shape
-        eye_times = eye_events[eye_onset:, 0] / eye.info["sfreq"] - eye.first_time
-        mag_onset = 0 if mag_shape< eye_shape else mag_shape - eye_shape
-        mag_times = mag_events[mag_onset:, 0] / raw.info["sfreq"] - raw.first_time
+        raw_events, raw_id = mne.events_from_annotations(raw, regexp='trial')
+        raw_shape = raw_events.shape[0]
 
 
+        raw_onset = 0 if raw_shape< eye_shape else raw_shape - eye_shape
+        raw_times = (raw_events[raw_onset:, 0]-raw.first_time) / raw.info["sfreq"]
+
+        eye_onset = 0 if eye_shape< raw_shape else eye_shape - raw_shape
+        eye_times = (eye_events[eye_onset:, 0]-eye.first_time) / eye.info["sfreq"]
+    
         # realign the raw data
-        print("\nRealigning OPM data to eye-tracking data...")
+        print("\nRealigning eye-tracking data to OPM...")
         # mne.preprocessing.realign_raw(
-        #     eye, raw, eye_times, mag_times, verbose=True
+        #     eye, raw, eye_times, raw_times, verbose=True
         # )
         mne.preprocessing.realign_raw(
-            raw, eye, mag_times, eye_times, verbose=True
+            raw, eye, raw_times, eye_times, verbose=True
         )
+
+
+
 
      
         # add channels to raw
-        print("\nadding eyetracking channels to OPM data...")
+        print("\nAdding aligned eyetracking channels to OPM data...")
         raw.add_channels([eye], force_update_info=True)
 
-        cfg.eye_annotations = ['blink']        
+
+        # print("***********************************")
+        # print('eye shape: ', eye_shape)
+        # print('eye first time: ', eye.first_time)
+
+        # print('raw shape: ', raw_shape)
+        # print('raw first time: ', raw.first_time)
+        # print("***********************************")
+
+        cfg.eye_annotations = ['blink', 'stim_onset']       
         eye_anot = eye.annotations.copy()
         mask = np.array([desc in cfg.eye_annotations for desc in eye_anot.description])
-        new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] - (eye.first_samp / eye.info['sfreq']),
+
+        print('eye ann onset: ', eye_anot.onset[mask])
+
+        # TODO: STILL DONT HAVE A MATCH BETEWEEN ANNOTATIONS AND DATA!!
+        #       EITHER MATCHES WITHIN EYE (BLINK TO BLINK), OR BETWEEN EYE-RAW (STIM TO STIM)
+
+        new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] + (raw.first_samp-eye.first_samp)/eye.info["sfreq"],
                                        duration=eye_anot.duration[mask],
                                        description=eye_anot.description[mask])
 
@@ -479,7 +501,24 @@ def bids_conversion(cfg):
 
 
         raw.set_annotations(raw.annotations + new_eye_anot)
-        del eye
+
+
+        # create blink EOG channel
+        print('\nAdding a blink channel...')
+        blink_channel = np.zeros(raw._data.shape[1])
+                
+        # get onset and duration of 'blink' annotations
+        for ann in raw.annotations:
+            if ann["description"] == "blink":
+                onset = int((ann["onset"] - raw.first_time)*raw.info["sfreq"])
+                duration = int(np.ceil(ann["duration"] * raw.info["sfreq"]))
+                blink_channel[onset: onset + duration] = 1e-5
+
+        # convolve with hamming re: mne EOG sim
+        blink_channel = np.convolve(blink_channel, np.hanning(int(0.1 * raw.info["sfreq"])), "same")[np.newaxis, :]
+        blink_info = mne.create_info(['blink'], raw.info['sfreq'], ch_types='eog')
+        blink_array = mne.io.RawArray(blink_channel, blink_info, first_samp=raw.first_samp, copy='auto')
+        raw.add_channels([blink_array], force_update_info=True)
 
 
         # set coil types for 'DIN' to stim
@@ -520,9 +559,13 @@ def bids_conversion(cfg):
     
 
         print('\nupdated info ----------------------\n',raw.info,'\n----------------------\n')
-        eye_epochs = mne.make_fixed_length_epochs(raw, duration=1)
-        mne.viz.eyetracking.plot_gaze(eye_epochs, sigma=10, calibration=cal)
-        del eye_epochs
+
+        raw.plot(picks=['eog', 'eyegaze'], duration=5, block=True, precompute=True)
+
+        gaze_epochs = mne.make_fixed_length_epochs(raw, duration=1)
+        mne.viz.eyetracking.plot_gaze(gaze_epochs, sigma=10, calibration=cal)
+        del gaze_epochs
+        del eye
 
 
     # Write to BIDS -----------------------------------------------------------

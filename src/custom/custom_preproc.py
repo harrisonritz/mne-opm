@@ -294,10 +294,32 @@ def run_analysis(cfg, args, data_dict):
         ica = data_dict["manualica"]
         data = data_dict[cfg.task]
 
+        # plot blink sources
+        eog_epochs = mne.Epochs(data.copy().filter(l_freq=1., h_freq=10), 
+                                events=None, 
+                                event_id='blink', 
+                                tmin=-0.5, 
+                                tmax=0.5, 
+                                baseline=(-0.5, -0.25), 
+                                picks='data', 
+                                preload=True, 
+                                decim=2, 
+                                detrend=None,
+                                )
+
+        ica.plot_sources(
+            inst=eog_epochs,
+            show_scrollbars=True,
+            block=True,
+            use_opengl=True,
+        )
+
+        del eog_epochs
+
         # plot components and sources
         ica.plot_components(
             inst=data,
-            nrows=5,
+             nrows=5,
         )
 
         ica.plot_sources(
