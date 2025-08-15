@@ -8,19 +8,21 @@
 
 # %% import -------------------------------------------------------------------
 
-from ast import Call
-from dotenv import load_dotenv, find_dotenv
-import matplotlib
+# from dotenv import load_dotenv, find_dotenv
+# import matplotlib
+# import sys
 import mne
 import mne_bids
 import os
 import numpy as np
 import yaml
-import sys
 import glob
 import argparse
 from types import SimpleNamespace
 from mne_bids_pipeline._config_import import _update_config_from_path
+import mne_qt_browser
+from mne._fiff.meas_info import _merge_info
+
 
 # %% import parameters
 
@@ -58,31 +60,17 @@ def set_bids_params(config_path=""):
         try:
             _update_config_from_path(config=config, config_path=config_path)
         except Exception as e:
-            print('error loading config from Python file:', e)
-            # Fall back to YAML for backward compatibility
-            if config_path.endswith(".yml") or config_path.endswith(".yaml"):
-                print(f"Falling back to YAML loading for: {config_path}")
-                with open(config_path, "r") as stream:
-                    yaml_config = yaml.safe_load(stream)
+            print(f'error loading config from Python file: {e},\ncreating new config from template')
+            template_path = os.path.join(os.path.dirname(config_path), "TEMPLATE_config-bids.py")
+            # make a copy of the .py file at template_path, and save to config_path
+            with open(template_path, 'r') as template_file:
+                template_content = template_file.read()
+            with open(config_path, 'w') as config_file:
+                config_file.write(template_content)
+            _update_config_from_path(config=config, config_path=config_path)
 
-                # Flatten the YAML structure for backward compatibility
-                if "dirs" in yaml_config:
-                    for k, v in yaml_config["dirs"].items():
-                        setattr(config, k, v)
-                if "session" in yaml_config:
-                    for k, v in yaml_config["session"].items():
-                        setattr(config, k, v)
-                if "trigger" in yaml_config:
-                    for k, v in yaml_config["trigger"].items():
-                        setattr(config, k, v)
-                if "recording_info" in yaml_config:
-                    for k, v in yaml_config["recording_info"].items():
-                        setattr(config, k, v)
-            else:
-                raise ValueError(
-                    f"Could not load config file: {config_path}. Error: {e}"
-                )
 
+            
     # Return the config directly as SimpleNamespace (no need to convert to dict anymore)
     print('\nconfig:"\n', config)
 
@@ -328,7 +316,9 @@ def bids_conversion(cfg):
     if cfg.bads:
         all_raw.info["bads"] = cfg.bads
 
-    # get eyetracking data TODO: split off into separate function
+
+
+    # get eyetracking data TODO: split off into separate function --------------------------------------------------------
     if eye_path:
 
         print("\n\n\nformatting eyetracker ----------------------\n")
@@ -382,20 +372,39 @@ def bids_conversion(cfg):
         #     print(f"Channel '{ch_name}': {nans} NaN timepoints")
 
 
-        print()
-        mne.preprocessing.eyetracking.interpolate_blinks(eye, 
-                                                         buffer=(0.05, 0.1),
-                                                         match=['BAD_blink'],
-                                                         interpolate_gaze=True,
-                                                        )
+        # print()
+        # mne.preprocessing.eyetracking.interpolate_blinks(eye, 
+        #                                                  buffer=(0.05, 0.1),
+        #                                                  match=['BAD_blink'],
+        #                                                  interpolate_gaze=True,
+        #                                                 )
     
 
-        print('\nInterpolating remaining nans....')
+        buffer = 0.1
+        buffer_samp = int(buffer * eye.info["sfreq"])
+        print('\nInterpolating remaining nans (buffer = ', buffer, ' sec)...')
         data = eye.get_data()  # Get all data at once
         for ch_idx, ch_name in enumerate(eye.ch_names):
             # get nan indices
             ch_data = data[ch_idx, :]
-            nan_mask = np.isnan(ch_data)
+            
+            # Create masks for NaN values and their buffer regions before and after
+            nan_mask = np.isnan(ch_data)  # Current NaN positions
+            
+            # Mask for positions where any of the next buffer_samp samples are NaN
+            future_nan_mask = np.zeros_like(nan_mask, dtype=bool)
+            for i in range(1, buffer_samp + 1):
+                if i < len(ch_data):
+                    future_nan_mask[:-i] |= nan_mask[i:]
+            
+            # Mask for positions where any of the previous buffer_samp samples are NaN  
+            past_nan_mask = np.zeros_like(nan_mask, dtype=bool)
+            for i in range(1, buffer_samp + 1):
+                if i < len(ch_data):
+                    past_nan_mask[i:] |= nan_mask[:-i]
+            
+            # Combine all masks
+            nan_mask = nan_mask | future_nan_mask | past_nan_mask
 
             # Skip if no NaN values
             if not np.any(nan_mask):
@@ -407,9 +416,8 @@ def bids_conversion(cfg):
                 continue
 
             # Get valid (non-NaN) data points
-            valid_mask = ~nan_mask
-            valid_indices = np.where(valid_mask)[0]
             nan_indices = np.where(nan_mask)[0]
+            valid_indices = np.where(~nan_mask)[0]
 
             # Only interpolate if we have enough non-NaN values
             if len(valid_indices) > 1:
@@ -460,13 +468,51 @@ def bids_conversion(cfg):
             raw, eye, raw_times, eye_times, verbose=True
         )
 
+        # create blink EOG channel
+        # print('\nAdding a blink channel...')
+        # blink_channel = np.zeros(eye._data.shape[1])
+        # blink_list=[]
+        # for aa, (ann,) in enumerate(zip(eye.annotations)):
+        #     if ann["description"] == "blink":
+        #         onset = int((ann["onset"] - eye.first_time)*eye.info["sfreq"])
+        #         duration = int(np.ceil(ann["duration"] * eye.info["sfreq"]))
+        #         blink_channel[onset: onset + duration] = 1e-5
+        #         blink_list.append(aa)
+
+        # blink_channel = np.convolve(blink_channel, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[np.newaxis, :]
+        # blink_info = mne.create_info(['blink'], eye.info['sfreq'], ch_types='eog')
+        # blink_array = mne.io.RawArray(blink_channel, blink_info, first_samp=eye.first_samp, copy='auto')
+        # eye.add_channels([blink_array], force_update_info=True)
 
 
 
-     
-        # add channels to raw
-        print("\nAdding aligned eyetracking channels to OPM data...")
+        # add eye to raw
+        print('\n add channels')
+        print('\n\n*************')
+        print('raw onset:', raw.first_time, raw.first_samp)
+        print('eye onset:', eye.first_time, eye.first_samp)
+        print('raw info:\n', raw.info)
+        print('eye info:\n', eye.info)
+
+        raw_ann = raw.annotations
+        eye_ann = eye.annotations
+
+        raw = mne.io.RawArray(raw._data, raw.info, first_samp=0, copy='both')
+        raw.set_annotations(raw_ann)
+        eye = mne.io.RawArray(eye._data, eye.info, first_samp=0, copy='both')
+        eye.set_annotations(eye_ann)
+
+        print('raw array onset:', raw.first_time, raw.first_samp)
+        print('eye array onset:', eye.first_time, eye.first_samp)
+        print('raw info:\n', raw.info)
+        print('eye info:\n', eye.info)
+
         raw.add_channels([eye], force_update_info=True)
+
+        print('raw after adding eye channels:', raw.first_time, raw.first_samp)
+        print('eye after adding eye channels:', eye.first_time, eye.first_samp)
+        print('raw info:\n', raw.info)
+        print('eye info:\n', eye.info)
 
 
         # print("***********************************")
@@ -483,8 +529,7 @@ def bids_conversion(cfg):
 
         print('eye ann onset: ', eye_anot.onset[mask])
 
-        # TODO: STILL DONT HAVE A MATCH BETEWEEN ANNOTATIONS AND DATA!!
-        #       EITHER MATCHES WITHIN EYE (BLINK TO BLINK), OR BETWEEN EYE-RAW (STIM TO STIM)
+       
 
         # new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] + (raw.first_samp-eye.first_samp)/eye.info["sfreq"],
         #                                duration=eye_anot.duration[mask],
@@ -506,19 +551,20 @@ def bids_conversion(cfg):
         raw.set_annotations(raw.annotations + new_eye_anot)
 
 
-        # create blink EOG channel
+        # # create blink EOG channel
         print('\nAdding a blink channel...')
         blink_channel = np.zeros(raw._data.shape[1])
                 
         # get onset and duration of 'blink' annotations
-        for ann in raw.annotations:
+        blink_list=[]
+        for aa, (ann,) in enumerate(zip(raw.annotations)):
             if ann["description"] == "blink":
                 onset = int((ann["onset"] - raw.first_time)*raw.info["sfreq"])
                 duration = int(np.ceil(ann["duration"] * raw.info["sfreq"]))
                 blink_channel[onset: onset + duration] = 1e-5
-
-        # convolve with hamming re: mne EOG sim
-        blink_channel = np.convolve(blink_channel, np.hanning(int(0.1 * raw.info["sfreq"])), "same")[np.newaxis, :]
+                blink_list.append(aa)
+        raw.annotations.delete(blink_list)  # remove blink annotation after adding to channel
+        blink_channel = np.convolve(blink_channel, np.hanning(int(0.05 * raw.info["sfreq"])), "same")[np.newaxis, :]
         blink_info = mne.create_info(['blink'], raw.info['sfreq'], ch_types='eog')
         blink_array = mne.io.RawArray(blink_channel, blink_info, first_samp=raw.first_samp, copy='auto')
         raw.add_channels([blink_array], force_update_info=True)
@@ -563,7 +609,11 @@ def bids_conversion(cfg):
 
         print('\nupdated info ----------------------\n',raw.info,'\n----------------------\n')
 
-        raw.plot(picks=['eog', 'eyegaze'], duration=5, block=True, precompute=True)
+        raw.copy().crop(0, 600).plot(duration=10, 
+                 block=True, 
+                 precompute=True,
+                 scalings=dict(mag=1e-11)
+                 )
 
         gaze_epochs = mne.make_fixed_length_epochs(raw, duration=1)
         mne.viz.eyetracking.plot_gaze(gaze_epochs, sigma=10, calibration=cal)

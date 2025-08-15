@@ -18,7 +18,7 @@ from osl_ephys.preprocessing.osl_wrappers import (
 )
 from mne_bids_pipeline._config_import import _update_config_from_path
 from types import SimpleNamespace
-
+import mne_qt_browser
 
 
 # %% GLOBAL VARIABLES
@@ -233,6 +233,7 @@ def run_analysis(cfg, args, data_dict):
         # Drop bad epochs from the already loaded epochs object
         mne.viz.use_browser_backend("qt")
         data_dict[cfg.task].plot(
+            precompute=True,
             n_channels=64,
             show_options=True,
             show=True,

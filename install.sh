@@ -10,6 +10,7 @@ conda activate mne-opm
 pip3 install dcm2niix
 pip3 install dotenv
 pip3 install ipykernel
+pip3 install mne-qt-browser
 
 
 # mne-bids (dev) ----------------------------------------
