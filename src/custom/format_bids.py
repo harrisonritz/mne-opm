@@ -289,32 +289,38 @@ def bids_conversion(cfg):
     for rr, (fn) in enumerate(task_path):
 
         # get path
-        raw = mne.io.read_raw_fif(fn)
+        raw_rr = mne.io.read_raw_fif(fn)
 
-        raw.info["line_freq"] = cfg.line_freq
-        raw.info["subject_info"] = {
+        raw_rr.info["line_freq"] = cfg.line_freq
+        raw_rr.info["subject_info"] = {
             "id": int(subj),
             "his_id": f"{subj:03}",
         }
 
         # append raw to list
-        raw_list.append(raw)
+        raw_list.append(raw_rr)
+        del raw_rr
 
     # Concatenate raws for all runs of this subject
-    all_raw = mne.concatenate_raws(raw_list, preload=True, on_mismatch="raise")
+    raw = mne.concatenate_raws(raw_list, preload=True, on_mismatch="raise")
+    # crop
+    if cfg.crop > 0:
+        print(f'*****Cropping first {cfg.crop} seconds of raw data')
+        raw.crop(tmin=cfg.crop, tmax=None)
+        print(f'raw after cropping: {raw.first_time}')
 
-    recording_duration = all_raw.times[-1] - all_raw.times[0]
+    recording_duration = raw.times[-1] - raw.times[0]
     print(
         f"\n\n*************\nRecording duration for subject {subj}: {(recording_duration / 60):.2f} minutes\n*************\n\n"
     )
 
     # Rename annotations
     if cfg.rename_annot:
-        all_raw = convert_triggers(all_raw, cfg)
+        raw = convert_triggers(raw, cfg)
 
     # set bad channels
     if cfg.bads:
-        all_raw.info["bads"] = cfg.bads
+        raw.info["bads"] = cfg.bads
 
 
 
@@ -383,6 +389,7 @@ def bids_conversion(cfg):
         buffer = 0.1
         buffer_samp = int(buffer * eye.info["sfreq"])
         print('\nInterpolating remaining nans (buffer = ', buffer, ' sec)...')
+        orig_nan = np.isnan(eye.get_data()).any(axis=0)
         data = eye.get_data()  # Get all data at once
         for ch_idx, ch_name in enumerate(eye.ch_names):
             # get nan indices
@@ -446,6 +453,29 @@ def bids_conversion(cfg):
         print("Removing 'BAD_' from BAD_blink.")
         eye.annotations.rename({"BAD_blink": "blink"})
 
+
+        #  create NaN EOG channel
+        print('\nAdding a NaN channel...')
+        nan_channel = np.convolve(orig_nan, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[np.newaxis, :]*1e-5
+        nan_info = mne.create_info(['eye_nan'], eye.info['sfreq'], ch_types='eog')
+        nan_array = mne.io.RawArray(nan_channel, nan_info, first_samp=eye.first_samp, copy='auto')
+        eye.add_channels([nan_array], force_update_info=True)
+
+        # create blink EOG channel
+        print('\nAdding a blink channel...')
+        blink_channel = np.zeros(eye._data.shape[1])
+        for aa, (ann,) in enumerate(zip(eye.annotations)):
+            if ann["description"] == "blink":
+                onset = int((ann["onset"] - eye.first_time)*eye.info["sfreq"])
+                duration = int(np.ceil(ann["duration"] * eye.info["sfreq"]))
+                blink_channel[onset: onset + duration] = 1.0
+        blink_channel = np.convolve(blink_channel, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[np.newaxis, :]*1e-5
+        blink_info = mne.create_info(['blink'], eye.info['sfreq'], ch_types='eog')
+        blink_array = mne.io.RawArray(blink_channel, blink_info, first_samp=eye.first_samp, copy='auto')
+        eye.add_channels([blink_array], force_update_info=True)
+
+
+
         # align from events
         eye_events, eye_id  = mne.events_from_annotations(eye, regexp='stim_onset')
         eye_shape = eye_events.shape[0]
@@ -459,165 +489,119 @@ def bids_conversion(cfg):
         eye_onset = 0 if eye_shape< raw_shape else eye_shape - raw_shape
         eye_times = (eye_events[eye_onset:, 0] / eye.info["sfreq"]) - eye.first_time
     
-        # realign the raw data
+
+        # realign the raw data --------
         print("\nRealigning eye-tracking data to OPM...")
-        # mne.preprocessing.realign_raw(
-        #     eye, raw, eye_times, raw_times, verbose=True
-        # )
         mne.preprocessing.realign_raw(
             raw, eye, raw_times, eye_times, verbose=True
         )
 
-        # create blink EOG channel
-        # print('\nAdding a blink channel...')
-        # blink_channel = np.zeros(eye._data.shape[1])
-        # blink_list=[]
-        # for aa, (ann,) in enumerate(zip(eye.annotations)):
-        #     if ann["description"] == "blink":
-        #         onset = int((ann["onset"] - eye.first_time)*eye.info["sfreq"])
-        #         duration = int(np.ceil(ann["duration"] * eye.info["sfreq"]))
-        #         blink_channel[onset: onset + duration] = 1e-5
-        #         blink_list.append(aa)
-
-        # blink_channel = np.convolve(blink_channel, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[np.newaxis, :]
-        # blink_info = mne.create_info(['blink'], eye.info['sfreq'], ch_types='eog')
-        # blink_array = mne.io.RawArray(blink_channel, blink_info, first_samp=eye.first_samp, copy='auto')
-        # eye.add_channels([blink_array], force_update_info=True)
 
 
-
-        # add eye to raw
-        print('\n add channels')
-        print('\n\n*************')
-        print('raw onset:', raw.first_time, raw.first_samp)
-        print('eye onset:', eye.first_time, eye.first_samp)
-        print('raw info:\n', raw.info)
-        print('eye info:\n', eye.info)
-
-        raw_ann = raw.annotations
-        eye_ann = eye.annotations
-
-        raw = mne.io.RawArray(raw._data, raw.info, first_samp=0, copy='both')
-        raw.set_annotations(raw_ann)
-        eye = mne.io.RawArray(eye._data, eye.info, first_samp=0, copy='both')
-        eye.set_annotations(eye_ann)
-
-        print('raw array onset:', raw.first_time, raw.first_samp)
-        print('eye array onset:', eye.first_time, eye.first_samp)
-        print('raw info:\n', raw.info)
-        print('eye info:\n', eye.info)
-
-        raw.add_channels([eye], force_update_info=True)
-
-        print('raw after adding eye channels:', raw.first_time, raw.first_samp)
-        print('eye after adding eye channels:', eye.first_time, eye.first_samp)
-        print('raw info:\n', raw.info)
-        print('eye info:\n', eye.info)
-
-
-        # print("***********************************")
-        # print('eye shape: ', eye_shape)
-        # print('eye first time: ', eye.first_time)
-
-        # print('raw shape: ', raw_shape)
-        # print('raw first time: ', raw.first_time)
-        # print("***********************************")
-
-        cfg.eye_annotations = ['blink', 'stim_onset']       
-        eye_anot = eye.annotations.copy()
-        mask = np.array([desc in cfg.eye_annotations for desc in eye_anot.description])
-
-        print('eye ann onset: ', eye_anot.onset[mask])
+        def print_info(raw,eye,idx):
+            print(f'\n\n[{idx}]******** raw info *************')
+            # report number of CSI
+            n_csi = 0
+            for ann in raw.annotations:
+                if ann["description"] == "CSI":
+                    n_csi += 1
+            print(f'number of CSI: ', n_csi)
+            print(raw.annotations[:10].description)
+            print(raw.annotations[:10].onset)
+            print(raw.annotations[-10:].description)
+            print(raw.annotations[-10:].onset)
+            print('raw onset:', raw.first_time, raw.first_samp)
+            print('eye onset:', eye.first_time, eye.first_samp)
+        # print_info(raw,eye,505)
 
        
 
-        # new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] + (raw.first_samp-eye.first_samp)/eye.info["sfreq"],
-        #                                duration=eye_anot.duration[mask],
-        #                                description=eye_anot.description[mask])
-        
-        new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask] + (raw.first_time - eye.first_time),
-                                    duration=eye_anot.duration[mask],
-                                    description=eye_anot.description[mask])
+        # reset first_samp to zero ------------------------------------
+        raw_ann = raw.annotations
+        raw_ann.onset -= raw.first_time
+        raw = mne.io.RawArray(raw._data, raw.info, first_samp=0, copy='both')
+        raw.set_annotations(raw_ann)
 
-        
-        # print summary of new_eye_anot
-        print(f'\nEye-tracking annotations to be added ({len(new_eye_anot)}): ')
-        for desc in np.unique(new_eye_anot.description):
-            count = np.sum(new_eye_anot.description == desc)
-            print(f'  {desc}: {count}')
-        print()
+        eye_ann = eye.annotations
+        eye_ann.onset -= eye.first_time
+        eye = mne.io.RawArray(eye._data, eye.info, first_samp=0, copy='both')
+        eye.set_annotations(eye_ann)
 
 
-        raw.set_annotations(raw.annotations + new_eye_anot)
+        # add eye to raw ------------------------------------
+        raw.add_channels([eye], force_update_info=True)
+        # print_info(raw,eye,530)
 
 
-        # # create blink EOG channel
-        print('\nAdding a blink channel...')
-        blink_channel = np.zeros(raw._data.shape[1])
-                
-        # get onset and duration of 'blink' annotations
-        blink_list=[]
-        for aa, (ann,) in enumerate(zip(raw.annotations)):
-            if ann["description"] == "blink":
-                onset = int((ann["onset"] - raw.first_time)*raw.info["sfreq"])
-                duration = int(np.ceil(ann["duration"] * raw.info["sfreq"]))
-                blink_channel[onset: onset + duration] = 1e-5
-                blink_list.append(aa)
-        raw.annotations.delete(blink_list)  # remove blink annotation after adding to channel
-        blink_channel = np.convolve(blink_channel, np.hanning(int(0.05 * raw.info["sfreq"])), "same")[np.newaxis, :]
-        blink_info = mne.create_info(['blink'], raw.info['sfreq'], ch_types='eog')
-        blink_array = mne.io.RawArray(blink_channel, blink_info, first_samp=raw.first_samp, copy='auto')
-        raw.add_channels([blink_array], force_update_info=True)
-
-
-        # set coil types for 'DIN' to stim
+        # update coil types
         if 'DIN' in raw.ch_names:
-            # raw.set_channel_types({'DIN': 'stim'})
             raw.drop_channels('DIN')
-        
-        # set head channels to eyetrack
-        # if 'x_head' in raw.ch_names:
-        #     raw.set_channel_types({'x_head': 'misc'})
-        # if 'y_head' in raw.ch_names:
-        #     raw.set_channel_types({'y_head': 'misc'})
-        # if 'distance' in raw.ch_names:
-        #     raw.set_channel_types({'distance': 'misc'})
-
-
         if 'xpos_right' in raw.ch_names:
             mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, 
                                                                     {
                                                                         'xpos_right':('eyegaze', 'rad', 'right', 'x'),
                                                                         'ypos_right':('eyegaze', 'rad', 'right', 'y'),
                                                                         'pupil_right':('pupil', 'rad', 'right'),
-                                                                    })
-            
-        elif 'xpos_left' in raw.ch_names:
+                                                                    }) 
+        if 'xpos_left' in raw.ch_names:
             mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, 
                                                                     {
                                                                         'xpos_left':('eyegaze', 'rad', 'left', 'x'),
                                                                         'ypos_left':('eyegaze', 'rad', 'left', 'y'),
                                                                         'pupil_left':('pupil', 'rad', 'left'),
                                                                     })
-
-        else:
-            raise ValueError(
-                "No eyegaze channels found. Please check the eye-tracking data."
-            )
         
     
 
         print('\nupdated info ----------------------\n',raw.info,'\n----------------------\n')
 
-        raw.copy().crop(0, 600).plot(duration=10, 
-                 block=True, 
-                 precompute=True,
-                 scalings=dict(mag=1e-11)
-                 )
 
-        gaze_epochs = mne.make_fixed_length_epochs(raw, duration=1)
-        mne.viz.eyetracking.plot_gaze(gaze_epochs, sigma=10, calibration=cal)
-        del gaze_epochs
+
+        # plot annotations ------------------------------------
+        show_eye_plots = False
+        if show_eye_plots:
+            raw_copy = raw.copy()
+            cfg.eye_annotations = ['blink', 'stim_onset']       
+            eye_anot = eye.annotations.copy()
+            mask = np.array([desc in cfg.eye_annotations for desc in eye_anot.description])
+
+            print('eye ann onset: ', eye_anot.onset[mask])
+
+            new_eye_anot = mne.Annotations(onset=eye_anot.onset[mask],
+                                        duration=eye_anot.duration[mask],
+                                        description=eye_anot.description[mask])
+
+            raw_copy.set_annotations(raw.annotations + new_eye_anot)
+            
+            # print summary of new_eye_anot
+            print(f'\nEye-tracking annotations to be added ({len(new_eye_anot)}): ')
+            for desc in np.unique(new_eye_anot.description):
+                count = np.sum(new_eye_anot.description == desc)
+                print(f'  {desc}: {count}')
+            print()
+
+            raw_copy.crop(0, 600).plot(duration=10, 
+                    block=True, 
+                    precompute=True,
+                    scalings=dict(mag=1e-11)
+                    )
+            del raw_copy
+            
+            # # remove annotations    
+            # rm_list=[]
+            # for aa, (ann,) in enumerate(zip(raw.annotations)):
+            #     if ann["description"] in cfg.eye_annotations:
+            #         rm_list.append(aa)
+            # if rm_list:
+            #     raw.annotations.delete(rm_list)
+
+
+
+            # plot gaze
+            gaze_epochs = mne.make_fixed_length_epochs(raw)
+            mne.viz.eyetracking.plot_gaze(gaze_epochs, sigma=10, calibration=cal)
+            del gaze_epochs
+
         del eye
 
 
@@ -634,7 +618,7 @@ def bids_conversion(cfg):
     # write raw data to BIDS
     if emptyroom_path:
         mne_bids.write_raw_bids(
-            all_raw,
+            raw,
             bids_path,
             allow_preload=True,
             overwrite=True,
@@ -643,7 +627,7 @@ def bids_conversion(cfg):
         )
     else:
         mne_bids.write_raw_bids(
-            all_raw,
+            raw,
             bids_path,
             allow_preload=True,
             overwrite=True,

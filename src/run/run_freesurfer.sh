@@ -30,6 +30,12 @@ echo "SUBJECTS_DIR: $SUBJECTS_DIR"
 echo "--------------------------"
 echo ""
 
+# Check if freesurfer has already been run
+if [ -d "$SUBJECTS_DIR/$SUBJECT/mri" ]; then
+    echo "FreeSurfer has already been run for subject: $SUBJECT"
+    return
+fi
+
 # Check if T1W_PATH exists
 if [ -z "$T1W_PATH" ] || [ ! -f "$T1W_PATH" ]; then
     echo "ERROR: T1w image not found at path: $T1W_PATH"
@@ -40,7 +46,8 @@ fi
 # Check if T2W_PATH also exists and run appropriate recon-all command
 if [ -n "$T2W_PATH" ] && [ -f "$T2W_PATH" ]; then
     echo "T2w image found at: $T2W_PATH"
-    echo "Running FreeSurfer with both T1w and T2w inputs..."
+    echo "Running FreeSurfer with both T1w and T2w inputs ----------------------------"
+    echo ""
     recon-all -i $T1W_PATH -T2 $T2W_PATH -T2pial -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
 else
     echo "T2w image not found, running FreeSurfer with T1w only..."

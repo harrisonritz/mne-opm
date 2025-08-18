@@ -21,6 +21,7 @@ from mne_bids import (
 from dotenv import load_dotenv, find_dotenv
 from glob import glob
 
+
 # %% get info
 
 BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
@@ -40,7 +41,19 @@ SESSION = os.environ.get("SESSION")
 if SESSION is None:
     raise ValueError("Please set the SESSION environment variable.")
 
-print(f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
+
+# check if landmarks already written
+if BIDSPath(
+    subject=SUBJECT_NUM, 
+    session=SESSION, 
+    root=BIDS_DIR, 
+    suffix="T1w",
+    extension=".json",
+    ):
+    print(f"Landmarks already written for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
+    return
+else:
+    print(f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
 
 
 # get info
@@ -86,6 +99,7 @@ plot_kwargs = dict(
 
 
 # automatic coregistration
+if fname_raw
 try:
     coreg = mne.gui.coregistration(inst=fname_raw, subject=SUBJECT, subjects_dir=SUBJECTS_DIR, block=True)
 except Exception as e:
@@ -114,7 +128,9 @@ for rr in range(N_ROUNDS):
     )
 
 fig = mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
-pause("\n\nPress any key to continue after inspecting the coregistration plot...\n")
+fig.savefig(os.path.join(SUBJECTS_DIR, SUBJECT, "mri", "coregistration.png"))
+
+# pause("\n\nPress any key to continue after inspecting the coregistration plot...\n")
 
 
 

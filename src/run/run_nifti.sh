@@ -11,6 +11,12 @@ conda activate mne-opm
 SUBJ_RAW_PATH=$(find $RAW_DIR -type d -path "*$SUBJECT")
 DICOM_PATH=$SUBJ_RAW_PATH/dicom
 NIFTI_PATH=$SUBJ_RAW_PATH/anat
+# if $NIFTI_PATH exists then exit, otherwise create the folder
+if [ -d "$NIFTI_PATH" ]; then
+    echo "NIFTI directory already exists: $NIFTI_PATH"
+    echo "skipping nifti creation"
+    return
+fi
 mkdir -p $NIFTI_PATH
 
 

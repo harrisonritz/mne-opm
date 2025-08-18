@@ -271,19 +271,6 @@ def run_analysis(cfg, args, data_dict):
 
             data_dict[cfg.task].add_proj(projs=projs).apply_proj()
 
-            # plot HFC
-            data_dict[cfg.task].plot(
-                n_channels=64,
-                show_options=True,
-                show=True,
-                block=True,
-                highpass=cfg.l_freq,
-                lowpass=cfg.h_freq,
-                decim=4,
-                use_opengl=True,
-                scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
-            )
-
             if cfg.process_empty_room:
                 data_dict["noise"].add_proj(projs=projs).apply_proj()
 
@@ -294,28 +281,6 @@ def run_analysis(cfg, args, data_dict):
         mne.viz.use_browser_backend("qt")
         ica = data_dict["manualica"]
         data = data_dict[cfg.task]
-
-        # plot blink sources
-        eog_epochs = mne.Epochs(data.copy().filter(l_freq=1., h_freq=10), 
-                                events=None, 
-                                event_id='blink', 
-                                tmin=-0.5, 
-                                tmax=0.5, 
-                                baseline=(-0.5, -0.25), 
-                                picks='data', 
-                                preload=True, 
-                                decim=2, 
-                                detrend=None,
-                                )
-
-        ica.plot_sources(
-            inst=eog_epochs,
-            show_scrollbars=True,
-            block=True,
-            use_opengl=True,
-        )
-
-        del eog_epochs
 
         # plot components and sources
         ica.plot_components(

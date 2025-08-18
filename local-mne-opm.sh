@@ -15,10 +15,10 @@ echo ""
 
 
 # Defaults
-PIPELINE="preproc" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
+PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
 EXPERIMENT="TSXpilot"
-ANALYSIS="CSI"
-SUBJECT="007"
+ANALYSIS="response"
+SUBJECT="008"
 SESSION="01"
 CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
 DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"
@@ -30,7 +30,7 @@ usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        nifti|coreg|freesurfer|bids|preproc|sensor|source)
+        nifti|coreg|freesurfer|bids|preproc|sensor|source|all|func|anat)
             PIPELINE=$1
             shift 1
             ;;
