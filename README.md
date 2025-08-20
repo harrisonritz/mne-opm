@@ -26,8 +26,7 @@ using the provided run scripts.
 
 ## Installation (quick)
 
-1. Copy or create your environment variables file (see `env-vars.env.example` if present) and export it in your shell.
-2. Run the installer to create the conda environment and install Python dependencies.
+Run the installer to create the conda environment and install Python dependencies.
 
 Example (from project root):
 
@@ -41,6 +40,8 @@ After installation, activate the environment before running the pipeline:
 ```bash
 conda activate mne-opm
 ```
+
+Templates for configs are available under `config_TODO/`; copy them into your own config directory and edit.
 
 
 ## Data layout expectations

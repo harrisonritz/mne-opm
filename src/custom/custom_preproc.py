@@ -21,7 +21,11 @@ from types import SimpleNamespace
 import mne_qt_browser
 
 
+
 # %% GLOBAL VARIABLES
+
+mne.viz.set_browser_backend("qt")
+
 
 SEGMENT_LEN = 1.0
 
@@ -177,25 +181,71 @@ def run_analysis(cfg, args, data_dict):
             # Detect bad segments in the data
 
             # annotate breaks
-            if task != "noise" and cfg.find_breaks:
-                mne.preprocessing.annotate_break(
+            if task == "noise":
+
+                clean_data = bad_segments(
+                                data,
+                                picks=cfg.ch_types[0],
+                                ref_meg=False,
+                                metric="kurtosis",
+                                detect_zeros=False,
+                                channel_wise=True,
+                                segment_len=round(data.info["sfreq"] * SEGMENT_LEN),
+                                channel_threshold=.50,
+                            )
+
+            else:
+
+                if cfg.find_breaks:
+
+                    mne.preprocessing.annotate_break(
+                        data,
+                        min_break_duration=cfg.min_break_duration,
+                        t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
+                        t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
+                    )
+
+                # remove bad segments (run twice to catch edges)
+                print('pass 1 -----')
+                clean_data = bad_segments(
                     data,
-                    min_break_duration=cfg.min_break_duration,
-                    t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
-                    t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
+                    picks=cfg.ch_types[0],
+                    ref_meg=True,
+                    metric="kurtosis",
+                    detect_zeros=False,
+                    channel_wise=True,
+                    segment_len=round(data.info["sfreq"] * SEGMENT_LEN),
+                    channel_threshold=.05,
                 )
 
-            # remove bad segments
-            clean_data = bad_segments(
-                data,
-                picks=cfg.ch_types[0],
-                ref_meg=False,
-                metric="kurtosis",
-                detect_zeros=False,
-                channel_wise=False,
-                segment_len=round(data.info["sfreq"] * SEGMENT_LEN),
-            )
+                print('pass 2 -----')
+                clean_data = bad_segments(
+                    clean_data,
+                    picks=cfg.ch_types[0],
+                    ref_meg=True,
+                    metric="kurtosis",
+                    detect_zeros=False,
+                    channel_wise=True,
+                    segment_len=round(data.info["sfreq"] * SEGMENT_LEN * 0.66),
+                    channel_threshold=.10,
+                )
+
+                # clean_data.plot(
+                #     precompute=True,
+                #     n_channels=32,
+                #     show_options=True,
+                #     show=True,
+                #     block=True,
+                #     highpass=cfg.l_freq,
+                #     lowpass=cfg.h_freq,
+                #     decim=4,
+                #     scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
+                # )
+
+
+            # update data    
             results_dict[task] = clean_data
+
 
         elif args.analysis == "badchannels":
             # Detect bad channels in the data
@@ -231,7 +281,6 @@ def run_analysis(cfg, args, data_dict):
 
     if args.analysis == "manualchannel":
         # Drop bad epochs from the already loaded epochs object
-        mne.viz.use_browser_backend("qt")
         data_dict[cfg.task].plot(
             precompute=True,
             n_channels=64,
@@ -241,7 +290,6 @@ def run_analysis(cfg, args, data_dict):
             highpass=cfg.l_freq,
             lowpass=cfg.h_freq,
             decim=4,
-            use_opengl=True,
             scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
         )
 
@@ -271,16 +319,58 @@ def run_analysis(cfg, args, data_dict):
 
             data_dict[cfg.task].add_proj(projs=projs).apply_proj()
 
-            if cfg.process_empty_room:
+            if cfg.process_empty_room and "noise" in data_dict.keys():
                 data_dict["noise"].add_proj(projs=projs).apply_proj()
 
 
 
     elif args.analysis == "manualica":
         # Run ICA on the data
-        mne.viz.use_browser_backend("qt")
+
         ica = data_dict["manualica"]
         data = data_dict[cfg.task]
+
+
+        cfg.ref_bads = True
+        if cfg.ref_bads:
+
+            # Recommended procedure is to perform ICA separately on reference channels, 
+            # extract them using get_sources(), and then append them to the inst using 
+            # add_channels(), preferably with the prefix REF_ICA so that they can be 
+            # automatically detected.
+
+            print('\n fitting ICA to references ---------------\n')
+
+            data_filt = data.copy().pick('ref_meg').filter(l_freq=1, h_freq=None)
+
+            ref_ica = mne.preprocessing.ICA(
+                n_components=.99,
+                method='picard',
+                max_iter=250,
+                allow_ref_meg=True
+                )
+
+            ref_ica.fit(
+                data_filt,
+                decim=2,
+                reject_by_annotation=True,
+                )
+
+            ref_source = ref_ica.get_sources(data_filt)
+            ref_source.rename_channels(lambda x: f"REF_{x}")
+            data.add_channels([ref_source], force_update_info=True)
+
+            del ref_source, ref_ica, data_filt
+
+            ref_idx,ref_scores = ica.find_bads_ref(
+                inst=data,
+                method="separate",
+                )
+
+            print('ref index: ', ref_idx)
+            ica.exclude.extend(ref_idx)
+            # ica.plot_scores(ref_scores, title='reference components', show=True)
+
 
         # plot components and sources
         ica.plot_components(
@@ -292,7 +382,6 @@ def run_analysis(cfg, args, data_dict):
             inst=data,
             show_scrollbars=True,
             block=True,
-            use_opengl=True,
         )
 
         results_dict["ica"] = ica
@@ -308,11 +397,12 @@ def save_results(cfg, args, results_dict):
     task_dict = {
         task: data for task, data in results_dict.items() if task not in ["bads", "ica"]
     }
+    print('task dict: ', task_dict)
     for task, data in task_dict.items():
         if data is None:
             raise ValueError(f"No data to save for task: {task}")
 
-        print(f"Saving subject {cfg.subjects[0]}, task {task} data")
+        print(f"Saving subject {cfg.subjects[0]}, task {task}")
 
         if args.analysis in ["badsegments", "badchannels", "manualchannel"]:
             # For bad segements, use mne_bids to save with OSL processing label
@@ -352,8 +442,40 @@ def save_results(cfg, args, results_dict):
                     print("Successfully updated bad channels")
 
             print(f"Saving to: {bids_path}")
-            data.save(bids_path, split_naming="bids", overwrite=True)
-            print("Successfully saved cleaned data")
+
+            if 'noise' in task_dict.keys() and task != 'noise':
+
+                emptyroom_bids_path = mne_bids.find_matching_paths(
+                    root=cfg.bids_root,
+                    subjects=cfg.subjects,
+                    tasks='noise',
+                    sessions=cfg.sessions,
+                    datatypes="meg",
+                    ignore_nosub=True,
+                    splits=None,
+                    extensions=".fif",
+                )[0]
+
+                mne_bids.write_raw_bids(
+                    data,
+                    bids_path,
+                    allow_preload=True,
+                    overwrite=True,
+                    format="FIF",
+                    empty_room=emptyroom_bids_path,
+                )
+
+            else:
+            
+                mne_bids.write_raw_bids(
+                    data,
+                    bids_path,
+                    allow_preload=True,
+                    overwrite=True,
+                    format="FIF",
+                )
+                
+            print("Saved cleaned data")
 
         elif args.analysis == "badepochs":
             # For bad epochs, overwrite the original preprocessed epochs file

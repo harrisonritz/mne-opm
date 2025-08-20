@@ -22,6 +22,9 @@ from dotenv import load_dotenv, find_dotenv
 from glob import glob
 
 
+import mne_qt_browser
+mne.viz.set_browser_backend("qt")
+
 # %% get info
 
 BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
@@ -43,17 +46,7 @@ if SESSION is None:
 
 
 # check if landmarks already written
-if BIDSPath(
-    subject=SUBJECT_NUM, 
-    session=SESSION, 
-    root=BIDS_DIR, 
-    suffix="T1w",
-    extension=".json",
-    ):
-    print(f"Landmarks already written for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
-    return
-else:
-    print(f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
+print(f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
 
 
 # get info
@@ -66,14 +59,14 @@ fname_raw = mne_bids.find_matching_paths(
     extensions=".fif",
 )[0]
 
-print('paths: ', mne_bids.find_matching_paths(
-    root=BIDS_DIR,
-    subjects=SUBJECT_NUM,
-    sessions=SESSION,
-    tasks=TASK,
-    ignore_nosub=True,
-    extensions=".fif",
-))
+# print('paths: ', mne_bids.find_matching_paths(
+#     root=BIDS_DIR,
+#     subjects=SUBJECT_NUM,
+#     sessions=SESSION,
+#     tasks=TASK,
+#     ignore_nosub=True,
+#     extensions=".fif",
+# ))
 
 
 info = read_info(fname_raw)
@@ -98,12 +91,13 @@ plot_kwargs = dict(
 
 
 
-# automatic coregistration
-if fname_raw
-try:
-    coreg = mne.gui.coregistration(inst=fname_raw, subject=SUBJECT, subjects_dir=SUBJECTS_DIR, block=True)
-except Exception as e:
-    print(f"------ Error in GUI coregistration: {e}")
+# use GUI for setting fiducials
+if not glob(os.path.join(SUBJECTS_DIR, SUBJECT, 'bem', "*fiducials.fif")):
+    print('\n-------use gui')
+    try:
+        coreg = mne.gui.coregistration(inst=fname_raw, subject=SUBJECT, subjects_dir=SUBJECTS_DIR, block=True)
+    except Exception as e:
+        print(f"------ Error in GUI coregistration: {e}")
 
 coreg = mne.coreg.Coregistration(info, SUBJECT, SUBJECTS_DIR, fiducials='estimated')
 
@@ -127,9 +121,8 @@ for rr in range(N_ROUNDS):
         f"/ {np.median(dists):.2f} mm / {np.max(dists):.2f} mm"
     )
 
-fig = mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
-fig.savefig(os.path.join(SUBJECTS_DIR, SUBJECT, "mri", "coregistration.png"))
 
+# fig = mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
 # pause("\n\nPress any key to continue after inspecting the coregistration plot...\n")
 
 

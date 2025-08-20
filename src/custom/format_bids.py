@@ -20,9 +20,10 @@ import glob
 import argparse
 from types import SimpleNamespace
 from mne_bids_pipeline._config_import import _update_config_from_path
-import mne_qt_browser
 from mne._fiff.meas_info import _merge_info
 
+import mne_qt_browser
+mne.set_config("MNE_BROWSER_BACKEND", "qt")
 
 # %% import parameters
 
