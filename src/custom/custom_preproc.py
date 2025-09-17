@@ -180,7 +180,7 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
 
     print("\n[regress_reference] regressing-out reference channels")
     filt = raw.copy().filter(l_freq=cfg.l_freq, h_freq=cfg.h_freq, method="iir", picks=[cfg.ch_types[0], 'ref_meg'])
-    weights = mne.preprocessing.EOGRegression(picks_artifact="ref_meg").fit(filt)
+    weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(filt)
     raw_clean = weights.apply(raw, copy=True)
     del filt, weights
     return raw_clean
