@@ -488,18 +488,33 @@ def bids_conversion(cfg):
         saccade_array = mne.io.RawArray(saccade_channel, saccade_info, first_samp=eye.first_samp, copy='auto')
         # eye.add_channels([saccade_array], force_update_info=True)
 
-        # do PCA on the NaN, blink, saccade channels, and add each PC as an EOG channel
-        print('\nAdding eye channels to eye-tracking data using PCA...')
-        pca_data = np.vstack([nan_channel, blink_channel, saccade_channel])
-        u, s, vh = np.linalg.svd(pca_data, full_matrices=False)
-        n_pcs = min(3, pca_data.shape[0])
-        for pc_idx in range(n_pcs):
-            # Create a single-channel PC time series (shape: 1 x n_times)
-            pc_ts = (s[pc_idx] * vh[pc_idx, :])[np.newaxis, :]
-            pc_info = mne.create_info([f'eye_pc{pc_idx+1}'], eye.info['sfreq'], ch_types='eog')
-            pc_array = mne.io.RawArray(pc_ts, pc_info, first_samp=eye.first_samp, copy='auto')
-            eye.add_channels([pc_array], force_update_info=True)
-        del nan_array, blink_array, saccade_array, pca_data, u, s, vh
+        # Use NMF on the NaN, blink, saccade channels, and add each component as an EOG channel
+        print('\nAdding eye channels to eye-tracking data using NMF...')
+        nmf_data = np.vstack([nan_channel, blink_channel, saccade_channel])
+        nmf_data = np.clip(nmf_data, 0.0, None)  # ensure non-negativity
+        n_comp = min(3, nmf_data.shape[0])
+        try:
+            from sklearn.decomposition import NMF
+            nmf = NMF(n_components=n_comp, init='nndsvda', random_state=99, max_iter=500)
+            W = nmf.fit_transform(nmf_data)     # shape: (3, n_comp)
+            H = nmf.components_                 # shape: (n_comp, n_times)
+            for k in range(n_comp):
+                comp_ts = H[k][np.newaxis, :]
+                comp_info = mne.create_info([f'eye_nmf{k+1}'], eye.info['sfreq'], ch_types='eog')
+                comp_array = mne.io.RawArray(comp_ts, comp_info, first_samp=eye.first_samp, copy='auto')
+                eye.add_channels([comp_array], force_update_info=True)
+            del W, H, nmf
+        except Exception as e:
+            # Graceful fallback to SVD if sklearn is not available or NMF fails to converge
+            print(f"NMF unavailable or failed ({e}); falling back to SVD components.")
+            u, s, vh = np.linalg.svd(nmf_data, full_matrices=False)
+            for k in range(n_comp):
+                comp_ts = (s[k] * vh[k, :])[np.newaxis, :]
+                comp_info = mne.create_info([f'eye_pc{k+1}'], eye.info['sfreq'], ch_types='eog')
+                comp_array = mne.io.RawArray(comp_ts, comp_info, first_samp=eye.first_samp, copy='auto')
+                eye.add_channels([comp_array], force_update_info=True)
+            del u, s, vh
+        del nan_array, blink_array, saccade_array, nmf_data
         print('done adding eye-tracking channels, new info:')
         print(eye.info)
 

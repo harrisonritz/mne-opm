@@ -153,27 +153,39 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
             t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
             t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
         )
-    first = osl_bad_segments(
+    # first = osl_bad_segments(
+    #     raw,
+    #     picks=cfg.ch_types[0],
+    #     ref_meg=True,
+    #     metric="kurtosis",
+    #     detect_zeros=False,
+    #     channel_wise=True,
+    #     segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
+    #     channel_threshold=0.05,
+    # )
+    # second = osl_bad_segments(
+    #     first,
+    #     picks=cfg.ch_types[0],
+    #     ref_meg=True,
+    #     metric="kurtosis",
+    #     detect_zeros=False,
+    #     channel_wise=True,
+    #     segment_len=round(first.info["sfreq"] * SEGMENT_LEN_SEC * 0.66),
+    #     channel_threshold=0.10,
+    # )
+    # return second
+
+    badseg = osl_bad_segments(
         raw,
         picks=cfg.ch_types[0],
         ref_meg=True,
         metric="kurtosis",
         detect_zeros=False,
         channel_wise=True,
-        segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
+        segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC * 0.500),
         channel_threshold=0.05,
     )
-    second = osl_bad_segments(
-        first,
-        picks=cfg.ch_types[0],
-        ref_meg=True,
-        metric="kurtosis",
-        detect_zeros=False,
-        channel_wise=True,
-        segment_len=round(first.info["sfreq"] * SEGMENT_LEN_SEC * 0.66),
-        channel_threshold=0.10,
-    )
-    return second
+    return badseg
 
 
 def detect_bad_channels(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> list[str]:
