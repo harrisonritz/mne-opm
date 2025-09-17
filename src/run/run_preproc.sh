@@ -36,6 +36,13 @@ echo ""
 
 
 echo ""
+echo "======================= MNE: reference regression =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress_ref --config=$CONFIG_PATH
+
+
+
+echo ""
 echo "======================= OSL: bad segment =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
