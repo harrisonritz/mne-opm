@@ -8,10 +8,16 @@ conda activate mne-opm
 ## fixed variables
 export MPLBACKEND=agg
 
-
 # set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 
+
+# fail on first crash
+if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
+	set -euo pipefail
+	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
+	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
+fi
 
 ## RUN PREPROCESSING ------------------
 echo ""

@@ -1,96 +1,79 @@
-# Run Auxiliary preprocessing steps on OPM data
-#
-# This script is designed to run auxiliary preprocessing steps on OPM data using MNE-Python and OSL.
-# It includes functions to load configuration, load data from BIDS, run analyses (bad segments, bad channels, bad epochs),
-# and save results in BIDS format.
+"""Modular auxiliary preprocessing for OPM-MEG data.
 
-# %%
-import os
-import mne_bids
-import mne
+Provided analyses (CLI --analysis):
+    bad_segments   -> detect & annotate bad raw segments
+    bad_channels   -> statistical detection of bad channels
+    manual_channel -> interactive marking of bad channels (+ optional HFC)
+    bad_epochs     -> drop bad epochs post-epoching
+    manual_ica     -> interactive ICA component review (+ optional ref ICA)
+
+Internal normalized keys remove underscores (e.g. bad_segments -> badsegments).
+
+Outputs are written back into the BIDS structure using mne-bids utilities,
+re-using existing derivative locations produced by mne-bids-pipeline.
+"""
+
+from __future__ import annotations
+
 import argparse
-import importlib.util
-import pandas as pd  # Add pandas for handling TSV files
-from osl_ephys.preprocessing.osl_wrappers import (
-    bad_segments,
-    bad_channels,
-    drop_bad_epochs,
-)
-from mne_bids_pipeline._config_import import _update_config_from_path
+import os
 from types import SimpleNamespace
-import mne_qt_browser
+from typing import Dict, Any
+
+import mne
+import mne_bids
+import pandas as pd
+try:  # optional dependency for nicer Qt browser; skip if unavailable
+    import mne_qt_browser  # noqa: F401
+    _HAVE_QT_BROWSER = True
+except Exception:  # pragma: no cover
+    _HAVE_QT_BROWSER = False
+from mne_bids_pipeline._config_import import _update_config_from_path
+from osl_ephys.preprocessing.osl_wrappers import (
+    bad_segments as osl_bad_segments,
+    bad_channels as osl_bad_channels,
+    drop_bad_epochs as osl_drop_bad_epochs,
+)
 
 
 
 # %% GLOBAL VARIABLES
 
-mne.viz.set_browser_backend("qt")
+try:  # ensure a GUI backend for interactive steps
+    mne.viz.set_browser_backend("qt")
+except Exception:  # pragma: no cover - fallback if qt not available
+    pass
+
+SEGMENT_LEN_SEC = 1.0  # length for segment-based detection
 
 
-SEGMENT_LEN = 1.0
+# --------------------------------------------------------------------------------------
+# Utility / Loading
+# --------------------------------------------------------------------------------------
 
 
 # %% functions
-def load_config(config_path):
-    """Load configuration from a Python file."""
-    print(f"Loading configuration from: {config_path}")
+def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
+    """Load only the data needed for the selected analysis.
 
-    # Load the configuration file as a module
-    spec = importlib.util.spec_from_file_location("config", config_path)
-    config_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config_module)
-
-    # Extract necessary variables
-    config = {
-        "subjects": getattr(config_module, "subjects", []),
-        "deriv_root": getattr(config_module, "deriv_root", None),
-        "bids_root": getattr(config_module, "bids_root", None),
-    }
-
-    return config
-
-
-def load_data(cfg, args):
-    """Load data from BIDS directory based on configuration.
-
-    Parameters
-    ----------
-    cfg : dict
-        Configuration dictionary with subjects, bids_root, and deriv_root.
-    args : argparse.Namespace
-        Command line arguments containing analysis type and other parameters.
-
-    Returns
-    -------
-    dict
-        Dictionary with loaded data for each subject and task.
+    Returns a dict with keys:
+      bad_segments / bad_channels / manual_channel -> {task[, noise]}
+      bad_epochs -> {task}
+      manual_ica -> {task, manualica}
     """
+    print(f"\n\n[load_data] analysis={analysis}")
+    out: Dict[str, Any] = {}
 
-    print(
-        f"\n---------\nLoading data from BIDS directory: {cfg.bids_root} for subjects: {cfg.subjects}\n"
-    )
-
-    # Define tasks to process
-    data_dict = {}
-
-    if args.analysis in ["badsegments", "badchannels", "manualchannel"]:
-        
-        # Check if derivatives already exist
+    if analysis in {"badsegments", "badchannels", "manualchannel"}:
         if getattr(cfg, "_skip_on_deriv", False):
             deriv_path = os.path.join(cfg.deriv_root, f"sub-{cfg.subjects[0]}")
             if os.path.exists(deriv_path):
-                print(f"SKIPPING: derivatives already exist at {deriv_path}")
-                exit()
-
-        
-        # For bad_segments and bad_channels, load raw data from BIDS
-        tasks = []
-        if cfg.process_empty_room:
-            tasks.append("noise")
-        tasks.append(cfg.task)  # Main task
-
+                print(f"[load_data] derivatives exist at {deriv_path}; exiting.")
+                raise SystemExit(0)
+        tasks = [cfg.task]
+        if getattr(cfg, "process_empty_room", False):
+            tasks.insert(0, "noise")
         for task in tasks:
-            print(f"Loading task: {task}")
             bids_path = mne_bids.find_matching_paths(
                 root=cfg.bids_root,
                 subjects=cfg.subjects,
@@ -100,14 +83,11 @@ def load_data(cfg, args):
                 ignore_nosub=True,
                 extensions=".fif",
             )[0]
+            out[task] = mne_bids.read_raw_bids(bids_path, extra_params={"preload": True})
+            print(f"[load_data] loaded raw task={task}")
 
-            raw = mne_bids.read_raw_bids(bids_path, extra_params={"preload": True})
-            data_dict[task] = raw
-            print(f"Successfully loaded {task} data for subject {cfg.subjects[0]}")
-
-    elif args.analysis == "badepochs":
-        
-        bids_path = mne_bids.find_matching_paths(
+    elif analysis == "badepochs":
+        ep_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
             subjects=cfg.subjects,
             tasks=cfg.task,
@@ -117,16 +97,11 @@ def load_data(cfg, args):
             processings="clean",
             extensions=".fif",
         )[0]
+        out[cfg.task] = mne.read_epochs(ep_path, preload=True)
+        print("[load_data] loaded epochs")
 
-        epochs = mne.read_epochs(bids_path, preload=True)
-        data_dict[cfg.task] = epochs
-        print(f"Successfully loaded {cfg.task} data for subject {cfg.subjects[0]}")
-
-
-    elif args.analysis == "manualica":
-
-        # load raw data
-        bids_path = mne_bids.find_matching_paths(
+    elif analysis == "manualica":
+        raw_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
             subjects=cfg.subjects,
             tasks=cfg.task,
@@ -136,15 +111,8 @@ def load_data(cfg, args):
             processings="clean",
             extensions=".fif",
         )[0]
-
-        raw = mne_bids.read_raw_bids(bids_path, extra_params={"preload": True})
-        data_dict[cfg.task] = raw
-        print(f"Successfully loaded {cfg.task} data for subject {cfg.subjects[0]}")
-
-
-
-        # Load ICA data
-        bids_path = mne_bids.find_matching_paths(
+        out[cfg.task] = mne_bids.read_raw_bids(raw_path, extra_params={"preload": True})
+        ica_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
             subjects=cfg.subjects,
             tasks=cfg.task,
@@ -154,134 +122,101 @@ def load_data(cfg, args):
             processings="ica",
             extensions=".fif",
         )[0]
-        print(f"Found ICA path: {bids_path}")
+        out["manualica"] = mne.preprocessing.read_ica(ica_path)
+        print("[load_data] loaded raw + ICA")
+    else:  # pragma: no cover
+        raise ValueError(f"Unknown analysis {analysis}")
+    return out
 
-        ica = mne.preprocessing.read_ica(bids_path)
-        data_dict["manualica"] = ica
-        print(f"Successfully loaded ICA data for subject {cfg.subjects[0]}")
 
-    else:
-        raise ValueError(
-            f"Unknown analysis type: {args.analysis}. Unable to load data."
+# --------------------------------------------------------------------------------------
+# Individual Analysis Functions
+# --------------------------------------------------------------------------------------
+
+def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: bool = False) -> mne.io.BaseRaw:
+    """Detect bad segments (single pass for noise, two passes otherwise)."""
+    if is_noise:
+        return osl_bad_segments(
+            raw,
+            picks=cfg.ch_types[0],
+            ref_meg=False,
+            metric="kurtosis",
+            detect_zeros=False,
+            channel_wise=True,
+            segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
+            channel_threshold=0.50,
         )
-
-    return data_dict
-
-
-def run_analysis(cfg, args, data_dict):
-    """Run the specified OSL analysis on the loaded data."""
-
-    print(f"\n---------\nRunning {args.analysis} analysis\n")
-
-    results_dict = {"bads": []}
-    for task, data in data_dict.items():
-        print(f"Processing SUBJECT: {cfg.subjects[0]} // TASK: {task} // DATA: {data}")
-
-        if args.analysis == "badsegments":
-            # Detect bad segments in the data
-
-            # annotate breaks
-            if task == "noise":
-
-                clean_data = bad_segments(
-                                data,
-                                picks=cfg.ch_types[0],
-                                ref_meg=False,
-                                metric="kurtosis",
-                                detect_zeros=False,
-                                channel_wise=True,
-                                segment_len=round(data.info["sfreq"] * SEGMENT_LEN),
-                                channel_threshold=.50,
-                            )
-
-            else:
-
-                if cfg.find_breaks:
-
-                    mne.preprocessing.annotate_break(
-                        data,
-                        min_break_duration=cfg.min_break_duration,
-                        t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
-                        t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
-                    )
-
-                # remove bad segments (run twice to catch edges)
-                print('pass 1 -----')
-                clean_data = bad_segments(
-                    data,
-                    picks=cfg.ch_types[0],
-                    ref_meg=True,
-                    metric="kurtosis",
-                    detect_zeros=False,
-                    channel_wise=True,
-                    segment_len=round(data.info["sfreq"] * SEGMENT_LEN),
-                    channel_threshold=.05,
-                )
-
-                print('pass 2 -----')
-                clean_data = bad_segments(
-                    clean_data,
-                    picks=cfg.ch_types[0],
-                    ref_meg=True,
-                    metric="kurtosis",
-                    detect_zeros=False,
-                    channel_wise=True,
-                    segment_len=round(data.info["sfreq"] * SEGMENT_LEN * 0.66),
-                    channel_threshold=.10,
-                )
-
-                # clean_data.plot(
-                #     precompute=True,
-                #     n_channels=32,
-                #     show_options=True,
-                #     show=True,
-                #     block=True,
-                #     highpass=cfg.l_freq,
-                #     lowpass=cfg.h_freq,
-                #     decim=4,
-                #     scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
-                # )
+    if getattr(cfg, "find_breaks", False):
+        mne.preprocessing.annotate_break(
+            raw,
+            min_break_duration=cfg.min_break_duration,
+            t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
+            t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
+        )
+    first = osl_bad_segments(
+        raw,
+        picks=cfg.ch_types[0],
+        ref_meg=True,
+        metric="kurtosis",
+        detect_zeros=False,
+        channel_wise=True,
+        segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
+        channel_threshold=0.05,
+    )
+    second = osl_bad_segments(
+        first,
+        picks=cfg.ch_types[0],
+        ref_meg=True,
+        metric="kurtosis",
+        detect_zeros=False,
+        channel_wise=True,
+        segment_len=round(first.info["sfreq"] * SEGMENT_LEN_SEC * 0.66),
+        channel_threshold=0.10,
+    )
+    return second
 
 
-            # update data    
-            results_dict[task] = clean_data
+def detect_bad_channels(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> list[str]:
+    """Return list of detected bad channel names."""
+    filt = raw.copy().filter(l_freq=cfg.l_freq, h_freq=cfg.h_freq, method="iir")
+    detected = osl_bad_channels(
+        filt,
+        picks=cfg.ch_types[0],
+        ref_meg=None,
+        significance_level=0.05,
+    )
+    return list(detected.info["bads"])
 
 
-        elif args.analysis == "badchannels":
-            # Detect bad channels in the data
+def drop_bad_epochs(epochs: mne.Epochs, cfg: SimpleNamespace) -> mne.Epochs:
+    return osl_drop_bad_epochs(
+        epochs,
+        picks=cfg.ch_types[0],
+        ref_meg=None,
+        metric="std",
+    )
 
-            # Filter the raw data
-            data_filt = data.copy().filter(
-                l_freq=cfg.l_freq,
-                h_freq=cfg.h_freq,
-                method="iir",
-            )
 
-            # Detect bad channels
-            clean_data = bad_channels(
-                data_filt,
-                picks=cfg.ch_types[0],
-                ref_meg=None,
-                significance_level=0.05,
-            )
-            del data_filt
+def apply_hfc(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None):
+    if not getattr(cfg, "_do_HFC", False):
+        return raw, noise
+    print("[HFC] applying projections")
+    projs = mne.preprocessing.compute_proj_hfc(
+        raw.info,
+        order=cfg._hfc_order,
+        picks=cfg.ch_types[0],
+    )
+    raw.add_proj(projs=projs).apply_proj()
+    if noise is not None:
+        noise.add_proj(projs=projs).apply_proj()
+    return raw, noise
 
-            results_dict[task] = data
-            results_dict["bads"].extend(clean_data.info["bads"])
-            print(f"Bad channels in task {task}: [{clean_data.info['bads']}]")
 
-        elif args.analysis == "badepochs":
-            # Drop bad epochs from the already loaded epochs object
-            results_dict[task] = drop_bad_epochs(
-                data,
-                picks=cfg.ch_types[0],
-                ref_meg=None,
-                metric="std",
-            )
-
-    if args.analysis == "manualchannel":
-        # Drop bad epochs from the already loaded epochs object
-        data_dict[cfg.task].plot(
+def manual_channel_selection(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None):
+    if not _HAVE_QT_BROWSER:
+        print("[manual_channel_selection] Qt browser not available; skipping interactive plot (set SKIP_MANUAL=1 to omit this step entirely).")
+    else:
+        raw.plot(
             precompute=True,
             n_channels=64,
             show_options=True,
@@ -292,121 +227,81 @@ def run_analysis(cfg, args, data_dict):
             decim=4,
             scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
         )
-
-        # update bads based on selections to the raw data
-        results_dict["bads"] = []
-        for item in data_dict[cfg.task].info["bads"]:
-            if isinstance(item, str):
-                results_dict["bads"].append(item)
-            else:
-                results_dict["bads"].append(item.item())
-
-        results_dict[cfg.task] = data_dict[cfg.task]
-        results_dict[cfg.task].info["bads"] = results_dict["bads"]
-        if cfg.process_empty_room:
-            results_dict["noise"] = data_dict["noise"]
-            results_dict["noise"].info["bads"] = results_dict["bads"]
-
-        # do HFC
-        if cfg._do_HFC:
-
-            print("\n\n************** running HFC **************")
-            projs = mne.preprocessing.compute_proj_hfc(
-                data_dict[cfg.task].info, 
-                order=cfg._hfc_order,
-                picks=cfg.ch_types[0],
-            )
-
-            data_dict[cfg.task].add_proj(projs=projs).apply_proj()
-
-            if cfg.process_empty_room and "noise" in data_dict.keys():
-                data_dict["noise"].add_proj(projs=projs).apply_proj()
+    bads: list[str] = []
+    for ch in raw.info["bads"]:
+        bads.append(ch if isinstance(ch, str) else ch.item())
+    raw.info["bads"] = bads
+    if noise is not None:
+        noise.info["bads"] = bads.copy()
+    raw, noise = apply_hfc(raw, cfg, noise)
+    return raw, bads, noise
 
 
-
-    elif args.analysis == "manualica":
-        # Run ICA on the data
-
-        ica = data_dict["manualica"]
-        data = data_dict[cfg.task]
-
-
-        cfg.ref_bads = True
-        if cfg.ref_bads:
-
-            # Recommended procedure is to perform ICA separately on reference channels, 
-            # extract them using get_sources(), and then append them to the inst using 
-            # add_channels(), preferably with the prefix REF_ICA so that they can be 
-            # automatically detected.
-
-            print('\n fitting ICA to references ---------------\n')
-
-            data_filt = data.copy().pick('ref_meg').filter(l_freq=1, h_freq=None)
-
-            ref_ica = mne.preprocessing.ICA(
-                n_components=.99,
-                method='picard',
-                max_iter=250,
-                allow_ref_meg=True
-                )
-
-            ref_ica.fit(
-                data_filt,
-                decim=2,
-                reject_by_annotation=True,
-                )
-
-            ref_source = ref_ica.get_sources(data_filt)
-            ref_source.rename_channels(lambda x: f"REF_{x}")
-            data.add_channels([ref_source], force_update_info=True)
-
-            del ref_source, ref_ica, data_filt
-
-            ref_idx,ref_scores = ica.find_bads_ref(
-                inst=data,
-                method="separate",
-                )
-
-            print('ref index: ', ref_idx)
-            ica.exclude.extend(ref_idx)
-            # ica.plot_scores(ref_scores, title='reference components', show=True)
-
-
-        # plot components and sources
-        ica.plot_components(
-            inst=data,
-             nrows=5,
+def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.preprocessing.ICA:
+    if getattr(cfg, "ref_bads", True):
+        ref_raw = raw.copy().pick("ref_meg").filter(l_freq=1, h_freq=None)
+        ref_ica = mne.preprocessing.ICA(
+            n_components=.99,
+            method="picard",
+            max_iter=250,
+            allow_ref_meg=True,
         )
+        ref_ica.fit(ref_raw, decim=2, reject_by_annotation=True)
+        ref_src = ref_ica.get_sources(ref_raw)
+        ref_src.rename_channels(lambda x: f"REF_{x}")
+        raw.add_channels([ref_src], force_update_info=True)
+        ref_idx, _ = ica.find_bads_ref(inst=raw, method="separate")
+        ica.exclude.extend(ref_idx)
+        del ref_raw, ref_ica, ref_src
+    ica.plot_components(inst=raw, nrows=5)
+    ica.plot_sources(inst=raw, show_scrollbars=True, block=True)
+    return ica
 
-        ica.plot_sources(
-            inst=data,
-            show_scrollbars=True,
-            block=True,
-        )
 
-        results_dict["ica"] = ica
-
-    return results_dict
+# --------------------------------------------------------------------------------------
+# Dispatcher
+# --------------------------------------------------------------------------------------
 
 
-def save_results(cfg, args, results_dict):
-    """Save the analysis results in BIDS format."""
+def run_analysis(cfg: SimpleNamespace, analysis: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    results: Dict[str, Any] = {"bads": []}
+    if analysis == "badsegments":
+        for task, raw in data.items():
+            cleaned = detect_bad_segments(raw, cfg, is_noise=(task == "noise"))
+            results[task] = cleaned
+    elif analysis == "badchannels":
+        dedup = set()
+        for task, raw in data.items():
+            bads = detect_bad_channels(raw, cfg)
+            results[task] = raw
+            for b in bads:
+                if b not in dedup:
+                    dedup.add(b)
+        results["bads"] = sorted(dedup)
+    elif analysis == "manualchannel":
+        noise = data.get("noise") if getattr(cfg, "process_empty_room", False) else None
+        raw, bads, noise = manual_channel_selection(data[cfg.task], cfg, noise)
+        results[cfg.task] = raw
+        results["bads"] = bads
+        if noise is not None:
+            results["noise"] = noise
+    elif analysis == "badepochs":
+        results[cfg.task] = drop_bad_epochs(data[cfg.task], cfg)
+    elif analysis == "manualica":
+        ica = manual_ica_review(data["manualica"], data[cfg.task], cfg)
+        results[cfg.task] = data[cfg.task]
+        results["ica"] = ica
+    else:  # pragma: no cover
+        raise ValueError(f"Unknown analysis {analysis}")
+    return results
 
-    print(f"\n---------\nSaving results to BIDS directory: {cfg.bids_root}\n")
 
-    task_dict = {
-        task: data for task, data in results_dict.items() if task not in ["bads", "ica"]
-    }
-    print('task dict: ', task_dict)
-    for task, data in task_dict.items():
-        if data is None:
-            raise ValueError(f"No data to save for task: {task}")
-
-        print(f"Saving subject {cfg.subjects[0]}, task {task}")
-
-        if args.analysis in ["badsegments", "badchannels", "manualchannel"]:
-            # For bad segements, use mne_bids to save with OSL processing label
-            bids_path = mne_bids.find_matching_paths(
+def save_results(cfg: SimpleNamespace, analysis: str, results: Dict[str, Any]):
+    tasks = {k: v for k, v in results.items() if k not in {"bads", "ica"}}
+    if analysis in {"badsegments", "badchannels", "manualchannel"}:
+        unique_bads = sorted(set(results.get("bads", []))) if results.get("bads") else []
+        for task, raw in tasks.items():
+            bp = mne_bids.find_matching_paths(
                 root=cfg.bids_root,
                 subjects=cfg.subjects,
                 tasks=task,
@@ -416,91 +311,61 @@ def save_results(cfg, args, results_dict):
                 splits=None,
                 extensions=".fif",
             )[0]
-
-            bids_path.split = None
-
-            if args.analysis in ["badchannels", "manualchannel"]:
-                if results_dict["bads"] == []:
-                    print("No bad channels detected. No changes made to raw data.")
-
+            bp.split = None
+            if analysis in {"badchannels", "manualchannel"} and unique_bads:
+                if analysis == "badchannels":
+                    # merge existing and newly detected, keep unique
+                    merged = sorted({*raw.info.get("bads", []), *unique_bads})
+                    raw.info["bads"] = merged
                 else:
-                    # Mark bad channels in the raw data
-                    if args.analysis == "badchannels":
-                        data.info["bads"].extend(results_dict["bads"])
-                    elif args.analysis == "manualchannel":
-                        # update bads based on selections to the raw data
-                        data.info["bads"] = results_dict["bads"]
-                    print(f"Bad channels marked in raw data: {data.info['bads']}")
-
-                    # mark channels in the BIDS dataset
-                    mne_bids.mark_channels(
-                        bids_path,
-                        ch_names=results_dict["bads"],
-                        status="bad",
-                        descriptions="osl",
-                    )
-                    print("Successfully updated bad channels")
-
-            print(f"Saving to: {bids_path}")
-
-            if 'noise' in task_dict.keys() and task != 'noise':
-
-                emptyroom_bids_path = mne_bids.find_matching_paths(
+                    raw.info["bads"] = list(unique_bads)
+                mne_bids.mark_channels(
+                    bp,
+                    ch_names=unique_bads,
+                    status="bad",
+                    descriptions="osl",
+                )
+            if "noise" in tasks and task != "noise":
+                er_bp = mne_bids.find_matching_paths(
                     root=cfg.bids_root,
                     subjects=cfg.subjects,
-                    tasks='noise',
+                    tasks="noise",
                     sessions=cfg.sessions,
                     datatypes="meg",
                     ignore_nosub=True,
                     splits=None,
                     extensions=".fif",
                 )[0]
-
                 mne_bids.write_raw_bids(
-                    data,
-                    bids_path,
+                    raw,
+                    bp,
                     allow_preload=True,
                     overwrite=True,
                     format="FIF",
-                    empty_room=emptyroom_bids_path,
+                    empty_room=er_bp,
                 )
-
             else:
-            
                 mne_bids.write_raw_bids(
-                    data,
-                    bids_path,
+                    raw,
+                    bp,
                     allow_preload=True,
                     overwrite=True,
                     format="FIF",
                 )
-                
-            print("Saved cleaned data")
-
-        elif args.analysis == "badepochs":
-            # For bad epochs, overwrite the original preprocessed epochs file
-            bids_path = mne_bids.find_matching_paths(
-                root=cfg.deriv_root,
-                subjects=cfg.subjects,
-                tasks=cfg.task,
-                sessions=cfg.sessions,
-                suffixes="epo",
-                processings="clean",
-                extensions=".fif",
-            )[0]
-            bids_path.split = None
-
-            print(f"Saving to: {bids_path}")
-            data.save(bids_path, split_naming="bids", overwrite=True)
-            print("Successfully saved claned epochs")
-
-        else:
-            print(f"Unknown analysis type: {args.analysis}. Unable to save results.")
-            return None
-
-    if args.analysis == "manualica":
-        # save ica components to tsv and *_ica.fif
-        # Find the path to the ICA components TSV file
+    elif analysis == "badepochs":
+        ep_bp = mne_bids.find_matching_paths(
+            root=cfg.deriv_root,
+            subjects=cfg.subjects,
+            tasks=cfg.task,
+            sessions=cfg.sessions,
+            suffixes="epo",
+            processings="clean",
+            extensions=".fif",
+        )[0]
+        ep_bp.split = None
+        tasks[cfg.task].save(ep_bp, split_naming="bids", overwrite=True)
+    if analysis == "manualica":
+        # Update TSV + save ICA object
         tsv_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
             subjects=cfg.subjects,
@@ -510,40 +375,14 @@ def save_results(cfg, args, results_dict):
             processings="ica",
             extensions=".tsv",
         )[0]
-
-        # load the tsv file
-        print(f"Loading ICA components from: {tsv_path}")
-        components_df = pd.read_csv(tsv_path, sep="\t")
-
-        # Get the ICA object and its excluded components
-        ica = results_dict["ica"]
-        bad_components = ica.exclude
-        print(f"Excluded components: {bad_components}")
-
-        if not bad_components:
-            print("No bad ICA components detected.")
-        else:
-            print(f"Marking {len(bad_components)} components as bad: {bad_components}")
-
-            # Update the status column for bad components
-            for comp_idx in bad_components:
-                # Find rows where the 'component' column equals the component index
-                mask = components_df["component"].astype(str) == str(comp_idx)
-                if mask.any():
-                    components_df.loc[mask, "status"] = "bad"
-                    components_df.loc[mask, "status_description"] = "manual"
-                else:
-                    print(f"Warning: Component {comp_idx} not found in components file")
-
-            print(
-                components_df[components_df["status"] == "bad"]
-            )  # Print only bad components for verification
-
-        # Save the updated components file
-        components_df.to_csv(tsv_path, sep="\t", index=False)
-        print(f"Successfully updated ICA components file: {tsv_path}")
-
-        # Also save the ICA object with updated exclusions
+        df = pd.read_csv(tsv_path, sep="\t")
+        ica = results["ica"]
+        for comp in ica.exclude:
+            mask = df["component"].astype(str) == str(comp)
+            if mask.any():
+                df.loc[mask, "status"] = "bad"
+                df.loc[mask, "status_description"] = "manual"
+        df.to_csv(tsv_path, sep="\t", index=False)
         ica_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
             subjects=cfg.subjects,
@@ -553,64 +392,35 @@ def save_results(cfg, args, results_dict):
             processings="ica",
             extensions=".fif",
         )[0]
-
-        print(f"Saving updated ICA object to: {ica_path}")
         ica.save(ica_path, overwrite=True)
-        print("Successfully saved updated ICA object")
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Modular OPM auxiliary preprocessing")
+    p.add_argument("--analysis", required=True, choices=[
+        "bad_segments", "bad_channels", "manual_channel", "bad_epochs", "manual_ica"
+    ])
+    p.add_argument("--config", required=True)
+    return p.parse_args()
 
 
 def main():
-    """Main function to parse arguments and run the workflow."""
-    parser = argparse.ArgumentParser(description="Run OSL preprocessing steps.")
-    parser.add_argument(
-        "--analysis",
-        choices=[
-            "bad_segments",
-            "bad_channels",
-            "bad_epochs",
-            "manual_channel",
-            "manual_ica",
-        ],
-        required=True,
-        help="Which analysis to run",
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        required=True,
-        help="Path to mne_bids_pipeline configuration file",
-    )
-
-    args = parser.parse_args()
-    args.analysis = args.analysis.replace(
-        "_", ""
-    )  # Normalize analysis name for dictionary keys
-
-    # Load configuration
+    args = parse_args()
+    analysis_key = args.analysis.replace("_", "")
     cfg = SimpleNamespace()
     _update_config_from_path(config=cfg, config_path=args.config)
-    
-    if args.analysis == "manualchannel" and not cfg._manual_bads:
-        print("Skipping raw plot analysis as it is not enabled in the configuration.")
-        return None
 
-    if args.analysis == "manualica":
-        if not cfg._manual_ica or (cfg.spatial_filter != "ica"):
-            print("Skipping ICA analysis as it is not enabled in the configuration.")
-            return None
+    if analysis_key == "manualchannel" and not getattr(cfg, "_manual_bads", False):
+        print("[main] manual channel selection disabled; exiting")
+        return
+    if analysis_key == "manualica":
+        if not getattr(cfg, "_manual_ica", False) or getattr(cfg, "spatial_filter", None) != "ica":
+            print("[main] manual ICA disabled or spatial_filter != ica; exiting")
+            return
 
-    # Load data
-    data_dict = load_data(cfg, args)
-    if not data_dict:
-        raise ValueError("No data loaded. Check your configuration and BIDS directory.")
-
-    # Run analysis
-    results_dict = run_analysis(cfg, args, data_dict)
-    if not results_dict:
-        raise ValueError("Analysis failed. Check your data and analysis type.")
-
-    # Save results
-    save_results(cfg, args, results_dict)
+    data = load_data(cfg, analysis_key)
+    results = run_analysis(cfg, analysis_key, data)
+    save_results(cfg, analysis_key, results)
 
 
 if __name__ == "__main__":

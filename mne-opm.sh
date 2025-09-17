@@ -1,17 +1,34 @@
 # !/bin/bash
 
-# Defaults
-PIPELINE="" # default pipeline
-EXPERIMENT=""
-ANALYSIS=""
-SUBJECT=""
-SESSION=""
-CONFIG_BASE=""
-DATA_BASE=""
-FREESURFER_HOME=/Applications/freesurfer/8.0.0
-MAX_WORKERS=4
+echo ""
+echo ""
+echo ""
+echo ""
+echo ""
+echo ""
+echo "      ~~~~~~~~~~~~~~         ~~~~~~~~~~~~~~"
+echo "      ~~~~~~~~~~~~~~ MNE-OPM ~~~~~~~~~~~~~~"
+echo "      ~~~~~~~~~~~~~~         ~~~~~~~~~~~~~~"                                                                                  
+echo ""
+echo ""
+echo ""
 
-usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--t1w <T1w image path>] [--help]"
+
+
+# Defaults
+PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
+EXPERIMENT="TSXpilot"
+ANALYSIS="response"
+SUBJECT="009"
+SESSION="01"
+CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
+FREESURFER_HOME=/Applications/freesurfer/8.0.0
+FAIL_ON_FIRST_CRASH=1
+
+DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/opm_data/data"
+MAX_WORKERS=10
+
+usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--t1w <T1w image path>] [--fail-on-first-crash] [--help]"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -60,6 +77,10 @@ while [[ $# -gt 0 ]]; do
             MAX_WORKERS=$2
             shift 2
             ;;
+        --fail-on-first-crash)
+            FAIL_ON_FIRST_CRASH=1
+            shift 1
+            ;;
         -h|--help)
             echo $usage
             exit 0
@@ -91,13 +112,13 @@ if [ ! ${SUBJECT} ]; then
     exit 1
 fi
 
-if [ ! ${DATA_BASE} ]; then
+if [ ! "${DATA_BASE}" ]; then
     echo "ERROR: Data directory not set"
     echo $usage
     exit 1
 fi
 
-if [ ! ${CONFIG_BASE} ]; then
+if [ ! "${CONFIG_BASE}" ]; then
     echo "ERROR: Config directory not set"
     echo $usage
     exit 1
@@ -116,6 +137,7 @@ export ROOT_DIR=$PWD
 export CONFIG_DIR="$CONFIG_BASE/$EXPERIMENT"
 
 export FREESURFER_HOME
+export FAIL_ON_FIRST_CRASH=${FAIL_ON_FIRST_CRASH:-0}
 export DATA_DIR="$DATA_BASE/$EXPERIMENT"
 export RAW_DIR="$DATA_DIR/raw"
 export BIDS_DIR="$DATA_DIR/bids"

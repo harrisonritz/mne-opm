@@ -460,7 +460,7 @@ def bids_conversion(cfg):
         nan_channel = np.convolve(orig_nan, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[np.newaxis, :]*1e-5
         nan_info = mne.create_info(['eye_nan'], eye.info['sfreq'], ch_types='eog')
         nan_array = mne.io.RawArray(nan_channel, nan_info, first_samp=eye.first_samp, copy='auto')
-        eye.add_channels([nan_array], force_update_info=True)
+        # eye.add_channels([nan_array], force_update_info=True)
 
         # create blink EOG channel
         print('\nAdding a blink channel...')
@@ -473,8 +473,35 @@ def bids_conversion(cfg):
         blink_channel = np.convolve(blink_channel, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[np.newaxis, :]*1e-5
         blink_info = mne.create_info(['blink'], eye.info['sfreq'], ch_types='eog')
         blink_array = mne.io.RawArray(blink_channel, blink_info, first_samp=eye.first_samp, copy='auto')
-        eye.add_channels([blink_array], force_update_info=True)
+        # eye.add_channels([blink_array], force_update_info=True)
 
+        # create saccade EOG channel
+        print('\nAdding a saccade channel...')
+        saccade_channel = np.zeros(eye._data.shape[1])
+        for aa, (ann,) in enumerate(zip(eye.annotations)):
+            if ann["description"] == "saccade":
+                onset = int((ann["onset"] - eye.first_time)*eye.info["sfreq"])
+                duration = int(np.ceil(ann["duration"] * eye.info["sfreq"]))
+                saccade_channel[onset: onset + duration] = 1.0
+        saccade_channel = np.convolve(saccade_channel, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[np.newaxis, :]*1e-5
+        saccade_info = mne.create_info(['saccade'], eye.info['sfreq'], ch_types='eog')
+        saccade_array = mne.io.RawArray(saccade_channel, saccade_info, first_samp=eye.first_samp, copy='auto')
+        # eye.add_channels([saccade_array], force_update_info=True)
+
+        # do PCA on the NaN, blink, saccade channels, and add each PC as an EOG channel
+        print('\nAdding eye channels to eye-tracking data using PCA...')
+        pca_data = np.vstack([nan_channel, blink_channel, saccade_channel])
+        u, s, vh = np.linalg.svd(pca_data, full_matrices=False)
+        n_pcs = min(3, pca_data.shape[0])
+        for pc_idx in range(n_pcs):
+            # Create a single-channel PC time series (shape: 1 x n_times)
+            pc_ts = (s[pc_idx] * vh[pc_idx, :])[np.newaxis, :]
+            pc_info = mne.create_info([f'eye_pc{pc_idx+1}'], eye.info['sfreq'], ch_types='eog')
+            pc_array = mne.io.RawArray(pc_ts, pc_info, first_samp=eye.first_samp, copy='auto')
+            eye.add_channels([pc_array], force_update_info=True)
+        del nan_array, blink_array, saccade_array, pca_data, u, s, vh
+        print('done adding eye-tracking channels, new info:')
+        print(eye.info)
 
 
         # align from events
@@ -506,7 +533,7 @@ def bids_conversion(cfg):
             for ann in raw.annotations:
                 if ann["description"] == "CSI":
                     n_csi += 1
-            print(f'number of CSI: ', n_csi)
+            print('number of CSI: ', n_csi)
             print(raw.annotations[:10].description)
             print(raw.annotations[:10].onset)
             print(raw.annotations[-10:].description)
