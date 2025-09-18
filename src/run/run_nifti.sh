@@ -7,17 +7,13 @@
 conda activate mne-opm
 
 
+SUBJ_RAW_PATH=$(find "$RAW_DIR" -type d -path "*$SUBJECT")
+DICOM_PATH="$SUBJ_RAW_PATH/dicom"
+NIFTI_PATH="$SUBJ_RAW_PATH/anat"
 
-SUBJ_RAW_PATH=$(find $RAW_DIR -type d -path "*$SUBJECT")
-DICOM_PATH=$SUBJ_RAW_PATH/dicom
-NIFTI_PATH=$SUBJ_RAW_PATH/anat
-# if $NIFTI_PATH exists then exit, otherwise create the folder
-if [ -d "$NIFTI_PATH" ]; then
-    echo "NIFTI directory already exists: $NIFTI_PATH"
-    echo "skipping nifti creation"
-    return
-fi
-mkdir -p $NIFTI_PATH
+# overwrite existing folder
+rm -rf "$NIFTI_PATH"
+mkdir -p "$NIFTI_PATH"
 
 
 ## BIDS FORMATTING ----------------------------------------
@@ -36,11 +32,11 @@ echo ""
 
 
 
-dcm2niix -z y -f %p -o $NIFTI_PATH $DICOM_PATH
+dcm2niix -z y -f %p -o "$NIFTI_PATH" "$DICOM_PATH"
 
 
-# append 't1w' to any files containting 'T1w' in the name
-for file in $NIFTI_PATH/*T1w*.nii.gz; do
+# append '_t1w' to any files containing 'T1w' in the name
+for file in "$NIFTI_PATH"/*T1w*.nii.gz; do
     if [[ -f "$file" ]]; then
         new_name="${file%.nii.gz}_t1w.nii.gz"
         mv "$file" "$new_name"
@@ -50,8 +46,8 @@ for file in $NIFTI_PATH/*T1w*.nii.gz; do
     fi
 done
 
-# append 't2w' to any files containting 'T2w' in the name
-for file in $NIFTI_PATH/*T2w*.nii.gz; do
+# append '_t2w' to any files containing 'T2w' in the name
+for file in "$NIFTI_PATH"/*T2w*.nii.gz; do
     if [[ -f "$file" ]]; then
         new_name="${file%.nii.gz}_t2w.nii.gz"
         mv "$file" "$new_name"
