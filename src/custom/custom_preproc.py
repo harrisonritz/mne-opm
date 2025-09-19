@@ -175,14 +175,71 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
     )
     return second
     
+
 def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseRaw:
     """Regress out reference channels from MEG channels."""
 
     print("\n[regress_reference] regressing-out reference channels")
-    filt = raw.copy().filter(l_freq=cfg.l_freq, h_freq=cfg.h_freq, method="iir", picks=[cfg.ch_types[0], 'ref_meg'])
-    weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(filt)
-    raw_clean = weights.apply(raw, copy=True)
-    del filt, weights
+
+    # remove breaks
+    if getattr(cfg, "find_breaks", False):
+            mne.preprocessing.annotate_break(
+                raw,
+                min_break_duration=cfg.min_break_duration,
+                t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
+                t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
+            )
+
+    # estimate weights
+    raw_filt = raw.copy().filter(
+        l_freq=cfg.l_freq, 
+        h_freq=cfg.h_freq, 
+        method="iir", 
+        picks=[cfg.ch_types[0], 'ref_meg']
+        ) # filter data for estimating regression weights
+    
+    if getattr(cfg, "_regress_ref_timevarying", False):
+        # time-varying regression (sliding window)
+        print("\n[regress_reference] using time-varying regression")
+        sfreq = raw.info['sfreq']
+        cleaned_data = raw.get_data()
+        n_channels, n_times = cleaned_data.shape
+        window_size = int(sfreq * getattr(cfg, "mf_st_duration", 100.0)) # window size
+        step_size = int(window_size//2) # step size
+        n_windows = (n_times - window_size) // step_size + 1
+
+        print(f"[regress_reference] processing {n_windows} windows")
+        for w in range(n_windows):
+
+            # TODO: do everything with indexing of numpy arrays
+            # check EOGRegression docs for channel picking
+            #
+            
+            start = w * step_size
+            end = start + window_size
+            print('filt win')
+            filt_win = raw_filt.copy().crop(tmin=start/sfreq, tmax=end/sfreq)
+            print('raw win')
+            raw_win = raw.copy().crop(tmin=start/sfreq, tmax=end/sfreq)
+            print('regress')
+            
+            weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(filt_win)
+            cleaned_window = weights.apply(raw_win, copy=True).get_data()
+            cleaned_data[:, start:end+1] = cleaned_window
+
+            if w % 10 == 0:
+                print(f"[regress_reference] processed {w}/{n_windows} windows")
+
+        raw_clean = mne.io.RawArray(cleaned_data, raw.info)
+        del cleaned_data, filt_win, raw_win
+        
+    else:
+        print("\n[regress_reference] using standard regression")
+        weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(raw_filt)
+        raw_clean = weights.apply(raw, copy=True)
+        exit(1)
+        
+    del raw_filt, weights
     return raw_clean
     
 

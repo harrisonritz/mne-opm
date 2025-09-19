@@ -254,7 +254,7 @@ def bids_conversion(cfg):
         t2w_path,
         "\nEye-tracking path: ",
         eye_path,
-        "\n--------\n",
+        "\n--------\n\n",
     )
 
     # Process empty room data ------------------------------------------------

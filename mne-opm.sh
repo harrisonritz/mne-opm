@@ -18,7 +18,7 @@ echo ""
 # Defaults
 PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
 EXPERIMENT="TSXpilot"
-ANALYSIS="response"
+ANALYSIS="CSI"
 SUBJECT="013"
 SESSION="01"
 CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
