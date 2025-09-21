@@ -23,6 +23,8 @@ from typing import Dict, Any
 import mne
 import mne_bids
 import pandas as pd
+import numpy as np
+import scipy.linalg
 try:  # optional dependency for nicer Qt browser; skip if unavailable
     import mne_qt_browser  # noqa: F401
     _HAVE_QT_BROWSER = True
@@ -201,9 +203,17 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
     if getattr(cfg, "_regress_ref_timevarying", False):
         # time-varying regression (sliding window)
         print("\n[regress_reference] using time-varying regression")
+        
         sfreq = raw.info['sfreq']
-        cleaned_data = raw.get_data()
-        n_channels, n_times = cleaned_data.shape
+        raw_data = raw.get_data()
+        filt_data = raw_filt.get_data()
+
+        from mne._fiff.pick import _picks_to_idx
+        mag_idx = _picks_to_idx(raw.info, cfg.ch_types[0])
+        ref_idx = _picks_to_idx(raw.info, 'ref_meg')
+
+        n_channels, n_times = raw_data.shape
+        n_ref = len(ref_idx)
         window_size = int(sfreq * getattr(cfg, "mf_st_duration", 100.0)) # window size
         step_size = int(window_size//2) # step size
         n_windows = (n_times - window_size) // step_size + 1
@@ -214,32 +224,32 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
             # TODO: do everything with indexing of numpy arrays
             # check EOGRegression docs for channel picking
             #
-            
+
             start = w * step_size
             end = start + window_size
-            print('filt win')
-            filt_win = raw_filt.copy().crop(tmin=start/sfreq, tmax=end/sfreq)
-            print('raw win')
-            raw_win = raw.copy().crop(tmin=start/sfreq, tmax=end/sfreq)
-            print('regress')
-            
-            weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(filt_win)
-            cleaned_window = weights.apply(raw_win, copy=True).get_data()
-            cleaned_data[:, start:end+1] = cleaned_window
 
-            if w % 10 == 0:
+            # get qr decomposition of reference channels in this window
+            Q, _, _ =  scipy.linalg.qr(filt_data[ref_idx, start:end].T - np.mean(filt_data[ref_idx, start:end], axis=1),
+                                       pivoting=True, 
+                                       mode='economic')
+            
+            raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Q) @ Q.T
+
+
+            if w % (n_windows // 10) == 0:
                 print(f"[regress_reference] processed {w}/{n_windows} windows")
 
-        raw_clean = mne.io.RawArray(cleaned_data, raw.info)
-        del cleaned_data, filt_win, raw_win
+        raw_clean = mne.io.RawArray(raw_data, raw.info)
+        # raw._data = raw_data
+        del raw_data, filt_data
         
     else:
         print("\n[regress_reference] using standard regression")
         weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(raw_filt)
         raw_clean = weights.apply(raw, copy=True)
-        exit(1)
+        del weights
         
-    del raw_filt, weights
+    del raw_filt
     return raw_clean
     
 
