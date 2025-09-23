@@ -221,19 +221,56 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
         print(f"[regress_reference] processing {n_windows} windows")
         for w in range(n_windows):
 
-            # TODO: do everything with indexing of numpy arrays
-            # check EOGRegression docs for channel picking
-            #
-
             start = w * step_size
             end = start + window_size
 
             # get qr decomposition of reference channels in this window
-            Q, _, _ =  scipy.linalg.qr(filt_data[ref_idx, start:end].T - np.mean(filt_data[ref_idx, start:end], axis=1),
-                                       pivoting=True, 
-                                       mode='economic')
-            
+            centered_filt_data = filt_data[ref_idx, start:end] - np.mean(filt_data[ref_idx, start:end], axis=1, keepdims=True)
+            Q, _, _ =  scipy.linalg.qr(centered_filt_data.T, pivoting=True, mode='economic')
             raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Q) @ Q.T
+
+
+            # TODO: alternative ridge regression approach (slower, more memory)
+            # def ridge_projection_matvec_qr(X: np.ndarray, v: np.ndarray, 
+            #                      lam: float) -> np.ndarray:
+            # """
+            # Compute ridge projection using QR of augmented system.
+            
+            # Uses the augmented matrix approach:
+            # [X    ] [β] = [y]
+            # [√λI  ] [0]   [0]
+            
+            # Parameters:
+            # -----------
+            # X : ndarray, shape (m, n)
+            #     Design matrix
+            # v : ndarray, shape (m,) or (m, k)
+            #     Vector(s) to multiply  
+            # lam : float
+            #     Ridge penalty parameter (λ)
+                
+            # Returns:
+            # --------
+            # Pv : ndarray
+            #     Result of P_ridge @ v
+            # """
+            # m, n = X.shape
+            # sqrt_lam = np.sqrt(lam)
+            
+            # # Form augmented matrix
+            # X_aug = np.vstack([X, sqrt_lam * np.eye(n)])
+            
+            # # QR decomposition of augmented matrix
+            # Q, R = la.qr(X_aug, mode='economic')
+            # Q = Q[:, :n]  # Take first n columns
+            
+            # # Split Q into blocks
+            # Q1 = Q[:m, :]      # First m rows (corresponding to X)
+            # Q2 = Q[m:, :]      # Last n rows (corresponding to √λI)
+            
+            # # The projection for original residuals is:
+            # # P_ridge @ v = v - Q1 @ Q1' @ v
+            # return v - Q1 @ (Q1.T @ v)
 
 
             if w % (n_windows // 10) == 0:
@@ -320,7 +357,7 @@ def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: Simp
         ref_ica = mne.preprocessing.ICA(
             n_components=.99,
             method="picard",
-            max_iter=250,
+            max_iter=256,
             allow_ref_meg=True,
         )
         ref_ica.fit(ref_raw, decim=2, reject_by_annotation=True)
@@ -328,6 +365,7 @@ def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: Simp
         ref_src.rename_channels(lambda x: f"REF_{x}")
         raw.add_channels([ref_src], force_update_info=True)
         ref_idx, _ = ica.find_bads_ref(inst=raw, method="separate")
+        print(f"\n[manual_ica_review] marking {len(ref_idx)} components based on reference sensors: {ref_idx}")
         ica.exclude.extend(ref_idx)
         del ref_raw, ref_ica, ref_src
     ica.plot_components(inst=raw, nrows=5)

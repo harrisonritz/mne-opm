@@ -19,7 +19,7 @@ echo ""
 PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
 EXPERIMENT="TSXpilot"
 ANALYSIS="CSI"
-SUBJECT="013"
+SUBJECT="009"
 SESSION="01"
 CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
 FREESURFER_HOME=/Applications/freesurfer/8.0.0
