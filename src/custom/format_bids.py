@@ -31,7 +31,7 @@ mne.set_config("MNE_BROWSER_BACKEND", "qt")
 def set_bids_params(config_path=""):
     # set-up configuration ==========================================================================================================
     print(
-        "\n\n\nloading configuration ---------------------------------------------------\n"
+        "\n\n\n[loading configuration]\n"
     )
     RAW_DIR = f"{os.environ.get('RAW_DIR')}"
     BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"

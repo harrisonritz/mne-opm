@@ -3,9 +3,11 @@
 Provided analyses (CLI --analysis):
     bad_segments   -> detect & annotate bad raw segments
     bad_channels   -> statistical detection of bad channels
-    manual_channel -> interactive marking of bad channels (+ optional HFC)
+    manual_channel -> interactive marking of bad channels
+    apply_hfc      -> apply homogeneous field correction (HFC) projections
     bad_epochs     -> drop bad epochs post-epoching
     manual_ica     -> interactive ICA component review (+ optional ref ICA)
+    regress_ref    -> regress out reference channel signals
 
 Internal normalized keys remove underscores (e.g. bad_segments -> badsegments).
 
@@ -20,11 +22,17 @@ import os
 from types import SimpleNamespace
 from typing import Dict, Any
 
+from click import pause
 import mne
 import mne_bids
 import pandas as pd
 import numpy as np
 import scipy.linalg
+from scipy import stats
+
+from mne._fiff.pick import _picks_to_idx
+
+
 try:  # optional dependency for nicer Qt browser; skip if unavailable
     import mne_qt_browser  # noqa: F401
     _HAVE_QT_BROWSER = True
@@ -35,6 +43,7 @@ from osl_ephys.preprocessing.osl_wrappers import (
     bad_segments as osl_bad_segments,
     bad_channels as osl_bad_channels,
     drop_bad_epochs as osl_drop_bad_epochs,
+    gesd as osl_gesd
 )
 
 
@@ -66,7 +75,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
     print(f"\n\n[load_data] analysis={analysis}")
     out: Dict[str, Any] = {}
 
-    if analysis in {"badsegments", "badchannels", "manualchannel", "regressref"}:
+    if analysis in {"badsegments", "badchannels", "manualchannel", "regressref", "applyhfc"}:
         if getattr(cfg, "_skip_on_deriv", False):
             deriv_path = os.path.join(cfg.deriv_root, f"sub-{cfg.subjects[0]}")
             if os.path.exists(deriv_path):
@@ -142,7 +151,7 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
             raw,
             picks=cfg.ch_types[0],
             ref_meg=False,
-            metric="kurtosis",
+            metric="std",
             detect_zeros=False,
             channel_wise=True,
             segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
@@ -159,7 +168,7 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
         raw,
         picks=cfg.ch_types[0],
         ref_meg=False,
-        metric="kurtosis",
+        metric="std",  #"kurtosis",
         detect_zeros=False,
         channel_wise=True,
         segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
@@ -169,7 +178,7 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
         first,
         picks=cfg.ch_types[0],
         ref_meg=False,
-        metric="kurtosis",
+        metric="std",
         detect_zeros=False,
         channel_wise=True,
         segment_len=round(first.info["sfreq"] * SEGMENT_LEN_SEC * 0.66),
@@ -197,8 +206,9 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
         l_freq=cfg.l_freq, 
         h_freq=cfg.h_freq, 
         method="iir", 
-        picks=[cfg.ch_types[0], 'ref_meg']
+        picks=['ref_meg']
         ) # filter data for estimating regression weights
+    # raw_filt = raw.copy()
     
     if getattr(cfg, "_regress_ref_timevarying", False):
         # time-varying regression (sliding window)
@@ -206,17 +216,20 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
         
         sfreq = raw.info['sfreq']
         raw_data = raw.get_data()
-        filt_data = raw_filt.get_data()
+        filt_data = raw_filt.get_data(picks="ref_meg")
 
-        from mne._fiff.pick import _picks_to_idx
         mag_idx = _picks_to_idx(raw.info, cfg.ch_types[0])
-        ref_idx = _picks_to_idx(raw.info, 'ref_meg')
+        # ref_idx = _picks_to_idx(raw.info, 'ref_meg')
 
         n_channels, n_times = raw_data.shape
-        n_ref = len(ref_idx)
+        n_ref, _ = filt_data.shape
+
+        # n_ref = len(ref_idx)
         window_size = int(sfreq * getattr(cfg, "mf_st_duration", 100.0)) # window size
         step_size = int(window_size//2) # step size
         n_windows = (n_times - window_size) // step_size + 1
+
+        prior = np.sqrt(1e-4) * np.eye(n_ref)  # ridge prior for numerical stability
 
         print(f"[regress_reference] processing {n_windows} windows")
         for w in range(n_windows):
@@ -225,9 +238,13 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
             end = start + window_size
 
             # get qr decomposition of reference channels in this window
-            centered_filt_data = filt_data[ref_idx, start:end] - np.mean(filt_data[ref_idx, start:end], axis=1, keepdims=True)
-            Q, _, _ =  scipy.linalg.qr(centered_filt_data.T, pivoting=True, mode='economic')
-            raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Q) @ Q.T
+            # centered_filt_data = filt_data[ref_idx, start:end] - np.mean(filt_data[ref_idx, start:end], axis=1, keepdims=True)
+            z_filt_data = stats.zscore(filt_data[:, start:end], axis=1).T
+            X = np.vstack([z_filt_data, prior])
+            Q, _, _ =  scipy.linalg.qr(X, pivoting=True, mode='economic')
+            Qd = Q[:window_size, :]  # get data rows
+            
+            raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Qd) @ Qd.T
 
 
             # TODO: alternative ridge regression approach (slower, more memory)
@@ -311,25 +328,103 @@ def drop_bad_epochs(epochs: mne.Epochs, cfg: SimpleNamespace) -> mne.Epochs:
     )
 
 
-def apply_hfc(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None):
+def apply_hfc(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw | None]:
+    """Apply Homogeneous Field Correction (HFC) projections to MEG data.
+    
+    HFC projections remove spatial gradients in the magnetic field that are
+    uniform across the sensor array, typically caused by distant sources or
+    movements of the head relative to the sensors.
+    
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        The raw MEG data to apply HFC projections to.
+    cfg : SimpleNamespace
+        Configuration object containing:
+        - _do_HFC : bool
+            Whether to apply HFC projections. If False, returns data unchanged.
+        - _hfc_order : int
+            Order of the HFC projections (typically 1-3).
+        - ch_types : list
+            Channel types to apply projections to (e.g., ['mag']).
+    noise : mne.io.BaseRaw | None, optional
+        Optional empty-room noise data to apply the same projections to.
+        
+    Returns
+    -------
+    raw : mne.io.BaseRaw
+        Raw data with HFC projections applied (if enabled).
+    noise : mne.io.BaseRaw | None
+        Noise data with HFC projections applied (if provided and HFC enabled).
+        
+    Notes
+    -----
+    HFC projections are computed based on the sensor positions and applied
+    as SSP (Signal Space Projection) projectors. The projections remove
+    components that vary smoothly across the sensor array.
+    """
     if not getattr(cfg, "_do_HFC", False):
+        print("\n[apply_hfc] HFC disabled in configuration; skipping")
         return raw, noise
-    print("\n[HFC] applying projections")
+    
+    print("\n[apply_hfc] Computing and applying HFC projections")
+    print(f"[apply_hfc] Using HFC order: {cfg._hfc_order}")
+    
     projs = mne.preprocessing.compute_proj_hfc(
         raw.info,
         order=cfg._hfc_order,
         picks=cfg.ch_types[0],
     )
+    
+    print(f"[apply_hfc] Computed {len(projs)} HFC projection(s)")
     raw.add_proj(projs=projs).apply_proj()
+    
     if noise is not None:
+        print("[apply_hfc] Applying same projections to noise data")
         noise.add_proj(projs=projs).apply_proj()
+    
+    print("[apply_hfc] HFC projections applied successfully")
     return raw, noise
 
 
-def manual_channel_selection(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None):
+def manual_channel_selection(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None) -> tuple[mne.io.BaseRaw, list[str], mne.io.BaseRaw | None]:
+    """Interactive manual selection of bad channels.
+    
+    Opens an interactive plot for visual inspection of the data, allowing
+    the user to mark bad channels by clicking on them. The same bad channels
+    are also marked in the noise data if provided.
+    
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        The raw MEG data for channel inspection.
+    cfg : SimpleNamespace
+        Configuration object containing filtering parameters:
+        - l_freq : float
+            High-pass filter frequency for display.
+        - h_freq : float
+            Low-pass filter frequency for display.
+    noise : mne.io.BaseRaw | None, optional
+        Optional empty-room noise data that will receive the same bad channel markings.
+        
+    Returns
+    -------
+    raw : mne.io.BaseRaw
+        Raw data with bad channels marked.
+    bads : list[str]
+        List of bad channel names selected by the user.
+    noise : mne.io.BaseRaw | None
+        Noise data with the same bad channels marked (if provided).
+        
+    Notes
+    -----
+    If Qt browser is not available, the interactive plot is skipped but the
+    function will still process any existing bad channel markings in the data.
+    """
     if not _HAVE_QT_BROWSER:
         print("\n[manual_channel_selection] Qt browser not available; skipping interactive plot (set SKIP_MANUAL=1 to omit this step entirely).")
     else:
+        print("\n[manual_channel_selection] Opening interactive plot for channel inspection")
         raw.plot(
             precompute=True,
             n_channels=64,
@@ -341,18 +436,25 @@ def manual_channel_selection(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: m
             decim=4,
             scalings=dict(mag=1e-11, eyegaze=.01, pupil=.01),
         )
+    
+    # Process bad channel markings
     bads: list[str] = []
     for ch in raw.info["bads"]:
         bads.append(ch if isinstance(ch, str) else ch.item())
     raw.info["bads"] = bads
+    
     if noise is not None:
+        print(f"[manual_channel_selection] Marking {len(bads)} bad channels in noise data")
         noise.info["bads"] = bads.copy()
-    raw, noise = apply_hfc(raw, cfg, noise)
+    
+    print(f"[manual_channel_selection] Marked {len(bads)} bad channels: {bads}")
     return raw, bads, noise
 
 
 def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.preprocessing.ICA:
-    if getattr(cfg, "ref_bads", True):
+    
+    # label bad components based on reference channels
+    if getattr(cfg, "ref_bads", False):
         ref_raw = raw.copy().pick("ref_meg").filter(l_freq=1, h_freq=None)
         ref_ica = mne.preprocessing.ICA(
             n_components=.99,
@@ -365,9 +467,60 @@ def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: Simp
         ref_src.rename_channels(lambda x: f"REF_{x}")
         raw.add_channels([ref_src], force_update_info=True)
         ref_idx, _ = ica.find_bads_ref(inst=raw, method="separate")
-        print(f"\n[manual_ica_review] marking {len(ref_idx)} components based on reference sensors: {ref_idx}")
+        print(f"\n[manual_ica_review] marking {len(ref_idx)} components based on reference sensors: {ref_idx}\n")
         ica.exclude.extend(ref_idx)
         del ref_raw, ref_ica, ref_src
+
+    # label bad components based on osl's gesd
+    if getattr(cfg, "gesd_bads", True):
+        
+        picks = ica.ch_names
+        picks = _picks_to_idx(raw.info, picks, exclude=())
+        def ica_metric(x): return np.mean(np.log(np.std(x)))
+        
+        ic_score = np.full(ica.n_components_, np.nan)
+
+        data = raw.get_data(picks=picks, reject_by_annotation="omit")
+
+        print(f"\n\n[manual_ica_review] computing {ica.n_components_ - len(ica.exclude)} component scores for GESD -------\n")
+        for ii in range(ica.n_components_):
+            
+            if ii in ica.exclude:
+                continue
+
+            ic_score[ii] = ica_metric(ica._pick_sources(
+                                data=data, 
+                                include=None, 
+                                exclude=[ii], 
+                                n_pca_components=cfg.ica_n_components,
+                                ))
+        
+            print(f"[manual_ica_review] component {ii}: score={ic_score[ii]:.4f}\n")
+      
+        # plot histogram of ic_scores
+        import matplotlib.pyplot as plt
+        plt.figure()
+        plt.hist(ic_score[~np.isnan(ic_score)], bins=64, color='gray', edgecolor='black')
+        plt.xlabel("ICA Component Score (mean log std)")
+        plt.ylabel("Count")
+        plt.title("Histogram of ICA Component Scores for GESD")
+        plt.show()
+
+        print(ic_score)
+        print(ic_score.shape)
+
+        gesd_idx,_ = osl_gesd(ic_score, p_out=1.0, outlier_side=-1)
+        
+        print('ica.exclude before: ', ica.exclude)
+        if len(gesd_idx) == 0:
+            print("\n[manual_ica_review] GESD found no outliers\n")
+        else:
+            ica.exclude.extend(np.where(gesd_idx)[0].tolist())
+        print('ica.exclude after: ', ica.exclude)
+        print(f"\n[manual_ica_review] marking {len(gesd_idx)} components based on GESD: {np.where(gesd_idx)[0]}")
+
+        
+
     ica.plot_components(inst=raw, nrows=5)
     ica.plot_sources(inst=raw, show_scrollbars=True, block=True)
     return ica
@@ -416,6 +569,13 @@ def run_analysis(cfg: SimpleNamespace, analysis: str, data: Dict[str, Any]) -> D
         raw = regress_reference(data[cfg.task], cfg)
         results[cfg.task] = raw
 
+    elif analysis == "applyhfc":
+        noise = data.get("noise") if getattr(cfg, "process_empty_room", False) else None
+        raw, noise = apply_hfc(data[cfg.task], cfg, noise)
+        results[cfg.task] = raw
+        if noise is not None:
+            results["noise"] = noise
+
     else:  # pragma: no cover
         raise ValueError(f"Unknown analysis {analysis}")
     return results
@@ -423,10 +583,10 @@ def run_analysis(cfg: SimpleNamespace, analysis: str, data: Dict[str, Any]) -> D
 
 def save_results(cfg: SimpleNamespace, analysis: str, results: Dict[str, Any]):
     tasks = {k: v for k, v in results.items() if k not in {"bads", "ica"}}
-    if analysis in {"badsegments", "badchannels", "manualchannel", "regressref"}:
+    if analysis in {"badsegments", "badchannels", "manualchannel", "regressref", "applyhfc"}:
         unique_bads = sorted(set(results.get("bads", []))) if results.get("bads") else []
         for task, raw in tasks.items():
-            print(f"\n[save_results] writing task={task}")
+            print(f"\n\n[save_results] writing task={task}")
             bp = mne_bids.find_matching_paths(
                 root=cfg.bids_root,
                 subjects=cfg.subjects,
@@ -524,7 +684,7 @@ def save_results(cfg: SimpleNamespace, analysis: str, results: Dict[str, Any]):
 def parse_args():
     p = argparse.ArgumentParser(description="Modular OPM auxiliary preprocessing")
     p.add_argument("--analysis", required=True, choices=[
-        "bad_segments", "bad_channels", "bad_epochs", "manual_channel", "manual_ica", "regress_ref"
+        "bad_segments", "bad_channels", "bad_epochs", "manual_channel", "manual_ica", "regress_ref", "apply_hfc"
     ])
     p.add_argument("--config", required=True)
     return p.parse_args()
@@ -545,6 +705,9 @@ def main():
             return
     if analysis_key == "regressref" and not getattr(cfg, "_regress_ref", False):
         print("\n[main] reference regression disabled; exiting")
+        return
+    if analysis_key == "applyhfc" and not getattr(cfg, "_do_HFC", False):
+        print("\n[main] HFC disabled; exiting")
         return
 
     data = load_data(cfg, analysis_key)
