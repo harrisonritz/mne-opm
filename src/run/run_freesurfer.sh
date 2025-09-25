@@ -30,6 +30,12 @@ echo "SUBJECTS_DIR: $SUBJECTS_DIR"
 echo "--------------------------"
 echo ""
 
+# Check whether SUBJECTS_DIR exists
+if [ ! -d "$SUBJECTS_DIR" ]; then
+    echo "Creating SUBJECTS_DIR at: $SUBJECTS_DIR"
+    mkdir -p "$SUBJECTS_DIR"
+fi
+
 # Check if freesurfer has already been run
 if [ -d "$SUBJECTS_DIR/$SUBJECT/mri" ]; then
     echo "FreeSurfer has already been run for subject: $SUBJECT"
@@ -48,20 +54,20 @@ if [ -n "$T2W_PATH" ] && [ -f "$T2W_PATH" ]; then
     echo "T2w image found at: $T2W_PATH"
     echo "Running FreeSurfer with both T1w and T2w inputs ----------------------------"
     echo ""
-    recon-all -i $T1W_PATH -T2 $T2W_PATH -T2pial -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
+    recon-all -i "$T1W_PATH" -T2 "$T2W_PATH" -T2pial -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
 else
     echo "T2w image not found, running FreeSurfer with T1w only..."
-    recon-all -i $T1W_PATH -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
+    recon-all -i "$T1W_PATH" -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
 fi
 
 # build BEM ------------------
 # create boundary element model
 echo "\n\nBuilding watershed bem..."
-mne watershed_bem --subject=$SUBJECT --subjects-dir=$SUBJECTS_DIR --overwrite --atlas --gcaatlas --verbose
+mne watershed_bem --subject=$SUBJECT --subjects-dir="$SUBJECTS_DIR" --overwrite --atlas --gcaatlas --verbose
 
 # # construct hi-res head surfaces
 echo "\n\nMaking hi-res scalp surface..."
-mne make_scalp_surfaces --subject=$SUBJECT --subjects-dir=$SUBJECTS_DIR --overwrite --force --verbose
+mne make_scalp_surfaces --subject=$SUBJECT --subjects-dir="$SUBJECTS_DIR" --overwrite --force --verbose
 
 
 # revert to original subject formatting

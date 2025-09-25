@@ -27,7 +27,7 @@ import mne
 import mne_bids
 import pandas as pd
 import numpy as np
-import scipy.linalg
+from scipy.linalg import qr
 from scipy import stats
 
 from mne._fiff.pick import _picks_to_idx
@@ -168,7 +168,7 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
         raw,
         picks=cfg.ch_types[0],
         ref_meg=False,
-        metric="std",  #"kurtosis",
+        metric="std",
         detect_zeros=False,
         channel_wise=True,
         segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
@@ -229,7 +229,7 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
         step_size = int(window_size//2) # step size
         n_windows = (n_times - window_size) // step_size + 1
 
-        prior = np.sqrt(1e-4) * np.eye(n_ref)  # ridge prior for numerical stability
+        prior = np.sqrt(1e-6) * np.eye(n_ref)  # ridge prior for numerical stability
 
         print(f"[regress_reference] processing {n_windows} windows")
         for w in range(n_windows):
@@ -238,57 +238,22 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
             end = start + window_size
 
             # get qr decomposition of reference channels in this window
-            # centered_filt_data = filt_data[ref_idx, start:end] - np.mean(filt_data[ref_idx, start:end], axis=1, keepdims=True)
-            z_filt_data = stats.zscore(filt_data[:, start:end], axis=1).T
-            X = np.vstack([z_filt_data, prior])
-            Q, _, _ =  scipy.linalg.qr(X, pivoting=True, mode='economic')
+            X = np.vstack([
+                    stats.zscore(filt_data[:, start:end], axis=1).T,    # linear terms
+                    prior,                                              # ridge prior
+                ])
+            # data_win = filt_data[:, start:end] - np.mean(filt_data[:, start:end], axis=1, keepdims=True)
+            # X = np.vstack([
+            #         np.hstack([
+            #             stats.zscore(data_win, axis=1).T,       # linear terms
+            #             stats.zscore(data_win**2, axis=1).T,    # quadratic terms
+            #             ]),
+            #         prior,                                      # ridge prior
+            #     ])
+            Q, _, _ =  qr(X, pivoting=True, mode='economic')
             Qd = Q[:window_size, :]  # get data rows
             
             raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Qd) @ Qd.T
-
-
-            # TODO: alternative ridge regression approach (slower, more memory)
-            # def ridge_projection_matvec_qr(X: np.ndarray, v: np.ndarray, 
-            #                      lam: float) -> np.ndarray:
-            # """
-            # Compute ridge projection using QR of augmented system.
-            
-            # Uses the augmented matrix approach:
-            # [X    ] [β] = [y]
-            # [√λI  ] [0]   [0]
-            
-            # Parameters:
-            # -----------
-            # X : ndarray, shape (m, n)
-            #     Design matrix
-            # v : ndarray, shape (m,) or (m, k)
-            #     Vector(s) to multiply  
-            # lam : float
-            #     Ridge penalty parameter (λ)
-                
-            # Returns:
-            # --------
-            # Pv : ndarray
-            #     Result of P_ridge @ v
-            # """
-            # m, n = X.shape
-            # sqrt_lam = np.sqrt(lam)
-            
-            # # Form augmented matrix
-            # X_aug = np.vstack([X, sqrt_lam * np.eye(n)])
-            
-            # # QR decomposition of augmented matrix
-            # Q, R = la.qr(X_aug, mode='economic')
-            # Q = Q[:, :n]  # Take first n columns
-            
-            # # Split Q into blocks
-            # Q1 = Q[:m, :]      # First m rows (corresponding to X)
-            # Q2 = Q[m:, :]      # Last n rows (corresponding to √λI)
-            
-            # # The projection for original residuals is:
-            # # P_ridge @ v = v - Q1 @ Q1' @ v
-            # return v - Q1 @ (Q1.T @ v)
-
 
             if w % (n_windows // 10) == 0:
                 print(f"[regress_reference] processed {w}/{n_windows} windows")
@@ -454,7 +419,10 @@ def manual_channel_selection(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: m
 def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.preprocessing.ICA:
     
     # label bad components based on reference channels
-    if getattr(cfg, "ref_bads", False):
+    if getattr(cfg, "ref_bads", True):
+
+        print("\n[manual_ica_review] identifying bad components based on reference sensors -------\n")
+
         ref_raw = raw.copy().pick("ref_meg").filter(l_freq=1, h_freq=None)
         ref_ica = mne.preprocessing.ICA(
             n_components=.99,
@@ -476,48 +444,55 @@ def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: Simp
         
         picks = ica.ch_names
         picks = _picks_to_idx(raw.info, picks, exclude=())
-        def ica_metric(x): return np.mean(np.log(np.std(x)))
-        
-        ic_score = np.full(ica.n_components_, np.nan)
+        def ica_metric(x): return np.log(np.std(x))
+        # def ica_metric(x): return stats.kurtosis(x, axis=None)
 
-        data = raw.get_data(picks=picks, reject_by_annotation="omit")
+        ic_score = np.full(np.max([ica.n_components_, 32]), np.nan)
+        n_comps = len(ic_score)
 
-        print(f"\n\n[manual_ica_review] computing {ica.n_components_ - len(ica.exclude)} component scores for GESD -------\n")
-        for ii in range(ica.n_components_):
-            
-            if ii in ica.exclude:
-                continue
+        if (n_comps - len(ica.exclude)) < 5:
 
-            ic_score[ii] = ica_metric(ica._pick_sources(
-                                data=data, 
-                                include=None, 
-                                exclude=[ii], 
-                                n_pca_components=cfg.ica_n_components,
-                                ))
-        
-            print(f"[manual_ica_review] component {ii}: score={ic_score[ii]:.4f}\n")
-      
-        # plot histogram of ic_scores
-        import matplotlib.pyplot as plt
-        plt.figure()
-        plt.hist(ic_score[~np.isnan(ic_score)], bins=64, color='gray', edgecolor='black')
-        plt.xlabel("ICA Component Score (mean log std)")
-        plt.ylabel("Count")
-        plt.title("Histogram of ICA Component Scores for GESD")
-        plt.show()
+            print(f"\n[manual_ica_review] too few components remaining for GESD ({n_comps - len(ica.exclude)}); skipping\n")
 
-        print(ic_score)
-        print(ic_score.shape)
-
-        gesd_idx,_ = osl_gesd(ic_score, p_out=1.0, outlier_side=-1)
-        
-        print('ica.exclude before: ', ica.exclude)
-        if len(gesd_idx) == 0:
-            print("\n[manual_ica_review] GESD found no outliers\n")
         else:
-            ica.exclude.extend(np.where(gesd_idx)[0].tolist())
-        print('ica.exclude after: ', ica.exclude)
-        print(f"\n[manual_ica_review] marking {len(gesd_idx)} components based on GESD: {np.where(gesd_idx)[0]}")
+
+            data = raw.get_data(picks=picks, reject_by_annotation="omit")
+
+            print(f"\n\n[manual_ica_review] computing {n_comps - len(ica.exclude)}/{n_comps} component scores for GESD -------\n")
+            for ii in range(n_comps):
+
+                if ii in ica.exclude:
+                    continue
+
+                ic_score[ii] = ica_metric(ica._pick_sources(
+                                    data=data, 
+                                    include=None, 
+                                    exclude=[ii], 
+                                    n_pca_components=cfg.ica_n_components,
+                                    ))
+            
+                print(f"[manual_ica_review] component {ii}: score={ic_score[ii]:.4f}\n")
+        
+            # plot histogram of ic_scores
+            import matplotlib.pyplot as plt
+            plt.figure()
+            plt.hist(ic_score[~np.isnan(ic_score)], bins=64, color='gray', edgecolor='black')
+            plt.xlabel("ICA Component Score (mean log std)")
+            plt.ylabel("Count")
+            plt.title("Histogram of ICA Component Scores for GESD")
+            plt.show()
+
+            gesd_idx,_ = osl_gesd(ic_score, p_out=1.0, outlier_side=-1)
+            
+            print('ica.exclude before: ', ica.exclude)
+            if len(gesd_idx) == 0:
+                print("\n[manual_ica_review] GESD found no outliers\n")
+            else:
+                ica.exclude.extend(np.where(gesd_idx)[0].tolist())
+            print('ica.exclude after: ', ica.exclude)
+            print(f"\n[manual_ica_review] marking {len(np.where(gesd_idx)[0])} components based on GESD: {np.where(gesd_idx)[0]}")
+
+        
 
         
 

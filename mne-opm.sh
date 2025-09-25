@@ -22,7 +22,7 @@ ANALYSIS="CSI"
 SUBJECT="013"
 SESSION="01"
 CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
-FREESURFER_HOME=/Applications/freesurfer/8.0.0
+FREESURFER_HOME=/Applications/freesurfer/8.1.0
 FAIL_ON_FIRST_CRASH=1
 
 DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/opm_data/data"
@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fail-on-first-crash)
             FAIL_ON_FIRST_CRASH=1
-            shift 1
+            shift 2
             ;;
         -h|--help)
             echo $usage
