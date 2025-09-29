@@ -229,7 +229,7 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
         step_size = int(window_size//2) # step size
         n_windows = (n_times - window_size) // step_size + 1
 
-        prior = np.sqrt(1e-6) * np.eye(n_ref)  # ridge prior for numerical stability
+        prior = np.sqrt(1e-6) * np.eye(2*n_ref)  # ridge prior for numerical stability
 
         print(f"[regress_reference] processing {n_windows} windows")
         for w in range(n_windows):
@@ -238,18 +238,21 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
             end = start + window_size
 
             # get qr decomposition of reference channels in this window
-            X = np.vstack([
-                    stats.zscore(filt_data[:, start:end], axis=1).T,    # linear terms
-                    prior,                                              # ridge prior
-                ])
-            # data_win = filt_data[:, start:end] - np.mean(filt_data[:, start:end], axis=1, keepdims=True)
+           
             # X = np.vstack([
-            #         np.hstack([
-            #             stats.zscore(data_win, axis=1).T,       # linear terms
-            #             stats.zscore(data_win**2, axis=1).T,    # quadratic terms
-            #             ]),
-            #         prior,                                      # ridge prior
+            #         stats.zscore(filt_data[:, start:end], axis=1).T,    # linear terms
+            #         prior,                                              # ridge prior
             #     ])
+
+            data_win = filt_data[:, start:end] - np.mean(filt_data[:, start:end], axis=1, keepdims=True)
+            X = np.vstack([
+                    np.hstack([
+                        stats.zscore(data_win, axis=1).T,       # linear terms
+                        stats.zscore(data_win**2, axis=1).T,    # quadratic terms
+                        ]),
+                    prior,                                      # ridge prior
+                ])
+
             Q, _, _ =  qr(X, pivoting=True, mode='economic')
             Qd = Q[:window_size, :]  # get data rows
             

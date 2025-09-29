@@ -23,6 +23,7 @@ echo "ROOT_DIR: $ROOT_DIR"
 echo "EXPERIMENT: $EXPERIMENT"
 echo "SUBJECT: $SUBJECT"
 echo "T1W_PATH: $T1W_PATH"
+echo "T2W_PATH: $T2W_PATH"
 echo "FREESURFER_HOME: $FREESURFER_HOME"
 echo "RAW_DIR: $RAW_DIR"
 echo "BIDS_DIR: $BIDS_DIR"
@@ -54,7 +55,8 @@ if [ -n "$T2W_PATH" ] && [ -f "$T2W_PATH" ]; then
     echo "T2w image found at: $T2W_PATH"
     echo "Running FreeSurfer with both T1w and T2w inputs ----------------------------"
     echo ""
-    recon-all -i "$T1W_PATH" -T2 "$T2W_PATH" -T2pial -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
+    echo "Command: recon-all -i $T1W_PATH -T2 $T2W_PATH -T2pial -s $SUBJECT -parallel -openmp $MAX_WORKERS -all"
+    recon-all -i "${T1W_PATH}" -T2 "${T2W_PATH}" -T2pial -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
 else
     echo "T2w image not found, running FreeSurfer with T1w only..."
     recon-all -i "$T1W_PATH" -s $SUBJECT -parallel -openmp $MAX_WORKERS -all
