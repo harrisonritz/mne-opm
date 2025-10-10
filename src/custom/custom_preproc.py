@@ -187,13 +187,14 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
     return second
     
 
-def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseRaw:
+def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: bool = False) -> mne.io.BaseRaw:
     """Regress out reference channels from MEG channels."""
 
     print("\n[regress_reference] regressing-out reference channels")
 
     # remove breaks
-    if getattr(cfg, "find_breaks", False):
+    print(raw)
+    if getattr(cfg, "find_breaks", False) and not is_noise:
             mne.preprocessing.annotate_break(
                 raw,
                 min_break_duration=cfg.min_break_duration,
@@ -208,7 +209,6 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
         method="iir", 
         picks=['ref_meg']
         ) # filter data for estimating regression weights
-    # raw_filt = raw.copy()
     
     if getattr(cfg, "_regress_ref_timevarying", False):
         # time-varying regression (sliding window)
@@ -225,11 +225,11 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
         n_ref, _ = filt_data.shape
 
         # n_ref = len(ref_idx)
-        window_size = int(sfreq * getattr(cfg, "mf_st_duration", 100.0)) # window size
+        window_size = int(sfreq * getattr(cfg, "mf_st_duration", 60.0)) # window size
         step_size = int(window_size//2) # step size
         n_windows = (n_times - window_size) // step_size + 1
 
-        prior = np.sqrt(1e-6) * np.eye(2*n_ref)  # ridge prior for numerical stability
+        prior = np.sqrt(1e-3) * np.eye(2*n_ref)  # ridge prior for numerical stability
 
         print(f"[regress_reference] processing {n_windows} windows")
         for w in range(n_windows):
@@ -245,6 +245,7 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
             #     ])
 
             data_win = filt_data[:, start:end] - np.mean(filt_data[:, start:end], axis=1, keepdims=True)
+
             X = np.vstack([
                     np.hstack([
                         stats.zscore(data_win, axis=1).T,       # linear terms
@@ -258,7 +259,7 @@ def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> mne.io.BaseR
             
             raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Qd) @ Qd.T
 
-            if w % (n_windows // 10) == 0:
+            if w % np.max((n_windows // 10, 1)) == 0:
                 print(f"[regress_reference] processed {w}/{n_windows} windows")
 
         raw_clean = mne.io.RawArray(raw_data, raw.info)
@@ -544,8 +545,13 @@ def run_analysis(cfg: SimpleNamespace, analysis: str, data: Dict[str, Any]) -> D
         results["ica"] = ica
 
     elif analysis == "regressref":
-        raw = regress_reference(data[cfg.task], cfg)
-        results[cfg.task] = raw
+        for task, raw in data.items():
+            print(f"[run_analysis] regressing reference channels from {task} data")
+            results[task] = regress_reference(raw, cfg, is_noise=(task == "noise"))
+        # if getattr(cfg, "process_empty_room", False):
+        #     print("\n[run_analysis] regressing reference channels from noise data")
+        #     results["noise"] = regress_reference(data.get("noise"), cfg)
+        # results[cfg.task] = regress_reference(data[cfg.task], cfg)
 
     elif analysis == "applyhfc":
         noise = data.get("noise") if getattr(cfg, "process_empty_room", False) else None
