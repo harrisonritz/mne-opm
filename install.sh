@@ -6,28 +6,33 @@ conda create --name=mne-opm python=3.12
 conda activate mne-opm
 
 
-# install basic packages ----------------------------------------
-pip3 install pandas
+# add packages here
+pip3 install dcm2niix
+pip3 install dotenv
+pip3 install ipykernel
+pip3 install mne-qt-browser
 
 
-# install mne-python ----------------------------------------
-# shouldnt need to install ahead of time, but can try this in case you're having issues
-# pip3 install git+https://github.com/mne-tools/mne-python.git
+# mne-bids (dev) ----------------------------------------
+# pip3 install git+https://github.com/mne-tools/mne-bids.git
+pip3 install git+https://github.com/harrisonritz/mne-bids.git@mne-opm
 
 
-# install mne-bids ----------------------------------------
-# pip3 install --no-cache-dir https://github.com/mne-tools/mne-bids/zipball/main
-pip3 install git+https://github.com/mne-tools/mne-bids.git
-
-
-# install harrison's mne-bids-pipeline ----------------------------------------
+# mne-bids-pipeline (dev) ----------------------------------------
 pip3 install git+https://github.com/mne-tools/mne-bids-pipeline.git
 
 
-# install harrison's mne-python again (revert to my mne version) ----------------------------------------
-# this has to be installed last
-pip3 install git+https://github.com/harrisonritz/mne-python.git@colocated_topo
+# osl-ephys (dev) ----------------------------------------
+pip3 install git+https://github.com/harrisonritz/osl-ephys.git
+
+
+# mne-python (dev) ----------------------------------------
+# NOTE: re-run if you update other packages, as they will set to a specific mne version
+# pip3 install git+https://github.com/mne-tools/mne-python.git
+pip3 install git+https://github.com/harrisonritz/mne-python.git@mne-opm
 
 
 # check installation
 python -c "import mne; mne.sys_info()"
+
+

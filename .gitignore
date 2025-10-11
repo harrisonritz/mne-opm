@@ -1,3 +1,7 @@
 data/*
 .DS*
 *.pyc
+*.env
+my-mne-opm.sh
+.python-version
+local-mne-opm.sh
