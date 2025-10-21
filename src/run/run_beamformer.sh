@@ -41,4 +41,4 @@ echo ""
 echo ""
 echo "======================= BEAMFORMER: Time-Locked + Power =============================================="
 echo ""
-python "$ROOT_DIR/src/custom/run_beamformer.py" --config="$CONFIG_PATH" --output-type=both
+python "$ROOT_DIR/src/custom/run_beamformer.py" --config="$CONFIG_PATH"
