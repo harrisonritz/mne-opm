@@ -302,7 +302,7 @@ def run_beamformer_timecourse(
             evokeds = []
             for cond_name in contrast_def["conditions"]:
                 try:
-                    epochs_subset = epochs[cond_name]
+                    epochs_subset = epochs[cond_name].copy()
                     if len(epochs_subset) == 0:
                         print(f"    [WARNING] No epochs for condition '{cond_name}'. Skipping contrast.")
                         continue
@@ -322,7 +322,7 @@ def run_beamformer_timecourse(
         else:
             # Simple condition - just average
             try:
-                epochs_subset = epochs[condition]
+                epochs_subset = epochs[condition].copy()
                 if len(epochs_subset) == 0:
                     print(f"    [WARNING] No epochs for condition '{condition}'. Skipping.")
                     continue
@@ -373,16 +373,16 @@ def run_beamformer_power(
     """
     print("\n[run_beamformer_power] Running power beamformer analysis...")
     print(f"  - Time window: {cfg._beamformer_power_tmin} to {cfg._beamformer_power_tmax} s")
-    
+
     stcs = {}
     conditions = cfg.conditions  # Only run on base conditions, not contrasts for power
     
-    print(f"[run_beamformer_power] Processing {len(conditions)} conditions")
+    print(f"\n\n[run_beamformer_power] Processing {len(conditions)} conditions")
     
     # Compute covariance for each condition
     covs = {}
     for condition in conditions:
-        print(f"  - Computing covariance for condition: {condition}")
+        print(f"\n  - Computing covariance for condition: {condition}")
         
         try:
             epochs_subset = epochs[condition].copy()
@@ -411,61 +411,60 @@ def run_beamformer_power(
         stc = apply_lcmv_cov(cov, filters)
         stcs[condition] = stc
         print(f"    - STC shape: {stc.data.shape}")
-    
-    # Compute contrasts if we have sufficient conditions
-    print(f"[run_beamformer_power] Processing {len(cfg.contrasts)} conditions")
+
+    # CONTRASTS -------------------------------------
+    print(f"\n\n[run_beamformer_power] Processing {len(cfg.contrasts)} contrasts")
     for contrast in cfg.contrasts:
 
+        print("-"*10)
         contrast_name = contrast["name"]
         contrast_conditions = contrast["conditions"]
+        
         print(f"  - Computing contrast: {contrast_name}")
-        print(f"    - {contrast}")
-        print()
+        print(f"    [{contrast}]")    
 
+        stc_list = []
         for condition in contrast_conditions:
-            try:
-                print("*"*10)
-                print(epochs)
-                epochs_subset = epochs[condition].copy()
-                if len(epochs_subset) == 0:
-                    print(f"    [WARNING] No epochs for condition '{condition}'. Skipping.")
-                    continue
+            # try:
+            print(f'    contrast_condition: {condition}')
+            epochs_subset = epochs[f"{condition}"].copy()
+            
 
-                if stcs[condition] is not None:
-                    continue
-                
-                # Compute covariance in specified time window
-                cov = mne.compute_covariance(
-                    epochs_subset,
-                    method="shrunk",
-                    tmin=cfg._beamformer_power_tmin,
-                    tmax=cfg._beamformer_power_tmax,
-                    n_jobs=cfg.n_jobs,
-                )
-                stcs[condition] = apply_lcmv_cov(cov, filters)
-                print(f"    - Computed from {len(epochs_subset)} epochs")
-                
-            except KeyError:
-                print(f"    [WARNING] Condition '{condition}' not found in epochs. Skipping.")
+            if len(epochs_subset) == 0:
+                print(f"    [WARNING] No epochs for condition '{condition}'. Skipping.")
                 continue
+
+            # if stcs[condition] is not None:
+            #     continue
+            
+            # Compute covariance in specified time window
+            cov = mne.compute_covariance(
+                epochs_subset,
+                method="shrunk",
+                tmin=cfg._beamformer_power_tmin,
+                tmax=cfg._beamformer_power_tmax,
+                n_jobs=cfg.n_jobs,
+            )
+            stc_list.append(apply_lcmv_cov(cov, filters))
+            print(f"    - Computed from {len(epochs_subset)} epochs")
+                
 
         # For power analysis, use normalized difference: W*stc / |W|*stc
         # This is more appropriate for power than weighted sums
-        stc_list = [stcs[cond] for cond in contrast_conditions if cond in stcs]
+        # stc_list = [stcs[cond] for cond in contrast_conditions if cond in stcs]
         if not stc_list:
             print(f"    [WARNING] No valid STCs found for contrast '{contrast_name}'. Skipping.")
             continue
 
         stc_contrast = stc_list[0].copy()
+        stc_norm = stc_list[0].copy()
 
         # sum each item in stc_list, weigthed by contrast weights
-        total_abs_weight=0
         for i, stc in enumerate(stc_list):
             weight = contrast["weights"][i]
             stc_contrast.data += weight * stc.data
-            # sum weights in contrast["weights"] list
-            total_abs_weight += abs(weight)
-        stc_contrast.data /=  sum(stc_list)*total_abs_weight
+            stc_norm.data += abs(weight) * stc.data
+        stc_contrast.data /=  stc_norm.data
         stcs[contrast_name] = stc_contrast
         print(f"    - Normalized difference contrast created")
     
@@ -684,37 +683,33 @@ def main():
     )
     
     # Run Time-locked beamformer --------------------------------
-    # print("\n" + "=" * 80)
-    # print("TIME-LOCKED BEAMFORMER")
-    # print("=" * 80)
-    # stcs_time = run_beamformer_timecourse(
-    #     epochs=data["epochs"],
-    #     filters=filters,
-    #     cfg=cfg,
-    # )
     
-    # out_files_time = save_beamformer_results(
-    #     cfg=cfg,
-    #     filters=filters,
-    #     stcs=stcs_time,
-    #     analysis_type="time",
-    # )
+    print("\n" + "=" * 80)
+    print("TIME-LOCKED BEAMFORMER")
+    print("=" * 80)
+    stcs_time = run_beamformer_timecourse(
+        epochs=data["epochs"],
+        filters=filters,
+        cfg=cfg,
+    )
     
-    # add_to_report(
-    #     cfg=cfg,
-    #     stcs=out_files_time,
-    #     analysis_type="time",
-    # )
+    out_files_time = save_beamformer_results(
+        cfg=cfg,
+        filters=filters,
+        stcs=stcs_time,
+        analysis_type="time",
+    )
+    
+    add_to_report(
+        cfg=cfg,
+        stcs=out_files_time,
+        analysis_type="time",
+    )
     
     # Run Power beamformer --------------------------------
     print("\n" + "=" * 80)
     print("POWER BEAMFORMER")
     print("=" * 80)
-
-    print('epochs')
-    print(data["epochs"][cfg.contrasts[0]['conditions'][0]])
-    print(data["epochs"][cfg.contrasts[0]['conditions'][1]])
-    exit()
 
     stcs_power = run_beamformer_power(
         epochs=data["epochs"],
