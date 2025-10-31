@@ -3,7 +3,7 @@
 
 
 ## activate environment ----------------------------------------
-conda activate mne-opm
+# conda activate mne-opm
 
 ## fixed variables
 export MPLBACKEND=agg
@@ -63,7 +63,13 @@ echo ""
 source "$ROOT_DIR/src/run/run_sensor.sh"
 
 
+# echo ""
+# echo "======================= SOURCE =============================================="
+# echo ""
+# source "$ROOT_DIR/src/run/run_source.sh"
+
+
 echo ""
-echo "======================= SOURCE =============================================="
+echo "======================= BEAMFORMER =============================================="
 echo ""
-source "$ROOT_DIR/src/run/run_source.sh"
+source "$ROOT_DIR/src/run/run_beamformer.sh"

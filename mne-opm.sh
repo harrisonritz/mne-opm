@@ -25,7 +25,7 @@ CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
 FREESURFER_HOME=/Applications/freesurfer/8.1.0
 FAIL_ON_FIRST_CRASH=1
 
-DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/opm_data/data"
+DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/___Export_Folder/opm_data/data"
 # SUBJECTS_DIR="$DATA_BASE/$EXPERIMENT/bids/derivatives/freesurfer/subjects"
 SUBJECTS_DIR="/Users/hr0283/freesurfer/$EXPERIMENT"
 T1W_PATH=$SUBJECTS_DIR/anat/sub-$SUBJECT/anat_ses-01_T1w_acq-0.8mm-MPR_t1w.nii.gz

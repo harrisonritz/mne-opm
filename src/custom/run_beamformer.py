@@ -521,7 +521,7 @@ def save_beamformer_results(
     # Save filters (only once, shared by both analyses)
     if cfg._beamformer_save_filters and analysis_type == "time":
         filter_path = bids_path.copy().update(suffix="lcmv", extension=".h5")
-        print(f"  - Saving filters to: {filter_path.fpath}")
+        # print(f"  - Saving filters to: {filter_path.fpath}")
         filters.save(filter_path.fpath, overwrite=True)
         out_files["filters"] = filter_path.fpath
     

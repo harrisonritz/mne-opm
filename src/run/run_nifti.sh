@@ -4,7 +4,7 @@
 
 ## activate environment ----------------------------------------
 # source activate base
-conda activate mne-opm
+# conda activate mne-opm
 
 
 SUBJ_RAW_PATH=$(find "$RAW_DIR" -type d -path "*$SUBJECT")

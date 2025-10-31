@@ -4,7 +4,7 @@
 
 
 ## activate environment ----------------------------------------
-conda activate mne-opm
+# conda activate mne-opm
 
 ## fixed variables
 export MPLBACKEND=agg

@@ -15,20 +15,29 @@ Outputs are written back into the BIDS structure using mne-bids utilities,
 re-using existing derivative locations produced by mne-bids-pipeline.
 """
 
+
 from __future__ import annotations
+
+import time
+
+import matplotlib.pyplot as plt
+
+import numpy as np
 
 import argparse
 import os
 from types import SimpleNamespace
 from typing import Dict, Any
 
-from click import pause
 import mne
 import mne_bids
 import pandas as pd
-import numpy as np
 from scipy.linalg import qr
 from scipy import stats
+from pygam import LinearGAM, s, te, l, terms
+
+
+
 
 from mne._fiff.pick import _picks_to_idx
 
@@ -38,7 +47,13 @@ try:  # optional dependency for nicer Qt browser; skip if unavailable
     _HAVE_QT_BROWSER = True
 except Exception:  # pragma: no cover
     _HAVE_QT_BROWSER = False
-from mne_bids_pipeline._config_import import _update_config_from_path
+
+from mne_bids_pipeline._config_import import (
+    _update_config_from_path, 
+    _update_with_user_config,
+    _import_config,
+)
+
 from osl_ephys.preprocessing.osl_wrappers import (
     bad_segments as osl_bad_segments,
     bad_channels as osl_bad_channels,
@@ -53,6 +68,7 @@ from osl_ephys.preprocessing.osl_wrappers import (
 try:  # ensure a GUI backend for interactive steps
     mne.viz.set_browser_backend("qt")
 except Exception:  # pragma: no cover - fallback if qt not available
+    print('error: (qt not available)')
     pass
 
 SEGMENT_LEN_SEC = 1.0  # length for segment-based detection
@@ -72,7 +88,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
       bad_epochs -> {task}
       manual_ica -> {task, manualica}
     """
-    print(f"\n\n[load_data] analysis={analysis}")
+    print(f"\n[load_data] analysis={analysis}")
     out: Dict[str, Any] = {}
 
     if analysis in {"badsegments", "badchannels", "manualchannel", "regressref", "applyhfc"}:
@@ -95,7 +111,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
                 extensions=".fif",
             )[0]
             out[task] = mne_bids.read_raw_bids(bids_path, extra_params={"preload": True})
-            print(f"\n[load_data] loaded raw task={task}")
+            print(f"[load_data] loaded raw task={task}")
 
     elif analysis == "badepochs":
         ep_path = mne_bids.find_matching_paths(
@@ -109,7 +125,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
             extensions=".fif",
         )[0]
         out[cfg.task] = mne.read_epochs(ep_path, preload=True)
-        print("\n[load_data] loaded epochs")
+        print("[load_data] loaded epochs")
 
     elif analysis == "manualica":
         raw_path = mne_bids.find_matching_paths(
@@ -134,7 +150,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
             extensions=".fif",
         )[0]
         out["manualica"] = mne.preprocessing.read_ica(ica_path)
-        print("\n[load_data] loaded raw + ICA")
+        print("[load_data] loaded raw + ICA")
     else:  # pragma: no cover
         raise ValueError(f"Unknown analysis {analysis}")
     return out
@@ -143,6 +159,192 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------------------------
 # Individual Analysis Functions
 # --------------------------------------------------------------------------------------
+
+def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: bool = False) -> mne.io.BaseRaw:
+    """Regress out reference channels from MEG channels."""
+
+    print("\n[regress_reference] regressing-out reference channels")
+
+    # remove breaks
+    print(raw)
+    if getattr(cfg, "find_breaks", False) and not is_noise:
+            mne.preprocessing.annotate_break(
+                raw,
+                min_break_duration=cfg.min_break_duration,
+                t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
+                t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
+            )
+
+    # estimate weights
+    raw_filt = raw.copy().filter(
+        l_freq=cfg.l_freq, 
+        h_freq=cfg.h_freq, 
+        method="iir", 
+        picks=['ref_meg']
+        ) # filter data for estimating regression weights
+    
+    if getattr(cfg, "_regress_ref_timevarying", False):
+        # time-varying regression (sliding window)
+        print("\n[regress_reference] using time-varying regression")
+
+
+        if getattr(cfg, "_regress_ref_method", 'window') == 'window':
+                    
+                   
+            raw_data = raw.get_data()
+            filt_data = raw_filt.get_data(picks="ref_meg")
+            info = raw.info
+
+            mag_idx = _picks_to_idx(info, cfg.ch_types[0])
+            n_channels, n_times = raw_data.shape
+            n_ref, _ = filt_data.shape
+            sfreq = info['sfreq']
+
+
+            # ------- sliding window regression ----------
+            window_size = int(sfreq * getattr(cfg, "mf_st_duration", 60.0)) # window size
+            step_size = int(window_size//2) # step size
+            n_windows = (n_times - window_size) // step_size + 1
+
+            # prior = np.sqrt(1e-3) * np.eye(2*n_ref)  # ridge prior for numerical stability
+            prior = np.diag(np.hstack([
+                    np.repeat([np.sqrt(1e-4)], n_ref), # linear terms
+                    np.repeat([np.sqrt(1e-4)], n_ref), # quadratic terms
+                    ]))
+
+            print(f"[regress_reference] processing {n_windows} windows of {window_size} samples ({window_size/sfreq:.1f} sec) in steps of {step_size} samples ({step_size/sfreq:.1f} sec)")
+            for w in range(n_windows):
+
+                start = w * step_size
+                end = start + window_size
+
+                # get qr decomposition of reference channels in this window
+                data_win = filt_data[:, start:end] - np.mean(filt_data[:, start:end], axis=1, keepdims=True)
+                data_x = np.hstack([
+                            stats.zscore(data_win, axis=1).T,       # linear terms
+                            stats.zscore(data_win**2, axis=1).T,    # quadratic terms
+                            ])
+                X = np.vstack([
+                        data_x,
+                        prior, # ridge prior
+                    ])
+
+                Q, _, _ = qr(X, pivoting=True, mode='economic')
+                Qd = Q[:window_size, :]  # get data rows
+                
+                raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Qd) @ Qd.T
+
+                if w % np.max((n_windows // 10, 1)) == 0:
+                    print(f"[regress_reference] processed {w}/{n_windows} windows")
+
+            raw_clean = mne.io.RawArray(raw_data, info)
+            del raw_data, filt_data
+
+        elif getattr(cfg, "_regress_ref_method", 'window') == 'gam':
+            print("\n[regress_reference] using GAM regression")
+        
+            raw_data = raw.copy().get_data()
+            n_times = raw.n_times
+            sfreq = raw.info['sfreq']
+            info = raw.info
+            ch_names = raw.ch_names
+            # prepend raw.times to filt_data for GAM
+            # filt_ref = np.vstack([raw.times, raw_filt.get_data(picks='ref_meg')])
+
+            # svd of reference channels
+            refs = raw.copy().get_data(picks='ref_meg')
+            refs -= np.mean(refs, axis=1, keepdims=True)
+            U,S,_ = np.linalg.svd(refs, full_matrices=False)
+            print('reference SVs: ', S / np.min(S))
+
+            # use SVD components as references
+            ref_data = np.vstack([raw.times, U.T @ refs])
+            ref_data -= np.mean(ref_data, axis=1, keepdims=True)
+            n_refs = ref_data.shape[0] - 1
+            del raw, refs, U
+
+
+            n_splines = np.max([4, int(n_times / (sfreq * 60.0))]) # one spline per minute, min 4
+            max_iter = 100
+            fit_intercept = True
+
+            print(f"refs: {n_refs}, times: {n_times}, splines: {n_splines}")
+
+            if n_refs == 6:
+                    gam = LinearGAM(
+                        terms=  te(0,1, spline_order=[3,1], n_splines=[n_splines, 2]) +
+                                te(0,2, spline_order=[3,1], n_splines=[n_splines, 2]) +
+                                te(0,3, spline_order=[3,1], n_splines=[n_splines, 2]) +
+                                te(0,4, spline_order=[3,1], n_splines=[n_splines, 2]) +
+                                te(0,5, spline_order=[3,1], n_splines=[n_splines, 2]) +
+                                te(0,6, spline_order=[3,1], n_splines=[n_splines, 2]),
+                        max_iter=max_iter,
+                        fit_intercept=fit_intercept,
+                        callbacks=None, 
+                        verbose=False,
+                        lam=.2,
+                    )
+            else:
+                raise ValueError(f'GAM regression only implemented for 6 reference channels, got {n_refs}')
+
+
+            print(f'\n----- Fitting {len(_picks_to_idx(info, cfg.ch_types[0]))} channels -----\n')
+            loop_start = time.perf_counter()
+            c = 1
+            for mag in _picks_to_idx(info, cfg.ch_types[0]):
+                print(f'\nfitting channel {c}: {ch_names[mag]} --------------')
+                c += 1
+
+                start_time = time.perf_counter()
+                ref_dec = ref_data[:,::12].T
+                raw_dec = raw_data[mag,::12].T
+                gam.fit(ref_dec, raw_dec)
+                # gam.gridsearch(ref_dec, raw_dec)
+                # print('residualize')
+                raw_data[mag, :] = gam.deviance_residuals(ref_data.T, raw_data[mag, :].T).T
+                print(f'R2: {gam.statistics_['pseudo_r2']['explained_deviance']:.2f}')
+
+                # Print the execution time
+                end_time = time.perf_counter()
+                elapsed_time = end_time - start_time
+                print(f"Execution time: {elapsed_time:.2f} seconds")
+
+                # # print summary
+                # print(gam.summary())
+                
+                # ## plotting
+                # plt.switch_backend('qt5agg')
+                # fig, axs = plt.subplots(1,3, figsize=(15,5), subplot_kw={"projection": "3d"})
+                # titles = ['time', 'ref1', 'ref2']
+                # for i, ax in enumerate(axs):
+                #     ax.set_title(titles[i])
+
+                #     # XX = gam.generate_X_grid(term=i)
+                #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX))
+                #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX, width=.95)[1], c='r', ls='--')
+
+                #     XX = gam.generate_X_grid(term=i, meshgrid=True)
+                #     Z = gam.partial_dependence(term=i, X=XX, meshgrid=True)
+                #     ax.plot_surface(XX[0], XX[1], Z, cmap='viridis')
+                # plt.show()
+            loop_elapsed = time.perf_counter() - loop_start
+            print(f"\n------------- Total Execution time: {loop_elapsed:.2f} seconds ------------- \n")
+
+            raw_clean = mne.io.RawArray(raw_data, info)
+
+
+        
+    else:
+        print("\n[regress_reference] using standard regression")
+        weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(raw_filt)
+        raw_clean = weights.apply(raw, copy=True)
+        del weights
+        
+    del raw_filt
+    print('\nFinished reference regression!\n---------------\n')
+
+    return raw_clean
+    
 
 def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: bool = False) -> mne.io.BaseRaw:
     """Detect bad segments (single pass for noise, two passes otherwise)."""
@@ -185,99 +387,28 @@ def detect_bad_segments(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: boo
         channel_threshold=0.05,
     )
     return second
-    
 
-def regress_reference(raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: bool = False) -> mne.io.BaseRaw:
-    """Regress out reference channels from MEG channels."""
-
-    print("\n[regress_reference] regressing-out reference channels")
-
-    # remove breaks
-    print(raw)
-    if getattr(cfg, "find_breaks", False) and not is_noise:
-            mne.preprocessing.annotate_break(
-                raw,
-                min_break_duration=cfg.min_break_duration,
-                t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
-                t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
-            )
-
-    # estimate weights
-    raw_filt = raw.copy().filter(
-        l_freq=cfg.l_freq, 
-        h_freq=cfg.h_freq, 
-        method="iir", 
-        picks=['ref_meg']
-        ) # filter data for estimating regression weights
-    
-    if getattr(cfg, "_regress_ref_timevarying", False):
-        # time-varying regression (sliding window)
-        print("\n[regress_reference] using time-varying regression")
-        
-        sfreq = raw.info['sfreq']
-        raw_data = raw.get_data()
-        filt_data = raw_filt.get_data(picks="ref_meg")
-
-        mag_idx = _picks_to_idx(raw.info, cfg.ch_types[0])
-        # ref_idx = _picks_to_idx(raw.info, 'ref_meg')
-
-        n_channels, n_times = raw_data.shape
-        n_ref, _ = filt_data.shape
-
-        # n_ref = len(ref_idx)
-        window_size = int(sfreq * getattr(cfg, "mf_st_duration", 60.0)) # window size
-        step_size = int(window_size//2) # step size
-        n_windows = (n_times - window_size) // step_size + 1
-
-        prior = np.sqrt(1e-3) * np.eye(2*n_ref)  # ridge prior for numerical stability
-
-        print(f"[regress_reference] processing {n_windows} windows")
-        for w in range(n_windows):
-
-            start = w * step_size
-            end = start + window_size
-
-            # get qr decomposition of reference channels in this window
-           
-            # X = np.vstack([
-            #         stats.zscore(filt_data[:, start:end], axis=1).T,    # linear terms
-            #         prior,                                              # ridge prior
-            #     ])
-
-            data_win = filt_data[:, start:end] - np.mean(filt_data[:, start:end], axis=1, keepdims=True)
-
-            X = np.vstack([
-                    np.hstack([
-                        stats.zscore(data_win, axis=1).T,       # linear terms
-                        stats.zscore(data_win**2, axis=1).T,    # quadratic terms
-                        ]),
-                    prior,                                      # ridge prior
-                ])
-
-            Q, _, _ =  qr(X, pivoting=True, mode='economic')
-            Qd = Q[:window_size, :]  # get data rows
-            
-            raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Qd) @ Qd.T
-
-            if w % np.max((n_windows // 10, 1)) == 0:
-                print(f"[regress_reference] processed {w}/{n_windows} windows")
-
-        raw_clean = mne.io.RawArray(raw_data, raw.info)
-        # raw._data = raw_data
-        del raw_data, filt_data
-        
-    else:
-        print("\n[regress_reference] using standard regression")
-        weights = mne.preprocessing.EOGRegression(picks=cfg.ch_types[0], picks_artifact="ref_meg").fit(raw_filt)
-        raw_clean = weights.apply(raw, copy=True)
-        del weights
-        
-    del raw_filt
-    return raw_clean
-    
 
 def detect_bad_channels(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> list[str]:
-    """Return list of detected bad channel names."""
+    """
+    Find bad channel using GESD.
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        The raw MEG data to process.
+    cfg : SimpleNamespace
+        Configuration object containing:
+        - l_freq : float
+            Low cutoff frequency for bandpass filtering.
+        - h_freq : float
+            High cutoff frequency for bandpass filtering.
+        - ch_types : list
+            Channel types to process (e.g., ['mag']).
+    Returns
+    -------
+    list[str]
+        List of detected bad channel names.
+    """
     filt = raw.copy().filter(l_freq=cfg.l_freq, h_freq=cfg.h_freq, method="iir")
     detected = osl_bad_channels(
         filt,
@@ -285,16 +416,40 @@ def detect_bad_channels(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> list[str]:
         ref_meg=None,
         significance_level=0.05,
     )
+    # print bad channels
+    print(f"\n[detect_bad_channels] detected {len(detected.info['bads'])} bad channels: {detected.info['bads']}")
     return list(detected.info["bads"])
 
 
 def drop_bad_epochs(epochs: mne.Epochs, cfg: SimpleNamespace) -> mne.Epochs:
-    return osl_drop_bad_epochs(
+    """
+    Drop bad epochs using GESD.
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to process.
+    cfg : SimpleNamespace
+        Configuration object containing:
+        - ch_types : list
+            Channel types to process (e.g., ['mag']).
+    Returns
+    -------
+    mne.Epochs
+        The cleaned epochs with bad epochs removed.
+    """
+
+    clean_epochs = osl_drop_bad_epochs(
         epochs,
         picks=cfg.ch_types[0],
         ref_meg=None,
         metric="std",
     )
+
+    # print dropped epochs
+    n_dropped = len(epochs) - len(clean_epochs)
+    print(f"\n[drop_bad_epochs] dropped {n_dropped} epochs")
+
+    return clean_epochs
 
 
 def apply_hfc(raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw | None]:
@@ -445,13 +600,10 @@ def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: Simp
 
     # label bad components based on osl's gesd
     if getattr(cfg, "gesd_bads", True):
-        
-        picks = ica.ch_names
-        picks = _picks_to_idx(raw.info, picks, exclude=())
-        def ica_metric(x): return np.log(np.std(x))
-        # def ica_metric(x): return stats.kurtosis(x, axis=None)
 
-        ic_score = np.full(np.max([ica.n_components_, 32]), np.nan)
+        print("\n[manual_ica_review] identifying bad components based on GESD -------\n")
+        sources = ica.get_sources(raw).get_data()
+        ic_score = stats.kurtosis(sources, axis=1)
         n_comps = len(ic_score)
 
         if (n_comps - len(ica.exclude)) < 5:
@@ -460,33 +612,37 @@ def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: Simp
 
         else:
 
-            data = raw.get_data(picks=picks, reject_by_annotation="omit")
 
-            print(f"\n\n[manual_ica_review] computing {n_comps - len(ica.exclude)}/{n_comps} component scores for GESD -------\n")
-            for ii in range(n_comps):
+            # picks = ica.ch_names
+            # picks = _picks_to_idx(raw.info, picks, exclude=())
+            # def ica_metric(x): return np.log(np.std(x))
+            # ic_score = np.full(np.max([ica.n_components_, 32]), np.nan)
+            # data = raw.get_data(picks=picks, reject_by_annotation="omit")
 
-                if ii in ica.exclude:
-                    continue
+            # print(f"\n\n[manual_ica_review] computing {n_comps - len(ica.exclude)}/{n_comps} component scores for GESD -------\n")
+            # for ii in range(n_comps):
 
-                ic_score[ii] = ica_metric(ica._pick_sources(
-                                    data=data, 
-                                    include=None, 
-                                    exclude=[ii], 
-                                    n_pca_components=cfg.ica_n_components,
-                                    ))
+            #     if ii in ica.exclude:
+            #         continue
+
+            #     ic_score[ii] = ica_metric(ica._pick_sources(
+            #                         data=data, 
+            #                         include=None, 
+            #                         exclude=[ii], 
+            #                         n_pca_components=cfg.ica_n_components,
+            #                         ))
             
-                print(f"[manual_ica_review] component {ii}: score={ic_score[ii]:.4f}\n")
+            #     print(f"[manual_ica_review] component {ii}: score={ic_score[ii]:.4f}\n")
         
             # plot histogram of ic_scores
-            import matplotlib.pyplot as plt
             plt.figure()
             plt.hist(ic_score[~np.isnan(ic_score)], bins=64, color='gray', edgecolor='black')
-            plt.xlabel("ICA Component Score (mean log std)")
+            plt.xlabel("ICA Component Score (kurtosis)")
             plt.ylabel("Count")
             plt.title("Histogram of ICA Component Scores for GESD")
             plt.show()
 
-            gesd_idx,_ = osl_gesd(ic_score, p_out=1.0, outlier_side=-1)
+            gesd_idx,_ = osl_gesd(ic_score, p_out=1.0, outlier_side=1)
             
             print('ica.exclude before: ', ica.exclude)
             if len(gesd_idx) == 0:
@@ -567,10 +723,11 @@ def run_analysis(cfg: SimpleNamespace, analysis: str, data: Dict[str, Any]) -> D
 
 def save_results(cfg: SimpleNamespace, analysis: str, results: Dict[str, Any]):
     tasks = {k: v for k, v in results.items() if k not in {"bads", "ica"}}
+    print(f"\n[save_results] saving results for analysis={analysis}")
     if analysis in {"badsegments", "badchannels", "manualchannel", "regressref", "applyhfc"}:
         unique_bads = sorted(set(results.get("bads", []))) if results.get("bads") else []
         for task, raw in tasks.items():
-            print(f"\n\n[save_results] writing task={task}")
+            print(f"[save_results] writing task={task}")
             bp = mne_bids.find_matching_paths(
                 root=cfg.bids_root,
                 subjects=cfg.subjects,
@@ -676,9 +833,12 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    cfg = _import_config(config_path=args.config)
+    _update_config_from_path(config=cfg, config_path=args.config) 
     analysis_key = args.analysis.replace("_", "")
-    cfg = SimpleNamespace()
-    _update_config_from_path(config=cfg, config_path=args.config)
+    # cfg = SimpleNamespace()
+    # _update_with_user_config(config=cfg, config_path=args.config)
 
     if analysis_key == "manualchannel" and not getattr(cfg, "_manual_bads", False):
         print("\n[main] manual channel selection disabled; exiting")

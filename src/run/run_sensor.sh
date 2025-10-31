@@ -3,7 +3,7 @@
 
 
 ## activate environment ----------------------------------------
-conda activate mne-opm
+# conda activate mne-opm
 
 ## fixed variables
 export MPLBACKEND=agg
@@ -29,4 +29,4 @@ echo ""
 
 
 ## run mne_bids_pipeline ----------------------------------------
-mne_bids_pipeline --steps=sensor --config=$CONFIG_PATH
+mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,sensor/decoding_full_epochs --config=$CONFIG_PATH
