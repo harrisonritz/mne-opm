@@ -603,54 +603,33 @@ def manual_ica_review(ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: Simp
 
         print("\n[manual_ica_review] identifying bad components based on GESD -------\n")
         sources = ica.get_sources(raw).get_data()
-        ic_score = stats.kurtosis(sources, axis=1)
-        n_comps = len(ic_score)
+        kurtosis_scores = stats.kurtosis(sources, axis=1)
+        std_scores = np.std(sources, axis=1, ddof=1)
 
-        if (n_comps - len(ica.exclude)) < 5:
-
+        if (sources.shape[0] - len(ica.exclude)) < 5:
             print(f"\n[manual_ica_review] too few components remaining for GESD ({n_comps - len(ica.exclude)}); skipping\n")
-
         else:
-
-
-            # picks = ica.ch_names
-            # picks = _picks_to_idx(raw.info, picks, exclude=())
-            # def ica_metric(x): return np.log(np.std(x))
-            # ic_score = np.full(np.max([ica.n_components_, 32]), np.nan)
-            # data = raw.get_data(picks=picks, reject_by_annotation="omit")
-
-            # print(f"\n\n[manual_ica_review] computing {n_comps - len(ica.exclude)}/{n_comps} component scores for GESD -------\n")
-            # for ii in range(n_comps):
-
-            #     if ii in ica.exclude:
-            #         continue
-
-            #     ic_score[ii] = ica_metric(ica._pick_sources(
-            #                         data=data, 
-            #                         include=None, 
-            #                         exclude=[ii], 
-            #                         n_pca_components=cfg.ica_n_components,
-            #                         ))
-            
-            #     print(f"[manual_ica_review] component {ii}: score={ic_score[ii]:.4f}\n")
         
             # plot histogram of ic_scores
-            plt.figure()
-            plt.hist(ic_score[~np.isnan(ic_score)], bins=64, color='gray', edgecolor='black')
-            plt.xlabel("ICA Component Score (kurtosis)")
-            plt.ylabel("Count")
-            plt.title("Histogram of ICA Component Scores for GESD")
-            plt.show()
+            # plt.figure()
+            # plt.hist(ic_score[~np.isnan(ic_score)], bins=64, color='gray', edgecolor='black')
+            # plt.xlabel("ICA Component Score (kurtosis)")
+            # plt.ylabel("Count")
+            # plt.title("Histogram of ICA Component Scores for GESD")
+            # plt.show()
 
-            gesd_idx,_ = osl_gesd(ic_score, p_out=1.0, outlier_side=1)
-            
+            # loop over both scores, include their names for plotting
             print('ica.exclude before: ', ica.exclude)
-            if len(gesd_idx) == 0:
-                print("\n[manual_ica_review] GESD found no outliers\n")
-            else:
-                ica.exclude.extend(np.where(gesd_idx)[0].tolist())
+            for score, name in zip([kurtosis_scores, std_scores], ["kurtosis", "std"]):
+
+                gesd_idx,_ = osl_gesd(score, p_out=1.0, outlier_side=1)
+
+                if len(gesd_idx) == 0:
+                    print(f"\n[manual_ica_review] {name} GESD found no outliers\n")
+                else:
+                    ica.exclude.extend(np.where(gesd_idx)[0].tolist())
+                print(f"\n[manual_ica_review] marking {len(np.where(gesd_idx)[0])} components based on {name} GESD: {np.where(gesd_idx)[0]}")
             print('ica.exclude after: ', ica.exclude)
-            print(f"\n[manual_ica_review] marking {len(np.where(gesd_idx)[0])} components based on GESD: {np.where(gesd_idx)[0]}")
 
         
 

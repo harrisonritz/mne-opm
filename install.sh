@@ -1,3 +1,10 @@
+# old installation
+
+# NOTE: use UV instead
+echo "USE UV INSTEAD!!"
+return
+
+
 # create env ----------------------------------------
 conda create --name=mne-opm python=3.12
 
@@ -8,18 +15,17 @@ conda activate mne-opm
 
 # add packages here
 pip3 install dcm2niix
-pip3 install dotenv # probably don't need
+# pip3 install dotenv # probably don't need
 pip3 install ipykernel
 pip3 install mne-qt-browser
 
 
 # pygam ----------------------------------------
-# pip3 install git+https://github.com/dswah/pyGAM.git
-pip3 install git+https://github.com/harrisonritz/pyGAM.git@mne-opm
+# pip3 install git+https://github.com/harrisonritz/pyGAM.git@mne-opm
 
-pip3 install scikit-sparse
-pip3 install nose
-pip3 install progressbar
+# pip3 install scikit-sparse
+# pip3 install nose
+# pip3 install progressbar
 
 
 # mne-bids (dev) ----------------------------------------

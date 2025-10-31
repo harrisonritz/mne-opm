@@ -683,52 +683,55 @@ def main():
     )
     
     # Run Time-locked beamformer --------------------------------
+    if getattr(cfg, '_beamformer_output_type', 'both') in ['time', 'both']:
+        print("\n" + "=" * 80)
+        print("TIME-LOCKED BEAMFORMER")
+        print("=" * 80)
+        stcs_time = run_beamformer_timecourse(
+            epochs=data["epochs"],
+            filters=filters,
+            cfg=cfg,
+        )
+        
+        out_files_time = save_beamformer_results(
+            cfg=cfg,
+            filters=filters,
+            stcs=stcs_time,
+            analysis_type="time",
+        )
+        
+        add_to_report(
+            cfg=cfg,
+            stcs=out_files_time,
+            analysis_type="time",
+        )
     
-    print("\n" + "=" * 80)
-    print("TIME-LOCKED BEAMFORMER")
-    print("=" * 80)
-    stcs_time = run_beamformer_timecourse(
-        epochs=data["epochs"],
-        filters=filters,
-        cfg=cfg,
-    )
-    
-    out_files_time = save_beamformer_results(
-        cfg=cfg,
-        filters=filters,
-        stcs=stcs_time,
-        analysis_type="time",
-    )
-    
-    add_to_report(
-        cfg=cfg,
-        stcs=out_files_time,
-        analysis_type="time",
-    )
     
     # Run Power beamformer --------------------------------
-    print("\n" + "=" * 80)
-    print("POWER BEAMFORMER")
-    print("=" * 80)
+    if getattr(cfg, '_beamformer_output_type', 'both') in ['power', 'both']:
+        
+        print("\n" + "=" * 80)
+        print("POWER BEAMFORMER")
+        print("=" * 80)
 
-    stcs_power = run_beamformer_power(
-        epochs=data["epochs"],
-        filters=filters,
-        cfg=cfg,
-    )
-    
-    out_files_power = save_beamformer_results(
-        cfg=cfg,
-        filters=filters,
-        stcs=stcs_power,
-        analysis_type="power",
-    )
-    
-    add_to_report(
-        cfg=cfg,
-        stcs=out_files_power,
-        analysis_type="power",
-    )
+        stcs_power = run_beamformer_power(
+            epochs=data["epochs"],
+            filters=filters,
+            cfg=cfg,
+        )
+        
+        out_files_power = save_beamformer_results(
+            cfg=cfg,
+            filters=filters,
+            stcs=stcs_power,
+            analysis_type="power",
+        )
+        
+        add_to_report(
+            cfg=cfg,
+            stcs=out_files_power,
+            analysis_type="power",
+        )
 
     print("\n" + "=" * 80)
     print("BEAMFORMER ANALYSIS COMPLETE")
