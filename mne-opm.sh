@@ -14,6 +14,9 @@ echo ""
 echo ""
 
 
+# init
+set -e                      # fail on first crash
+source .venv/bin/activate   # activate virtual environment
 
 # Defaults
 PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source

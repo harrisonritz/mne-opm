@@ -131,7 +131,6 @@ class cMEGRaw(mne.io.RawArray):
         data = np.empty((len(ch_names), channel_data.shape[1]))
 
         for count, ch_type in enumerate(pandas.Series.tolist(channel_info_df["type"])):
-
             if ch_type.replace(" ", "") == "MEGMAG":
                 ch_types[count] = "mag"
                 # convert mag channels to T
@@ -393,6 +392,7 @@ class cMEGRaw(mne.io.RawArray):
 
             self.set_annotations(annotations)
             return events, self
+
 
 def calc_tangent(dipole_pos_vector):
     """Calculates tangent vectors for a position vector.
