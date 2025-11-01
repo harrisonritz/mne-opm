@@ -1,0 +1,11 @@
+dcm2niix>=1.0.20250506
+ipykernel>=7.1.0
+mne
+mne-bids
+mne-bids-pipeline
+mne-qt-browser>=0.7.4
+osl-ephys
+pyopengl>=3.1.10
+pyqt6>=6.10.0
+pyvista>=0.46.4
+vtk>=9.5.2

@@ -1,14 +1,9 @@
 #  RUN COREG
 
-HAIR_GROW = 5.0
-OMIT_DISTANCE = 2.5 / 1e3
-N_ROUNDS = 3
-
 
 # %% imports
-from dataclasses import dataclass
+import mne_qt_browser
 import os
-from click import pause
 import mne
 import numpy as np
 from mne.io import read_info
@@ -18,13 +13,16 @@ from mne_bids import (
     get_anat_landmarks,
     write_anat,
 )
-from dotenv import load_dotenv, find_dotenv
 from glob import glob
 
-
-import mne_qt_browser
-
 mne.viz.set_browser_backend("qt")
+
+
+# %% parameters
+HAIR_GROW = 5.0
+OMIT_DISTANCE = 2.5 / 1e3
+N_ROUNDS = 3
+
 
 # %% get info
 

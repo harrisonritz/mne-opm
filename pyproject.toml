@@ -3,7 +3,7 @@ name = "mne-opm"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "dcm2niix>=1.0.20250506",
     "ipykernel>=7.1.0",
@@ -12,11 +12,15 @@ dependencies = [
     "mne-bids-pipeline",
     "mne-qt-browser>=0.7.4",
     "osl-ephys",
+    "pyopengl>=3.1.10",
+    "pyqt6>=6.10.0",
+    "pyvista>=0.46.4",
+    "vtk>=9.5.2",
 ]
 
 [tool.uv.sources]
 mne-bids = { git = "https://github.com/harrisonritz/mne-bids.git", rev = "mne-opm" }
-mne-bids-pipeline = { git = "https://github.com/mne-tools/mne-bids-pipeline.git" }
+mne-bids-pipeline = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git", rev = "mne-opm" }
 osl-ephys = { git = "https://github.com/harrisonritz/osl-ephys.git" }
 mne = { git = "https://github.com/harrisonritz/mne-python.git", branch = "mne-opm" }
 

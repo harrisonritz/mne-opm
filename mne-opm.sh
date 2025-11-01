@@ -15,8 +15,13 @@ echo ""
 
 
 # init
-set -e                      # fail on first crash
 source .venv/bin/activate   # activate virtual environment
+export MPLBACKEND=Qt6Agg
+export MNE_BROWSER_BACKEND=qt
+
+set -euo pipefail
+trap 'echo "[MNE-OPM FAILED] Error at line $LINENO. Exiting." >&2' ERR
+
 
 # Defaults
 PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
@@ -184,6 +189,11 @@ fi
 # run the analysis pipeline
 echo "\nStarting '${PIPELINE}' pipeline on experiment '${EXPERIMENT}' for subject ${SUBJECT}\n--------------\n"
 source "$ROOT_DIR/src/run/run_$PIPELINE.sh"
+
+
+
+# cleanup
+deactivate
 
 
 

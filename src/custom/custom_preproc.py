@@ -43,7 +43,7 @@ try:  # optional dependency for nicer Qt browser; skip if unavailable
     import mne_qt_browser
 
     _HAVE_QT_BROWSER = True
-except Exception:  # pragma: no cover
+except Exception:
     _HAVE_QT_BROWSER = False
 
 from mne_bids_pipeline._config_import import (
@@ -64,7 +64,7 @@ from osl_ephys.preprocessing.osl_wrappers import (
 
 try:  # ensure a GUI backend for interactive steps
     mne.viz.set_browser_backend("qt")
-except Exception:  # pragma: no cover - fallback if qt not available
+except Exception:  # fallback if qt not available
     print("error: (qt not available)")
     pass
 
@@ -202,19 +202,19 @@ def regress_reference(
             n_ref, _ = filt_data.shape
             sfreq = info["sfreq"]
 
-            # ------- sliding window regression ----------
+            # ------- sliding window regression ---------
             window_size = int(
-                sfreq * getattr(cfg, "mf_st_duration", 60.0)
+                sfreq * getattr(cfg, "_regress_ref_window", 1.0)
             )  # window size
             step_size = int(window_size // 2)  # step size
             n_windows = (n_times - window_size) // step_size + 1
 
-            # prior = np.sqrt(1e-3) * np.eye(2*n_ref)  # ridge prior for numerical stability
             prior = np.diag(
                 np.hstack(
                     [
                         np.repeat([np.sqrt(1e-4)], n_ref),  # linear terms
                         np.repeat([np.sqrt(1e-4)], n_ref),  # quadratic terms
+                        np.repeat([np.sqrt(1e-4)], n_ref),  # derivative terms
                     ]
                 )
             )
@@ -230,10 +230,16 @@ def regress_reference(
                 data_win = filt_data[:, start:end] - np.mean(
                     filt_data[:, start:end], axis=1, keepdims=True
                 )
+                # compute derivative and prepend zeros to match the original window length
+                deriv = np.diff(data_win, axis=1)
+                deriv_padded = np.hstack([np.zeros((deriv.shape[0], 1)), deriv])
                 data_x = np.hstack(
                     [
                         stats.zscore(data_win, axis=1).T,  # linear terms
                         stats.zscore(data_win**2, axis=1).T,  # quadratic terms
+                        stats.zscore(
+                            deriv_padded, axis=1
+                        ).T,  # derivative terms (padded)
                     ]
                 )
                 X = np.vstack(
@@ -257,104 +263,105 @@ def regress_reference(
             del raw_data, filt_data
 
         elif getattr(cfg, "_regress_ref_method", "window") == "gam":
-            print("\n[regress_reference] using GAM regression")
+            raise NotImplementedError("GAM time-varying regression not supported")
+            # print("\n[regress_reference] using GAM regression")
 
-            raw_data = raw.copy().get_data()
-            n_times = raw.n_times
-            sfreq = raw.info["sfreq"]
-            info = raw.info
-            ch_names = raw.ch_names
-            # prepend raw.times to filt_data for GAM
-            # filt_ref = np.vstack([raw.times, raw_filt.get_data(picks='ref_meg')])
+            # raw_data = raw.copy().get_data()
+            # n_times = raw.n_times
+            # sfreq = raw.info["sfreq"]
+            # info = raw.info
+            # ch_names = raw.ch_names
+            # # prepend raw.times to filt_data for GAM
+            # # filt_ref = np.vstack([raw.times, raw_filt.get_data(picks='ref_meg')])
 
-            # svd of reference channels
-            refs = raw.copy().get_data(picks="ref_meg")
-            refs -= np.mean(refs, axis=1, keepdims=True)
-            U, S, _ = np.linalg.svd(refs, full_matrices=False)
-            print("reference SVs: ", S / np.min(S))
+            # # svd of reference channels
+            # refs = raw.copy().get_data(picks="ref_meg")
+            # refs -= np.mean(refs, axis=1, keepdims=True)
+            # U, S, _ = np.linalg.svd(refs, full_matrices=False)
+            # print("reference SVs: ", S / np.min(S))
 
-            # use SVD components as references
-            ref_data = np.vstack([raw.times, U.T @ refs])
-            ref_data -= np.mean(ref_data, axis=1, keepdims=True)
-            n_refs = ref_data.shape[0] - 1
-            del raw, refs, U
+            # # use SVD components as references
+            # ref_data = np.vstack([raw.times, U.T @ refs])
+            # ref_data -= np.mean(ref_data, axis=1, keepdims=True)
+            # n_refs = ref_data.shape[0] - 1
+            # del raw, refs, U
 
-            n_splines = np.max(
-                [4, int(n_times / (sfreq * 60.0))]
-            )  # one spline per minute, min 4
-            max_iter = 100
-            fit_intercept = True
+            # n_splines = np.max(
+            #     [4, int(n_times / (sfreq * 60.0))]
+            # )  # one spline per minute, min 4
+            # max_iter = 100
+            # fit_intercept = True
 
-            print(f"refs: {n_refs}, times: {n_times}, splines: {n_splines}")
+            # print(f"refs: {n_refs}, times: {n_times}, splines: {n_splines}")
 
-            if n_refs == 6:
-                gam = LinearGAM(
-                    terms=te(0, 1, spline_order=[3, 1], n_splines=[n_splines, 2])
-                    + te(0, 2, spline_order=[3, 1], n_splines=[n_splines, 2])
-                    + te(0, 3, spline_order=[3, 1], n_splines=[n_splines, 2])
-                    + te(0, 4, spline_order=[3, 1], n_splines=[n_splines, 2])
-                    + te(0, 5, spline_order=[3, 1], n_splines=[n_splines, 2])
-                    + te(0, 6, spline_order=[3, 1], n_splines=[n_splines, 2]),
-                    max_iter=max_iter,
-                    fit_intercept=fit_intercept,
-                    callbacks=None,
-                    verbose=False,
-                    lam=0.2,
-                )
-            else:
-                raise ValueError(
-                    f"GAM regression only implemented for 6 reference channels, got {n_refs}"
-                )
+            # if n_refs == 6:
+            #     gam = LinearGAM(
+            #         terms=te(0, 1, spline_order=[3, 1], n_splines=[n_splines, 2])
+            #         + te(0, 2, spline_order=[3, 1], n_splines=[n_splines, 2])
+            #         + te(0, 3, spline_order=[3, 1], n_splines=[n_splines, 2])
+            #         + te(0, 4, spline_order=[3, 1], n_splines=[n_splines, 2])
+            #         + te(0, 5, spline_order=[3, 1], n_splines=[n_splines, 2])
+            #         + te(0, 6, spline_order=[3, 1], n_splines=[n_splines, 2]),
+            #         max_iter=max_iter,
+            #         fit_intercept=fit_intercept,
+            #         callbacks=None,
+            #         verbose=False,
+            #         lam=0.2,
+            #     )
+            # else:
+            #     raise ValueError(
+            #         f"GAM regression only implemented for 6 reference channels, got {n_refs}"
+            #     )
 
-            print(
-                f"\n----- Fitting {len(_picks_to_idx(info, cfg.ch_types[0]))} channels -----\n"
-            )
-            loop_start = time.perf_counter()
-            c = 1
-            for mag in _picks_to_idx(info, cfg.ch_types[0]):
-                print(f"\nfitting channel {c}: {ch_names[mag]} --------------")
-                c += 1
+            # print(
+            #     f"\n----- Fitting {len(_picks_to_idx(info, cfg.ch_types[0]))} channels -----\n"
+            # )
+            # loop_start = time.perf_counter()
+            # c = 1
+            # for mag in _picks_to_idx(info, cfg.ch_types[0]):
+            #     print(f"\nfitting channel {c}: {ch_names[mag]} --------------")
+            #     c += 1
 
-                start_time = time.perf_counter()
-                ref_dec = ref_data[:, ::12].T
-                raw_dec = raw_data[mag, ::12].T
-                gam.fit(ref_dec, raw_dec)
-                # gam.gridsearch(ref_dec, raw_dec)
-                # print('residualize')
-                raw_data[mag, :] = gam.deviance_residuals(
-                    ref_data.T, raw_data[mag, :].T
-                ).T
-                print(f"R2: {gam.statistics_['pseudo_r2']['explained_deviance']:.2f}")
+            #     start_time = time.perf_counter()
+            #     ref_dec = ref_data[:, ::12].T
+            #     raw_dec = raw_data[mag, ::12].T
+            #     gam.fit(ref_dec, raw_dec)
+            #     # gam.gridsearch(ref_dec, raw_dec)
+            #     # print('residualize')
+            #     raw_data[mag, :] = gam.deviance_residuals(
+            #         ref_data.T, raw_data[mag, :].T
+            #     ).T
+            #     print(f"R2: {gam.statistics_['pseudo_r2']['explained_deviance']:.2f}")
 
-                # Print the execution time
-                end_time = time.perf_counter()
-                elapsed_time = end_time - start_time
-                print(f"Execution time: {elapsed_time:.2f} seconds")
+            #     # Print the execution time
+            #     end_time = time.perf_counter()
+            #     elapsed_time = end_time - start_time
+            #     print(f"Execution time: {elapsed_time:.2f} seconds")
 
-                # # print summary
-                # print(gam.summary())
+            #     # # print summary
+            #     # print(gam.summary())
 
-                # ## plotting
-                # plt.switch_backend('qt5agg')
-                # fig, axs = plt.subplots(1,3, figsize=(15,5), subplot_kw={"projection": "3d"})
-                # titles = ['time', 'ref1', 'ref2']
-                # for i, ax in enumerate(axs):
-                #     ax.set_title(titles[i])
+            #     # ## plotting
+            #     # plt.switch_backend('qt5agg')
+            #     # fig, axs = plt.subplots(1,3, figsize=(15,5), subplot_kw={"projection": "3d"})
+            #     # titles = ['time', 'ref1', 'ref2']
+            #     # for i, ax in enumerate(axs):
+            #     #     ax.set_title(titles[i])
 
-                #     # XX = gam.generate_X_grid(term=i)
-                #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX))
-                #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX, width=.95)[1], c='r', ls='--')
+            #     #     # XX = gam.generate_X_grid(term=i)
+            #     #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX))
+            #     #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX, width=.95)[1], c='r', ls='--')
 
-                #     XX = gam.generate_X_grid(term=i, meshgrid=True)
-                #     Z = gam.partial_dependence(term=i, X=XX, meshgrid=True)
-                #     ax.plot_surface(XX[0], XX[1], Z, cmap='viridis')
-                # plt.show()
-            loop_elapsed = time.perf_counter() - loop_start
-            print(
-                f"\n------------- Total Execution time: {loop_elapsed:.2f} seconds ------------- \n"
-            )
+            #     #     XX = gam.generate_X_grid(term=i, meshgrid=True)
+            #     #     Z = gam.partial_dependence(term=i, X=XX, meshgrid=True)
+            #     #     ax.plot_surface(XX[0], XX[1], Z, cmap='viridis')
+            #     # plt.show()
+            # loop_elapsed = time.perf_counter() - loop_start
+            # print(
+            #     f"\n------------- Total Execution time: {loop_elapsed:.2f} seconds ------------- \n"
+            # )
 
-            raw_clean = mne.io.RawArray(raw_data, info)
+            # raw_clean = mne.io.RawArray(raw_data, info)
 
     else:
         print("\n[regress_reference] using standard regression")
@@ -646,8 +653,11 @@ def manual_ica_review(
             "\n[manual_ica_review] identifying bad components based on GESD -------\n"
         )
         sources = ica.get_sources(raw).get_data()
+
         kurtosis_scores = stats.kurtosis(sources, axis=1)
+        kurtosis_diff_scores = stats.kurtosis(np.diff(sources, axis=1), axis=1)
         std_scores = np.std(sources, axis=1, ddof=1)
+        std_diff_scores = np.std(np.diff(sources, axis=1), axis=1, ddof=1)
 
         if (sources.shape[0] - len(ica.exclude)) < 5:
             print(
@@ -663,9 +673,14 @@ def manual_ica_review(
             # plt.show()
 
             # loop over both scores, include their names for plotting
-            print("ica.exclude before: ", ica.exclude)
-            for score, name in zip([kurtosis_scores, std_scores], ["kurtosis", "std"]):
-                gesd_idx, _ = osl_gesd(score, p_out=1.0, outlier_side=1)
+            print(
+                f"Before GESD: excluding {len(ica.exclude)} components: ", ica.exclude
+            )
+            for score, name in zip(
+                [kurtosis_scores, std_scores, std_diff_scores],
+                ["kurtosis", "std", "std_diff"],
+            ):
+                gesd_idx, _ = osl_gesd(score, p_out=1.0)
 
                 if len(gesd_idx) == 0:
                     print(f"\n[manual_ica_review] {name} GESD found no outliers\n")
@@ -674,7 +689,7 @@ def manual_ica_review(
                 print(
                     f"\n[manual_ica_review] marking {len(np.where(gesd_idx)[0])} components based on {name} GESD: {np.where(gesd_idx)[0]}"
                 )
-            print("ica.exclude after: ", ica.exclude)
+            print(f"After GESD: excluding {len(ica.exclude)} components: ", ica.exclude)
 
     ica.plot_components(inst=raw, nrows=5)
     ica.plot_sources(inst=raw, show_scrollbars=True, block=True)

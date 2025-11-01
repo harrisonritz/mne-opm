@@ -25,7 +25,6 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import mne
-import mne_bids
 import numpy as np
 from mne.beamformer import apply_lcmv, apply_lcmv_cov, make_lcmv
 from mne_bids import BIDSPath
