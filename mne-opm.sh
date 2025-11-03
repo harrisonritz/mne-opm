@@ -18,7 +18,10 @@ echo ""
 source .venv/bin/activate   # activate virtual environment
 export MPLBACKEND=Qt6Agg
 export MNE_BROWSER_BACKEND=qt
+export PYTHON_GIL=1
+export PYTHON_JIT=1
 
+# fail on first crash
 set -euo pipefail
 trap 'echo "[MNE-OPM FAILED] Error at line $LINENO. Exiting." >&2' ERR
 
@@ -34,7 +37,6 @@ FREESURFER_HOME=/Applications/freesurfer/8.1.0
 FAIL_ON_FIRST_CRASH=1
 
 DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/___Export_Folder/opm_data/data"
-# SUBJECTS_DIR="$DATA_BASE/$EXPERIMENT/bids/derivatives/freesurfer/subjects"
 SUBJECTS_DIR="/Users/hr0283/freesurfer/$EXPERIMENT"
 T1W_PATH=$SUBJECTS_DIR/anat/sub-$SUBJECT/anat_ses-01_T1w_acq-0.8mm-MPR_t1w.nii.gz
 T2W_PATH=$SUBJECTS_DIR/anat/sub-$SUBJECT/anat_ses-01_T2w_acq-0.8mm-MPR_t2w.nii.gz

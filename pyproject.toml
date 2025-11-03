@@ -13,8 +13,9 @@ dependencies = [
     "mne-qt-browser>=0.7.4",
     "osl-ephys",
     "pyopengl>=3.1.10",
-    "pyqt6>=6.10.0",
+    "pyqt5>=5.15.11",
     "pyvista>=0.46.4",
+    "trame>=3.12.0",
     "vtk>=9.5.2",
 ]
 

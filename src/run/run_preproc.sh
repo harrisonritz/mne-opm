@@ -78,6 +78,13 @@ mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 
 
 echo ""
+echo "======================= Manual: automatic ICA rejection =============================================="
+echo ""
+python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=auto_ica --config=$CONFIG_PATH
+
+
+
+echo ""
 echo "======================= Manual: ICA selection =============================================="
 echo ""
 python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_ica --config=$CONFIG_PATH

@@ -83,7 +83,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
     Returns a dict with keys:
       bad_segments / bad_channels / manual_channel -> {task[, noise]}
       bad_epochs -> {task}
-      manual_ica -> {task, manualica}
+      auto_ica / manual_ica -> {task, ica}
     """
     print(f"\n[load_data] analysis={analysis}")
     out: Dict[str, Any] = {}
@@ -132,7 +132,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
         out[cfg.task] = mne.read_epochs(ep_path, preload=True)
         print("[load_data] loaded epochs")
 
-    elif analysis == "manualica":
+    elif analysis in {"autoica", "manualica"}:
         raw_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
             subjects=cfg.subjects,
@@ -154,7 +154,7 @@ def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
             processings="ica",
             extensions=".fif",
         )[0]
-        out["manualica"] = mne.preprocessing.read_ica(ica_path)
+        out["ica"] = mne.preprocessing.read_ica(ica_path)
         print("[load_data] loaded raw + ICA")
     else:  # pragma: no cover
         raise ValueError(f"Unknown analysis {analysis}")
@@ -183,65 +183,66 @@ def regress_reference(
             t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
         )
 
-    # estimate weights
-    raw_filt = raw.copy().filter(
-        l_freq=cfg.l_freq, h_freq=cfg.h_freq, method="iir", picks=["ref_meg"]
-    )  # filter data for estimating regression weights
-
     if getattr(cfg, "_regress_ref_timevarying", False):
         # time-varying regression (sliding window)
         print("\n[regress_reference] using time-varying regression")
 
         if getattr(cfg, "_regress_ref_method", "window") == "window":
+            
+            # get raw data
             raw_data = raw.get_data()
-            filt_data = raw_filt.get_data(picks="ref_meg")
             info = raw.info
+
+            # Filter reference channels for each frequency band
+            freq_bands = getattr(cfg, "_regress_ref_freqs", [
+                (None, 5.0),
+                # (5.0, 20.0),
+                # (20.0, None),
+            ])
+            ref_data_list = []
+            for l_freq, h_freq in freq_bands:
+                ref_filt = (
+                    raw.copy()
+                    .pick("ref_meg")
+                    .filter(
+                        l_freq=l_freq,
+                        h_freq=h_freq,
+                        fir_window="blackman",
+                        l_trans_bandwidth=5.0,
+                        h_trans_bandwidth=5.0,
+                    )
+                )
+                ref_data_list.append(ref_filt.get_data(picks="ref_meg"))
+                del ref_filt
+
+            ref_data = stats.zscore(np.vstack(ref_data_list), axis=1)
+            del ref_data_list
 
             mag_idx = _picks_to_idx(info, cfg.ch_types[0])
             n_channels, n_times = raw_data.shape
-            n_ref, _ = filt_data.shape
+            n_ref, _ = ref_data.shape
             sfreq = info["sfreq"]
 
             # ------- sliding window regression ---------
             window_size = int(
-                sfreq * getattr(cfg, "_regress_ref_window", 1.0)
+                sfreq * getattr(cfg, "_regress_ref_window", 10.0)
             )  # window size
             step_size = int(window_size // 2)  # step size
-            n_windows = (n_times - window_size) // step_size + 1
+            n_windows = int(np.ceil((n_times - window_size) / step_size))
 
-            prior = np.diag(
-                np.hstack(
-                    [
-                        np.repeat([np.sqrt(1e-4)], n_ref),  # linear terms
-                        np.repeat([np.sqrt(1e-4)], n_ref),  # quadratic terms
-                        np.repeat([np.sqrt(1e-4)], n_ref),  # derivative terms
-                    ]
-                )
-            )
+            prior = np.diag(np.repeat([np.sqrt(1e-4)], n_ref))
 
             print(
                 f"[regress_reference] processing {n_windows} windows of {window_size} samples ({window_size / sfreq:.1f} sec) in steps of {step_size} samples ({step_size / sfreq:.1f} sec)"
             )
             for w in range(n_windows):
+                
+                # define window
                 start = w * step_size
-                end = start + window_size
+                end = np.min((start + window_size, n_times))
 
-                # get qr decomposition of reference channels in this window
-                data_win = filt_data[:, start:end] - np.mean(
-                    filt_data[:, start:end], axis=1, keepdims=True
-                )
-                # compute derivative and prepend zeros to match the original window length
-                deriv = np.diff(data_win, axis=1)
-                deriv_padded = np.hstack([np.zeros((deriv.shape[0], 1)), deriv])
-                data_x = np.hstack(
-                    [
-                        stats.zscore(data_win, axis=1).T,  # linear terms
-                        stats.zscore(data_win**2, axis=1).T,  # quadratic terms
-                        stats.zscore(
-                            deriv_padded, axis=1
-                        ).T,  # derivative terms (padded)
-                    ]
-                )
+                # get data for regression
+                data_x = ref_data[:, start:end].T
                 X = np.vstack(
                     [
                         data_x,
@@ -249,9 +250,11 @@ def regress_reference(
                     ]
                 )
 
+                # QR decomposition with column pivoting
                 Q, _, _ = qr(X, pivoting=True, mode="economic")
-                Qd = Q[:window_size, :]  # get data rows
+                Qd = Q[:(end - start), :]  # get data rows
 
+                # regress out reference from each channel
                 raw_data[mag_idx, start:end] -= (
                     raw_data[mag_idx, start:end] @ Qd
                 ) @ Qd.T
@@ -260,7 +263,7 @@ def regress_reference(
                     print(f"[regress_reference] processed {w}/{n_windows} windows")
 
             raw_clean = mne.io.RawArray(raw_data, info)
-            del raw_data, filt_data
+            del raw_data, ref_data
 
         elif getattr(cfg, "_regress_ref_method", "window") == "gam":
             raise NotImplementedError("GAM time-varying regression not supported")
@@ -364,14 +367,14 @@ def regress_reference(
             # raw_clean = mne.io.RawArray(raw_data, info)
 
     else:
-        print("\n[regress_reference] using standard regression")
-        weights = mne.preprocessing.EOGRegression(
-            picks=cfg.ch_types[0], picks_artifact="ref_meg"
-        ).fit(raw_filt)
-        raw_clean = weights.apply(raw, copy=True)
-        del weights
+        raise NotImplementedError("static regression not implemented")
+        # print("\n[regress_reference] using standard regression")
+        # weights = mne.preprocessing.EOGRegression(
+        #     picks=cfg.ch_types[0], picks_artifact="ref_meg"
+        # ).fit(raw_filt)
+        # raw_clean = weights.apply(raw, copy=True)
+        # del weights
 
-    del raw_filt
     print("\nFinished reference regression!\n---------------\n")
 
     return raw_clean
@@ -620,13 +623,13 @@ def manual_channel_selection(
     return raw, bads, noise
 
 
-def manual_ica_review(
+def auto_ica(
     ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: SimpleNamespace
 ) -> mne.preprocessing.ICA:
     # label bad components based on reference channels
     if getattr(cfg, "ref_bads", True):
         print(
-            "\n[manual_ica_review] identifying bad components based on reference sensors -------\n"
+            "\n[auto_ica] identifying bad components based on reference sensors -------\n"
         )
 
         ref_raw = raw.copy().pick("ref_meg").filter(l_freq=1, h_freq=None)
@@ -642,26 +645,24 @@ def manual_ica_review(
         raw.add_channels([ref_src], force_update_info=True)
         ref_idx, _ = ica.find_bads_ref(inst=raw, method="separate")
         print(
-            f"\n[manual_ica_review] marking {len(ref_idx)} components based on reference sensors: {ref_idx}\n"
+            f"[auto_ica] marking {len(ref_idx)} components based on reference sensors: {ref_idx}\n"
         )
         ica.exclude.extend(ref_idx)
         del ref_raw, ref_ica, ref_src
 
     # label bad components based on osl's gesd
     if getattr(cfg, "gesd_bads", True):
-        print(
-            "\n[manual_ica_review] identifying bad components based on GESD -------\n"
-        )
+        print("\n[manual_ica_review] identifying bad components based on GESD -------")
         sources = ica.get_sources(raw).get_data()
 
         kurtosis_scores = stats.kurtosis(sources, axis=1)
         kurtosis_diff_scores = stats.kurtosis(np.diff(sources, axis=1), axis=1)
         std_scores = np.std(sources, axis=1, ddof=1)
-        std_diff_scores = np.std(np.diff(sources, axis=1), axis=1, ddof=1)
+        std_diff_scores = np.linalg.norm(np.diff(sources, axis=1), axis=1)
 
         if (sources.shape[0] - len(ica.exclude)) < 5:
             print(
-                f"\n[manual_ica_review] too few components remaining for GESD ({n_comps - len(ica.exclude)}); skipping\n"
+                f"[auto_ica] too few components remaining for GESD ({n_comps - len(ica.exclude)}); skipping\n"
             )
         else:
             # plot histogram of ic_scores
@@ -683,14 +684,20 @@ def manual_ica_review(
                 gesd_idx, _ = osl_gesd(score, p_out=1.0)
 
                 if len(gesd_idx) == 0:
-                    print(f"\n[manual_ica_review] {name} GESD found no outliers\n")
+                    print(f"[auto_ica] {name} GESD found no outliers")
                 else:
                     ica.exclude.extend(np.where(gesd_idx)[0].tolist())
                 print(
-                    f"\n[manual_ica_review] marking {len(np.where(gesd_idx)[0])} components based on {name} GESD: {np.where(gesd_idx)[0]}"
+                    f"[auto_ica] marking {len(np.where(gesd_idx)[0])} components based on {name} GESD: {np.where(gesd_idx)[0]}"
                 )
             print(f"After GESD: excluding {len(ica.exclude)} components: ", ica.exclude)
 
+    return ica
+
+
+def manual_ica_review(
+    ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: SimpleNamespace
+) -> mne.preprocessing.ICA:
     ica.plot_components(inst=raw, nrows=5)
     ica.plot_sources(inst=raw, show_scrollbars=True, block=True)
     return ica
@@ -732,10 +739,13 @@ def run_analysis(
     elif analysis == "badepochs":
         results[cfg.task] = drop_bad_epochs(data[cfg.task], cfg)
 
-    elif analysis == "manualica":
-        ica = manual_ica_review(data["manualica"], data[cfg.task], cfg)
+    elif analysis == "autoica":
+        results["ica"] = auto_ica(data["ica"], data[cfg.task], cfg)
         results[cfg.task] = data[cfg.task]
-        results["ica"] = ica
+
+    elif analysis == "manualica":
+        results["ica"] = manual_ica_review(data["ica"], data[cfg.task], cfg)
+        results[cfg.task] = data[cfg.task]
 
     elif analysis == "regressref":
         for task, raw in data.items():
@@ -824,6 +834,7 @@ def save_results(cfg: SimpleNamespace, analysis: str, results: Dict[str, Any]):
                     overwrite=True,
                     format="FIF",
                 )
+
     elif analysis == "badepochs":
         ep_bp = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
@@ -836,7 +847,8 @@ def save_results(cfg: SimpleNamespace, analysis: str, results: Dict[str, Any]):
         )[0]
         ep_bp.split = None
         tasks[cfg.task].save(ep_bp, split_naming="bids", overwrite=True)
-    if analysis == "manualica":
+
+    if analysis in {"autoica", "manualica"}:
         # Update TSV + save ICA object
         tsv_path = mne_bids.find_matching_paths(
             root=cfg.deriv_root,
@@ -877,6 +889,7 @@ def parse_args():
             "bad_channels",
             "bad_epochs",
             "manual_channel",
+            "auto_ica",
             "manual_ica",
             "regress_ref",
             "apply_hfc",
@@ -895,15 +908,22 @@ def main():
     # cfg = SimpleNamespace()
     # _update_with_user_config(config=cfg, config_path=args.config)
 
-    if analysis_key == "manualchannel" and not getattr(cfg, "_manual_bads", False):
+    if analysis_key == "manualchannel" and not getattr(cfg, "_manual_channels", False):
         print("\n[main] manual channel selection disabled; exiting")
         return
+    if analysis_key == "autoica":
+        if (
+            not getattr(cfg, "_auto_ica", False)
+            or getattr(cfg, "spatial_filter", None) != "ica"
+        ):
+            print("\n[main] auto ICA disabled; exiting")
+            return
     if analysis_key == "manualica":
         if (
             not getattr(cfg, "_manual_ica", False)
             or getattr(cfg, "spatial_filter", None) != "ica"
         ):
-            print("\n[main] manual ICA disabled or spatial_filter != ica; exiting")
+            print("\n[main] manual ICA disabled; exiting")
             return
     if analysis_key == "regressref" and not getattr(cfg, "_regress_ref", False):
         print("\n[main] reference regression disabled; exiting")

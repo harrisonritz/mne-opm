@@ -382,6 +382,7 @@ def bids_conversion(cfg):
         print("\nInterpolating remaining nans (buffer = ", buffer, " sec)...")
         orig_nan = np.isnan(eye.get_data()).any(axis=0)
         data = eye.get_data()  # Get all data at once
+
         for ch_idx, ch_name in enumerate(eye.ch_names):
             # get nan indices
             ch_data = data[ch_idx, :]
