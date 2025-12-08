@@ -26,22 +26,15 @@ using the provided run scripts.
 
 ## Installation (quick)
 
-Run the installer to create the conda environment and install Python dependencies.
+use uv to create the invronment and install Python dependencies.
+See installation instructions [here](https://docs.astral.sh/uv/getting-started/installation/). 
 
-Example (from project root):
-
-```bash
-# create environment and install dependencies
-bash ./install.sh
+```zsh
+# install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-After installation, activate the environment before running the pipeline:
-
-```bash
-conda activate mne-opm
-```
-
-Templates for configs are available under `config_TODO/`; copy them into your own config directory and edit.
+The pipeline should install the necessary packages the first time it is run, and then will use the local environment from then on.
 
 
 ## Data layout expectations
@@ -142,8 +135,8 @@ Run a single pipeline stage with explicit arguments (no pre-set defaults). Valid
 
 Usage (from repo root):
 
-```bash
-./mne-opm.sh <pipeline> \
+```zsh
+mne-opm.sh <pipeline> \
 	--exp TSXpilot \
 	--sub 007 \
 	--data /path/to/data/TSXpilot \
@@ -158,41 +151,6 @@ Notes:
 - `--analysis` selects `config-<ANALYSIS>.py` for most stages; BIDS uses a per-subject config at `CONFIG_DIR/bids/sub-<SUBJECT>_config-bids.py`.
 - Set `--workers` to control FreeSurfer parallelism (`MAX_WORKERS`).
 - Ensure FreeSurfer is installed and `--fs` points to your install; the scripts source `SetUpFreeSurfer.sh` when needed.
-
-
-## Quick start (recommended)
-
-Use the `local-mne-opm.sh` wrapper to set defaults and run a pipeline stage. Example:
-
-```bash
-# from repository root
-./local-mne-opm.sh preproc --exp TSXpilot --sub 007 --data /path/to/data --config /path/to/config
-```
-
-The wrapper exports useful environment variables and calls `src/run/run_preproc.sh` (or any other stage you specify).
-
-
-## Running the full pipeline
-
-`src/run/run_all.sh` will sequentially run the main pipeline stages (NIFTI, BIDS, Freesurfer, Coreg, Preproc, Sensor,
-Source). It calls sub-scripts in `src/run/`. To run everything:
-
-```bash
-conda activate mne-opm
-export CONFIG_DIR="/path/to/your/configs"
-export ANALYSIS="CSI"
-export SUBJECT="007"
-export EXPERIMENT="TSXpilot"
-export ROOT_DIR=$(pwd)
-
-bash src/run/run_all.sh
-```
-
-If you only want preprocessing, run `run_preproc.sh` directly or use the wrapper:
-
-```bash
-./local-mne-opm.sh preproc --exp TSXpilot --sub 007 --data /path/to/data --config /path/to/config
-```
 
 
 ## Pipeline stages (what each script does)
@@ -286,20 +244,14 @@ outputs to disk when running headless.
 - Run full automated preprocessing for one subject:
 
 ```bash
-./local-mne-opm.sh preproc --exp TSXpilot --sub 007 --config /path/to/config
-```
-
-- Re-run only bad-epoch detection after changing parameters in config:
-
-```bash
-conda activate mne-opm
-python src/custom/custom_preproc.py --analysis=bad_epochs --config /path/to/config/config-CSI.py
+mne-opm.sh preproc --exp TSXpilot --sub 007 --config /path/to/config
 ```
 
 
 ## Tips and gotchas
 
 - FreeSurfer: set `--fs` to your install root or export `FREESURFER_HOME` beforehand.
+  - Make sure that none of the paths used by freesurfer have spaces in them
 - Some stages rely on `SESSION` (default `01`) for subject formatting in coreg; ensure it’s set in your environment if needed.
 - Interactive steps require a display; set `MPLBACKEND=agg` to render to files when running headless.
 - To re-run a stage that checks for existing derivatives, delete the target derivative folder or set `_skip_on_deriv = False` in your config.
@@ -307,9 +259,6 @@ python src/custom/custom_preproc.py --analysis=bad_epochs --config /path/to/conf
 
 ## Troubleshooting
 
-- If you see errors like `AttributeError: 'SimpleNamespace' object has no attribute 'pop'`, the issue is that
-	config modules are imported into a `SimpleNamespace` (not a dict). Use `getattr(cfg, 'key', default)` or
-	`vars(cfg).pop('key', default)` to access or mutate config keys appropriately.
 - If the pipeline says derivatives exist and you want to re-run, either remove the derivatives folder or set
 	`_skip_on_deriv = False` in your config and re-run.
 - For plotting/interactive steps, ensure your environment supports GUI output or configure plots to save to disk.
@@ -331,9 +280,5 @@ mne-bids-pipeline, and any other libraries used.
 
 Open an issue in this repo with reproducible steps to replicate problems and include the full stack trace and the
 config file you used.
-
----
-
-End of README.
 
 
