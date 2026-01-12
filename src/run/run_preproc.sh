@@ -36,30 +36,30 @@ echo ""
 
 
 
-echo ""
-echo "======================= OSL: bad segment =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
+# echo ""
+# echo "======================= OSL: bad segment =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= OSL: bad channels =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
+# echo ""
+# echo "======================= OSL: bad channels =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
 
 
 
-echo ""
-echo "======================= Manual: bad channel =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_channel --config=$CONFIG_PATH
+# echo ""
+# echo "======================= Manual: bad channel =============================================="
+# echo ""
+# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_channel --config=$CONFIG_PATH
 
 
 echo ""
 echo "======================= MNE: prep source space =============================================="
 echo ""
-mne_bids_pipeline --steps=preprocessing/make_epochs,sensor/make_cov,source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
+mne_bids_pipeline --steps=source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
 
 
 

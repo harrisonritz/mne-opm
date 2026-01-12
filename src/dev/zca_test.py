@@ -1,7 +1,0 @@
-# %% ZCA test
-
-import mne
-
-
-# %%
-
