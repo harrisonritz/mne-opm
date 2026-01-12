@@ -1,1054 +1,229 @@
-"""Modular auxiliary preprocessing for OPM-MEG data.
+#!/usr/bin/env python
+"""Modular auxiliary preprocessing CLI for OPM-MEG data.
+
+This is the main entry point for custom preprocessing analyses. It parses
+command-line arguments and dispatches to the appropriate analysis module
+in the preprocessing subpackage.
 
 Provided analyses (CLI --analysis):
-    bad_segments   -> detect & annotate bad raw segments
-    bad_channels   -> statistical detection of bad channels
-    manual_channel -> interactive marking of bad channels
-    apply_hfc      -> apply homogeneous field correction (HFC) projections
-    bad_epochs     -> drop bad epochs post-epoching
-    manual_ica     -> interactive ICA component review (+ optional ref ICA)
-    regress_ref    -> regress out reference channel signals
+    regress_ref    -> Regress out reference channel signals
+    bad_segments   -> Detect & annotate bad raw data segments
+    bad_channels   -> Statistical detection of bad channels
+    manual_channel -> Interactive visual marking of bad channels
+    apply_hfc      -> Apply homogeneous field correction (HFC) projections
+    bad_epochs     -> Drop bad epochs post-epoching
+    auto_ica       -> Automatic ICA component labeling
+    manual_ica     -> Interactive ICA component review
 
-Internal normalized keys remove underscores (e.g. bad_segments -> badsegments).
+Usage
+-----
+    python src/custom/custom_preproc.py --analysis=<name> --config=/path/to/config.py
+
+Examples
+--------
+    # Run reference regression
+    python src/custom/custom_preproc.py --analysis=regress_ref --config=config.py
+
+    # Run bad segment detection
+    python src/custom/custom_preproc.py --analysis=bad_segments --config=config.py
+
+    # Run interactive ICA review
+    python src/custom/custom_preproc.py --analysis=manual_ica --config=config.py
+
+Internal Notes
+--------------
+Internal normalized keys remove underscores (e.g., bad_segments -> badsegments).
+This mapping is handled by the normalize_analysis_key function.
 
 Outputs are written back into the BIDS structure using mne-bids utilities,
 re-using existing derivative locations produced by mne-bids-pipeline.
+
+Author: Harrison Ritz, 2025
 """
 
 from __future__ import annotations
 
-import time
-
-import matplotlib.pyplot as plt
-
-import numpy as np
-
 import argparse
-import os
-from types import SimpleNamespace
-from typing import Dict, Any
-
-import mne
-import mne_bids
-import pandas as pd
-from scipy.linalg import qr
-from scipy import stats
-# from pygam import LinearGAM, s, te, l, terms
-
-
-from mne._fiff.pick import _picks_to_idx
-
-
-try:  # optional dependency for nicer Qt browser; skip if unavailable
-    import mne_qt_browser
-
-    _HAVE_QT_BROWSER = True
-except Exception:
-    _HAVE_QT_BROWSER = False
-
-from mne_bids_pipeline._config_import import (
-    _update_config_from_path,
-    _update_with_user_config,
-    _import_config,
-)
-
-from osl_ephys.preprocessing.osl_wrappers import (
-    bad_segments as osl_bad_segments,
-    bad_channels as osl_bad_channels,
-    drop_bad_epochs as osl_drop_bad_epochs,
-    gesd as osl_gesd,
-)
-
-
-# %% GLOBAL VARIABLES
-
-try:  # ensure a GUI backend for interactive steps
-    mne.viz.set_browser_backend("qt")
-except Exception:  # fallback if qt not available
-    print("error: (qt not available)")
-    pass
-
-SEGMENT_LEN_SEC = 1.0  # length for segment-based detection
-
-
-# --------------------------------------------------------------------------------------
-# Utility / Loading
-# --------------------------------------------------------------------------------------
-
-
-# %% functions
-def load_data(cfg: SimpleNamespace, analysis: str) -> Dict[str, Any]:
-    """Load only the data needed for the selected analysis.
-
-    Returns a dict with keys:
-      bad_segments / bad_channels / manual_channel -> {task[, noise]}
-      bad_epochs -> {task}
-      auto_ica / manual_ica -> {task, ica}
-    """
-    print(f"\n[load_data] analysis={analysis}")
-    out: Dict[str, Any] = {}
-
-    if analysis in {
-        "badsegments",
-        "badchannels",
-        "manualchannel",
-        "regressref",
-        "applyhfc",
-    }:
-        if getattr(cfg, "_skip_on_deriv", False):
-            deriv_path = os.path.join(cfg.deriv_root, f"sub-{cfg.subjects[0]}")
-            if os.path.exists(deriv_path):
-                print(f"\n[load_data] derivatives exist at {deriv_path}; exiting.")
-                raise SystemExit(0)
-        tasks = [cfg.task]
-        if getattr(cfg, "process_empty_room", False):
-            tasks.insert(0, "noise")
-        for task in tasks:
-            bids_path = mne_bids.find_matching_paths(
-                root=cfg.bids_root,
-                subjects=cfg.subjects,
-                tasks=task,
-                sessions=cfg.sessions,
-                datatypes="meg",
-                ignore_nosub=True,
-                extensions=".fif",
-            )[0]
-            out[task] = mne_bids.read_raw_bids(
-                bids_path, extra_params={"preload": True}
-            )
-            print(f"[load_data] loaded raw task={task}")
-
-    elif analysis == "badepochs":
-        ep_path = mne_bids.find_matching_paths(
-            root=cfg.deriv_root,
-            subjects=cfg.subjects,
-            tasks=cfg.task,
-            sessions=cfg.sessions,
-            datatypes="meg",
-            suffixes="epo",
-            processings="clean",
-            extensions=".fif",
-        )[0]
-        out[cfg.task] = mne.read_epochs(ep_path, preload=True)
-        print("[load_data] loaded epochs")
-
-    elif analysis in {"autoica", "manualica"}:
-        raw_path = mne_bids.find_matching_paths(
-            root=cfg.deriv_root,
-            subjects=cfg.subjects,
-            tasks=cfg.task,
-            sessions=cfg.sessions,
-            datatypes="meg",
-            suffixes="raw",
-            processings="clean",
-            extensions=".fif",
-        )[0]
-        out[cfg.task] = mne_bids.read_raw_bids(raw_path, extra_params={"preload": True})
-        ica_path = mne_bids.find_matching_paths(
-            root=cfg.deriv_root,
-            subjects=cfg.subjects,
-            tasks=cfg.task,
-            sessions=cfg.sessions,
-            datatypes="meg",
-            suffixes="ica",
-            processings="ica",
-            extensions=".fif",
-        )[0]
-        out["ica"] = mne.preprocessing.read_ica(ica_path)
-        print("[load_data] loaded raw + ICA")
-    else:  # pragma: no cover
-        raise ValueError(f"Unknown analysis {analysis}")
-    return out
-
-
-# --------------------------------------------------------------------------------------
-# Individual Analysis Functions
-# --------------------------------------------------------------------------------------
-
-
-def regress_reference(
-    raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: bool = False
-) -> mne.io.BaseRaw:
-    """Regress out reference channels from MEG channels."""
-
-    print("\n[regress_reference] regressing-out reference channels")
-
-    # remove breaks
-    print(raw)
-    if getattr(cfg, "find_breaks", False) and not is_noise:
-        mne.preprocessing.annotate_break(
-            raw,
-            min_break_duration=cfg.min_break_duration,
-            t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
-            t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
-        )
-
-    if getattr(cfg, "_regress_ref_timevarying", False):
-        # time-varying regression (sliding window)
-        print("\n[regress_reference] using time-varying regression")
-
-        if getattr(cfg, "_regress_ref_method", "window") == "window":
-            # get raw data
-            raw_data = raw.get_data()
-            info = raw.info
-
-            # Filter reference channels for each frequency band
-            if getattr(cfg, "_regress_ref_freqs", None) is not None:
-                freq_bands = getattr(
-                    cfg,
-                    "_regress_ref_freqs",
-                    [
-                        (None, 5.0),
-                    ],
-                )
-                ref_data_list = []
-                for l_freq, h_freq in freq_bands:
-                    ref_filt = (
-                        raw.copy()
-                        .pick("ref_meg")
-                        .filter(
-                            l_freq=l_freq,
-                            h_freq=h_freq,
-                            fir_window="blackman",
-                            h_trans_bandwidth=5.0,
-                        )
-                    )
-                    ref_data_list.append(ref_filt.get_data(picks="ref_meg"))
-                    del ref_filt
-            else:
-                ref_raw = raw.get_data(picks="ref_meg")
-                ref_raw -= np.mean(ref_raw, axis=1, keepdims=True)
-                ref_data_list = [ref_raw, ref_raw**2]
-                del ref_raw
-
-            ref_data = stats.zscore(np.vstack(ref_data_list), axis=1)
-            del ref_data_list
-
-            mag_idx = _picks_to_idx(info, cfg.ch_types[0])
-            n_channels, n_times = raw_data.shape
-            n_ref, _ = ref_data.shape
-            sfreq = info["sfreq"]
-
-            # ------- sliding window regression ---------
-            window_size = int(
-                sfreq * getattr(cfg, "_regress_ref_window", 100.0)
-            )  # window size
-            step_size = int(window_size // 2)  # step size
-            n_windows = int(np.ceil((n_times - window_size) / step_size))
-
-            prior = np.diag(np.repeat([np.sqrt(1e-4)], n_ref))
-
-            print(
-                f"[regress_reference] processing {n_windows} windows of {window_size} samples ({window_size / sfreq:.1f} sec) in steps of {step_size} samples ({step_size / sfreq:.1f} sec)"
-            )
-            for w in range(n_windows):
-                # define window
-                start = w * step_size
-                end = np.min((start + window_size, n_times))
-
-                # get data for regression
-                data_x = ref_data[:, start:end].T
-                X = np.vstack(
-                    [
-                        data_x,
-                        prior,  # ridge prior
-                    ]
-                )
-
-                # QR decomposition with column pivoting
-                Q, _, _ = qr(X, pivoting=True, mode="economic")
-                Qd = Q[: (end - start), :]  # get data rows
-
-                # regress out reference from each channel
-                raw_data[mag_idx, start:end] -= (
-                    raw_data[mag_idx, start:end] @ Qd
-                ) @ Qd.T
-
-                if w % np.max((n_windows // 10, 1)) == 0:
-                    print(f"[regress_reference] processed {w}/{n_windows} windows")
-
-            raw_clean = mne.io.RawArray(raw_data, info)
-            del raw_data, ref_data
-
-        elif getattr(cfg, "_regress_ref_method", "window") == "gam":
-            raise NotImplementedError("GAM time-varying regression not supported")
-            # print("\n[regress_reference] using GAM regression")
-
-            # raw_data = raw.copy().get_data()
-            # n_times = raw.n_times
-            # sfreq = raw.info["sfreq"]
-            # info = raw.info
-            # ch_names = raw.ch_names
-            # # prepend raw.times to filt_data for GAM
-            # # filt_ref = np.vstack([raw.times, raw_filt.get_data(picks='ref_meg')])
-
-            # # svd of reference channels
-            # refs = raw.copy().get_data(picks="ref_meg")
-            # refs -= np.mean(refs, axis=1, keepdims=True)
-            # U, S, _ = np.linalg.svd(refs, full_matrices=False)
-            # print("reference SVs: ", S / np.min(S))
-
-            # # use SVD components as references
-            # ref_data = np.vstack([raw.times, U.T @ refs])
-            # ref_data -= np.mean(ref_data, axis=1, keepdims=True)
-            # n_refs = ref_data.shape[0] - 1
-            # del raw, refs, U
-
-            # n_splines = np.max(
-            #     [4, int(n_times / (sfreq * 60.0))]
-            # )  # one spline per minute, min 4
-            # max_iter = 100
-            # fit_intercept = True
-
-            # print(f"refs: {n_refs}, times: {n_times}, splines: {n_splines}")
-
-            # if n_refs == 6:
-            #     gam = LinearGAM(
-            #         terms=te(0, 1, spline_order=[3, 1], n_splines=[n_splines, 2])
-            #         + te(0, 2, spline_order=[3, 1], n_splines=[n_splines, 2])
-            #         + te(0, 3, spline_order=[3, 1], n_splines=[n_splines, 2])
-            #         + te(0, 4, spline_order=[3, 1], n_splines=[n_splines, 2])
-            #         + te(0, 5, spline_order=[3, 1], n_splines=[n_splines, 2])
-            #         + te(0, 6, spline_order=[3, 1], n_splines=[n_splines, 2]),
-            #         max_iter=max_iter,
-            #         fit_intercept=fit_intercept,
-            #         callbacks=None,
-            #         verbose=False,
-            #         lam=0.2,
-            #     )
-            # else:
-            #     raise ValueError(
-            #         f"GAM regression only implemented for 6 reference channels, got {n_refs}"
-            #     )
-
-            # print(
-            #     f"\n----- Fitting {len(_picks_to_idx(info, cfg.ch_types[0]))} channels -----\n"
-            # )
-            # loop_start = time.perf_counter()
-            # c = 1
-            # for mag in _picks_to_idx(info, cfg.ch_types[0]):
-            #     print(f"\nfitting channel {c}: {ch_names[mag]} --------------")
-            #     c += 1
-
-            #     start_time = time.perf_counter()
-            #     ref_dec = ref_data[:, ::12].T
-            #     raw_dec = raw_data[mag, ::12].T
-            #     gam.fit(ref_dec, raw_dec)
-            #     # gam.gridsearch(ref_dec, raw_dec)
-            #     # print('residualize')
-            #     raw_data[mag, :] = gam.deviance_residuals(
-            #         ref_data.T, raw_data[mag, :].T
-            #     ).T
-            #     print(f"R2: {gam.statistics_['pseudo_r2']['explained_deviance']:.2f}")
-
-            #     # Print the execution time
-            #     end_time = time.perf_counter()
-            #     elapsed_time = end_time - start_time
-            #     print(f"Execution time: {elapsed_time:.2f} seconds")
-
-            #     # # print summary
-            #     # print(gam.summary())
-
-            #     # ## plotting
-            #     # plt.switch_backend('qt5agg')
-            #     # fig, axs = plt.subplots(1,3, figsize=(15,5), subplot_kw={"projection": "3d"})
-            #     # titles = ['time', 'ref1', 'ref2']
-            #     # for i, ax in enumerate(axs):
-            #     #     ax.set_title(titles[i])
-
-            #     #     # XX = gam.generate_X_grid(term=i)
-            #     #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX))
-            #     #     # ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX, width=.95)[1], c='r', ls='--')
-
-            #     #     XX = gam.generate_X_grid(term=i, meshgrid=True)
-            #     #     Z = gam.partial_dependence(term=i, X=XX, meshgrid=True)
-            #     #     ax.plot_surface(XX[0], XX[1], Z, cmap='viridis')
-            #     # plt.show()
-            # loop_elapsed = time.perf_counter() - loop_start
-            # print(
-            #     f"\n------------- Total Execution time: {loop_elapsed:.2f} seconds ------------- \n"
-            # )
-
-            # raw_clean = mne.io.RawArray(raw_data, info)
-
-    else:
-        print("\n[regress_reference] using standard regression")
-        weights = mne.preprocessing.EOGRegression(
-            picks=cfg.ch_types[0],
-            picks_artifact="ref_meg",
-            proj=True,
-        ).fit(raw)
-        raw_clean = weights.apply(raw, copy=True)
-        del weights
-
-    if getattr(cfg, "_regress_ref_plot", False):
-        # plot shielding before/after using PSD
-        print("\n[regress_reference] plotting PSD before/after regression")
-
-        raw.plot(
-            precompute=True,
-            n_channels=64,
-            show_options=True,
-            show=True,
-            block=True,
-            lowpass=60.0,
-            decim=4,
-            scalings=dict(mag=1e-11, eyegaze=0.01, pupil=0.01),
-        )
-        raw_clean.plot(
-            precompute=True,
-            n_channels=64,
-            show_options=True,
-            show=True,
-            block=True,
-            lowpass=60.0,
-            decim=4,
-            scalings=dict(mag=1e-11, eyegaze=0.01, pupil=0.01),
-        )
-
-        picks = _picks_to_idx(raw.info, cfg.ch_types[0])
-
-        def get_psd(raw, picks):
-            data, freqs = raw.compute_psd(
-                n_fft=2048,
-                fmin=0,
-                fmax=100,
-                tmin=raw.times[int(raw.n_times * 0.25)],
-                tmax=raw.times[int(raw.n_times * 0.75)],
-                proj=True,
-                picks=picks,
-                n_jobs=-1,
-            ).get_data(return_freqs=True)
-            return data, freqs
-
-        power_to_db = lambda power: 10 * np.log10(power)
-
-        print("computing PSD for before...")
-        data_before, freqs_before = get_psd(raw, picks)
-        print("computing PSD for after...")
-        data_after, freqs_after = get_psd(raw_clean, picks)
-        print("computing PSDs... done")
-
-        mean_psd_before = np.mean(data_before, axis=0)
-        mean_psd_after = np.mean(data_after, axis=0)
-
-        # subplot psds -- first overlayed data, then show difference
-        plt.switch_backend("qt5agg")
-        plt.figure(figsize=(24, 10))
-
-        # plot seperate
-        plt.subplot(1, 2, 1)
-        for ch in range(data_before.shape[0]):
-            plt.semilogy(
-                freqs_before, data_before[ch], color="red", alpha=0.1, linewidth=1
-            )
-            plt.semilogy(
-                freqs_after, data_after[ch], color="blue", alpha=0.1, linewidth=1
-            )
-        plt.semilogy(
-            freqs_before,
-            mean_psd_before,
-            color="red",
-            alpha=1.0,
-            linewidth=2,
-            label="Before",
-        )
-        plt.semilogy(
-            freqs_after,
-            mean_psd_after,
-            color="blue",
-            alpha=1.0,
-            linewidth=2,
-            label="After",
-        )
-        plt.title("PSD before/after regression")
-        plt.xlabel("Frequency (Hz)")
-        plt.ylabel("Power Spectral Density (dB/Hz)")
-        plt.legend()
-
-        # plot difference
-        plt.subplot(1, 2, 2)
-        for ch in range(data_before.shape[0]):
-            plt.plot(
-                freqs_before,
-                power_to_db(data_after[ch]) - power_to_db(data_before[ch]),
-                color="green",
-                alpha=0.1,
-                linewidth=1,
-            )
-        plt.plot(
-            freqs_before,
-            power_to_db(mean_psd_after) - power_to_db(mean_psd_before),
-            color="black",
-            linewidth=2,
-        )
-        plt.axhline(0, color="red", linestyle="--")
-        plt.title("PSD Difference (After - Before)")
-        plt.xlabel("Frequency (Hz)")
-        plt.ylabel("Power Spectral Density (dB/Hz)")
-        plt.show()
-
-    print("\nFinished reference regression!\n---------------\n")
-
-    return raw_clean
-
-
-def detect_bad_segments(
-    raw: mne.io.BaseRaw, cfg: SimpleNamespace, is_noise: bool = False
-) -> mne.io.BaseRaw:
-    """Detect bad segments (single pass for noise, two passes otherwise)."""
-    if is_noise:
-        return osl_bad_segments(
-            raw,
-            picks=cfg.ch_types[0],
-            ref_meg=False,
-            metric="std",
-            detect_zeros=False,
-            channel_wise=True,
-            segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
-            channel_threshold=0.50,
-        )
-    if getattr(cfg, "find_breaks", False):
-        mne.preprocessing.annotate_break(
-            raw,
-            min_break_duration=cfg.min_break_duration,
-            t_start_after_previous=cfg.t_break_annot_start_after_previous_event,
-            t_stop_before_next=cfg.t_break_annot_stop_before_next_event,
-        )
-    first = osl_bad_segments(
-        raw,
-        picks=cfg.ch_types[0],
-        ref_meg=False,
-        metric="std",
-        detect_zeros=False,
-        channel_wise=True,
-        segment_len=round(raw.info["sfreq"] * SEGMENT_LEN_SEC),
-        channel_threshold=0.05,
-    )
-    second = osl_bad_segments(
-        first,
-        picks=cfg.ch_types[0],
-        ref_meg=False,
-        metric="std",
-        detect_zeros=False,
-        channel_wise=True,
-        segment_len=round(first.info["sfreq"] * SEGMENT_LEN_SEC * 0.66),
-        channel_threshold=0.05,
-    )
-    return second
-
-
-def detect_bad_channels(raw: mne.io.BaseRaw, cfg: SimpleNamespace) -> list[str]:
-    """
-    Find bad channel using GESD.
-    Parameters
-    ----------
-    raw : mne.io.BaseRaw
-        The raw MEG data to process.
-    cfg : SimpleNamespace
-        Configuration object containing:
-        - l_freq : float
-            Low cutoff frequency for bandpass filtering.
-        - h_freq : float
-            High cutoff frequency for bandpass filtering.
-        - ch_types : list
-            Channel types to process (e.g., ['mag']).
-    Returns
-    -------
-    list[str]
-        List of detected bad channel names.
-    """
-    filt = raw.copy().filter(l_freq=cfg.l_freq, h_freq=cfg.h_freq, method="iir")
-    detected = osl_bad_channels(
-        filt,
-        picks=cfg.ch_types[0],
-        ref_meg=None,
-        significance_level=0.05,
-    )
-    # print bad channels
-    print(
-        f"\n[detect_bad_channels] detected {len(detected.info['bads'])} bad channels: {detected.info['bads']}"
-    )
-    return list(detected.info["bads"])
-
-
-def drop_bad_epochs(epochs: mne.Epochs, cfg: SimpleNamespace) -> mne.Epochs:
-    """
-    Drop bad epochs using GESD.
-    Parameters
-    ----------
-    epochs : mne.Epochs
-        The epochs to process.
-    cfg : SimpleNamespace
-        Configuration object containing:
-        - ch_types : list
-            Channel types to process (e.g., ['mag']).
-    Returns
-    -------
-    mne.Epochs
-        The cleaned epochs with bad epochs removed.
-    """
-
-    clean_epochs = osl_drop_bad_epochs(
-        epochs,
-        picks=cfg.ch_types[0],
-        ref_meg=None,
-        metric="std",
-    )
-
-    # print dropped epochs
-    n_dropped = len(epochs) - len(clean_epochs)
-    print(f"\n[drop_bad_epochs] dropped {n_dropped} epochs")
-
-    return clean_epochs
-
-
-def apply_hfc(
-    raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None
-) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw | None]:
-    """Apply Homogeneous Field Correction (HFC) projections to MEG data.
-
-    HFC projections remove spatial gradients in the magnetic field that are
-    uniform across the sensor array, typically caused by distant sources or
-    movements of the head relative to the sensors.
-
-    Parameters
-    ----------
-    raw : mne.io.BaseRaw
-        The raw MEG data to apply HFC projections to.
-    cfg : SimpleNamespace
-        Configuration object containing:
-        - _do_HFC : bool
-            Whether to apply HFC projections. If False, returns data unchanged.
-        - _hfc_order : int
-            Order of the HFC projections (typically 1-3).
-        - ch_types : list
-            Channel types to apply projections to (e.g., ['mag']).
-    noise : mne.io.BaseRaw | None, optional
-        Optional empty-room noise data to apply the same projections to.
+import importlib
+import sys
+from typing import Callable
+
+from preprocessing._config import load_config, normalize_analysis_key
+
+
+# -----------------------------------------------------------------------------
+# Analysis Registry
+# -----------------------------------------------------------------------------
+
+# Mapping of normalized analysis keys to their module names
+# Each module must have a run(cfg) function
+ANALYSIS_REGISTRY: dict[str, str] = {
+    "regressref": "regress_ref",
+    "badsegments": "bad_segments",
+    "badchannels": "bad_channels",
+    "manualchannel": "manual_channel",
+    "applyhfc": "apply_hfc",
+    "badepochs": "bad_epochs",
+    "autoica": "auto_ica",
+    "manualica": "manual_ica",
+}
+
+# Human-readable names for CLI choices (with underscores)
+ANALYSIS_CHOICES: list[str] = [
+    "regress_ref",
+    "bad_segments",
+    "bad_channels",
+    "manual_channel",
+    "apply_hfc",
+    "bad_epochs",
+    "auto_ica",
+    "manual_ica",
+]
+
+
+# -----------------------------------------------------------------------------
+# CLI Parsing
+# -----------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments.
 
     Returns
     -------
-    raw : mne.io.BaseRaw
-        Raw data with HFC projections applied (if enabled).
-    noise : mne.io.BaseRaw | None
-        Noise data with HFC projections applied (if provided and HFC enabled).
-
-    Notes
-    -----
-    HFC projections are computed based on the sensor positions and applied
-    as SSP (Signal Space Projection) projectors. The projections remove
-    components that vary smoothly across the sensor array.
+    args : argparse.Namespace
+        Parsed arguments with 'analysis' and 'config' attributes.
     """
-    if not getattr(cfg, "_do_HFC", False):
-        print("\n[apply_hfc] HFC disabled in configuration; skipping")
-        return raw, noise
-
-    print("\n[apply_hfc] Computing and applying HFC projections")
-    print(f"[apply_hfc] Using HFC order: {cfg._hfc_order}")
-
-    projs = mne.preprocessing.compute_proj_hfc(
-        raw.info,
-        order=cfg._hfc_order,
-        picks=cfg.ch_types[0],
+    parser = argparse.ArgumentParser(
+        description="Modular OPM auxiliary preprocessing",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
     )
 
-    print(f"[apply_hfc] Computed {len(projs)} HFC projection(s)")
-    raw.add_proj(projs=projs).apply_proj()
-
-    if noise is not None:
-        print("[apply_hfc] Applying same projections to noise data")
-        noise.add_proj(projs=projs).apply_proj()
-
-    print("[apply_hfc] HFC projections applied successfully")
-    return raw, noise
-
-
-def manual_channel_selection(
-    raw: mne.io.BaseRaw, cfg: SimpleNamespace, noise: mne.io.BaseRaw | None = None
-) -> tuple[mne.io.BaseRaw, list[str], mne.io.BaseRaw | None]:
-    """Interactive manual selection of bad channels.
-
-    Opens an interactive plot for visual inspection of the data, allowing
-    the user to mark bad channels by clicking on them. The same bad channels
-    are also marked in the noise data if provided.
-
-    Parameters
-    ----------
-    raw : mne.io.BaseRaw
-        The raw MEG data for channel inspection.
-    cfg : SimpleNamespace
-        Configuration object containing filtering parameters:
-        - l_freq : float
-            High-pass filter frequency for display.
-        - h_freq : float
-            Low-pass filter frequency for display.
-    noise : mne.io.BaseRaw | None, optional
-        Optional empty-room noise data that will receive the same bad channel markings.
-
-    Returns
-    -------
-    raw : mne.io.BaseRaw
-        Raw data with bad channels marked.
-    bads : list[str]
-        List of bad channel names selected by the user.
-    noise : mne.io.BaseRaw | None
-        Noise data with the same bad channels marked (if provided).
-
-    Notes
-    -----
-    If Qt browser is not available, the interactive plot is skipped but the
-    function will still process any existing bad channel markings in the data.
-    """
-    if not _HAVE_QT_BROWSER:
-        print(
-            "\n[manual_channel_selection] Qt browser not available; skipping interactive plot (set SKIP_MANUAL=1 to omit this step entirely)."
-        )
-    else:
-        print(
-            "\n[manual_channel_selection] Opening interactive plot for channel inspection"
-        )
-        raw.plot(
-            precompute=True,
-            n_channels=64,
-            show_options=True,
-            show=True,
-            block=True,
-            highpass=cfg.l_freq,
-            lowpass=cfg.h_freq,
-            decim=4,
-            scalings=dict(mag=1e-11, eyegaze=0.01, pupil=0.01),
-        )
-
-    # Process bad channel markings
-    bads: list[str] = []
-    for ch in raw.info["bads"]:
-        bads.append(ch if isinstance(ch, str) else ch.item())
-    raw.info["bads"] = bads
-
-    if noise is not None:
-        print(
-            f"[manual_channel_selection] Marking {len(bads)} bad channels in noise data"
-        )
-        noise.info["bads"] = bads.copy()
-
-    print(f"[manual_channel_selection] Marked {len(bads)} bad channels: {bads}")
-    return raw, bads, noise
-
-
-def auto_ica(
-    ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: SimpleNamespace
-) -> mne.preprocessing.ICA:
-    # label bad components based on reference channels
-    if getattr(cfg, "ref_bads", True):
-        print(
-            "\n[auto_ica] identifying bad components based on reference sensors -------\n"
-        )
-
-        ref_raw = raw.copy().pick("ref_meg").filter(l_freq=1, h_freq=None)
-        ref_ica = mne.preprocessing.ICA(
-            n_components=0.99,
-            method="picard",
-            max_iter=256,
-            allow_ref_meg=True,
-        )
-        ref_ica.fit(ref_raw, decim=2, reject_by_annotation=True)
-        ref_src = ref_ica.get_sources(ref_raw)
-        ref_src.rename_channels(lambda x: f"REF_{x}")
-        raw.add_channels([ref_src], force_update_info=True)
-        ref_idx, _ = ica.find_bads_ref(inst=raw, method="separate")
-        print(
-            f"[auto_ica] marking {len(ref_idx)} components based on reference sensors: {ref_idx}\n"
-        )
-        ica.exclude.extend(ref_idx)
-        del ref_raw, ref_ica, ref_src
-
-    # label bad components based on osl's gesd
-    if getattr(cfg, "gesd_bads", True):
-        print("\n[manual_ica_review] identifying bad components based on GESD -------")
-        sources = ica.get_sources(raw).get_data()
-
-        kurtosis_scores = stats.kurtosis(sources, axis=1)
-        kurtosis_diff_scores = stats.kurtosis(np.diff(sources, axis=1), axis=1)
-        std_scores = np.std(sources, axis=1, ddof=1)
-        std_diff_scores = np.linalg.norm(np.diff(sources, axis=1), axis=1)
-
-        if (sources.shape[0] - len(ica.exclude)) < 5:
-            print(
-                f"[auto_ica] too few components remaining for GESD ({n_comps - len(ica.exclude)}); skipping\n"
-            )
-        else:
-            # plot histogram of ic_scores
-            # plt.figure()
-            # plt.hist(ic_score[~np.isnan(ic_score)], bins=64, color='gray', edgecolor='black')
-            # plt.xlabel("ICA Component Score (kurtosis)")
-            # plt.ylabel("Count")
-            # plt.title("Histogram of ICA Component Scores for GESD")
-            # plt.show()
-
-            # loop over both scores, include their names for plotting
-            print(
-                f"Before GESD: excluding {len(ica.exclude)} components: ", ica.exclude
-            )
-            for score, name in zip(
-                [kurtosis_scores, std_scores, std_diff_scores],
-                ["kurtosis", "std", "std_diff"],
-            ):
-                gesd_idx, _ = osl_gesd(score, p_out=1.0)
-
-                if len(gesd_idx) == 0:
-                    print(f"[auto_ica] {name} GESD found no outliers")
-                else:
-                    ica.exclude.extend(np.where(gesd_idx)[0].tolist())
-                print(
-                    f"[auto_ica] marking {len(np.where(gesd_idx)[0])} components based on {name} GESD: {np.where(gesd_idx)[0]}"
-                )
-            print(f"After GESD: excluding {len(ica.exclude)} components: ", ica.exclude)
-
-    return ica
-
-
-def manual_ica_review(
-    ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw, cfg: SimpleNamespace
-) -> mne.preprocessing.ICA:
-    ica.plot_components(inst=raw, nrows=5)
-    ica.plot_sources(inst=raw, show_scrollbars=True, block=True)
-    return ica
-
-
-# --------------------------------------------------------------------------------------
-# Dispatcher
-# --------------------------------------------------------------------------------------
-
-
-def run_analysis(
-    cfg: SimpleNamespace, analysis: str, data: Dict[str, Any]
-) -> Dict[str, Any]:
-    results: Dict[str, Any] = {"bads": []}
-
-    if analysis == "badsegments":
-        for task, raw in data.items():
-            cleaned = detect_bad_segments(raw, cfg, is_noise=(task == "noise"))
-            results[task] = cleaned
-
-    elif analysis == "badchannels":
-        dedup = set()
-        for task, raw in data.items():
-            bads = detect_bad_channels(raw, cfg)
-            results[task] = raw
-            for b in bads:
-                if b not in dedup:
-                    dedup.add(b)
-        results["bads"] = sorted(dedup)
-
-    elif analysis == "manualchannel":
-        noise = data.get("noise") if getattr(cfg, "process_empty_room", False) else None
-        raw, bads, noise = manual_channel_selection(data[cfg.task], cfg, noise)
-        results[cfg.task] = raw
-        results["bads"] = bads
-        if noise is not None:
-            results["noise"] = noise
-
-    elif analysis == "badepochs":
-        results[cfg.task] = drop_bad_epochs(data[cfg.task], cfg)
-
-    elif analysis == "autoica":
-        results["ica"] = auto_ica(data["ica"], data[cfg.task], cfg)
-        results[cfg.task] = data[cfg.task]
-
-    elif analysis == "manualica":
-        results["ica"] = manual_ica_review(data["ica"], data[cfg.task], cfg)
-        results[cfg.task] = data[cfg.task]
-
-    elif analysis == "regressref":
-        for task, raw in data.items():
-            print(f"[run_analysis] regressing reference channels from {task} data")
-            results[task] = regress_reference(raw, cfg, is_noise=(task == "noise"))
-        # if getattr(cfg, "process_empty_room", False):
-        #     print("\n[run_analysis] regressing reference channels from noise data")
-        #     results["noise"] = regress_reference(data.get("noise"), cfg)
-        # results[cfg.task] = regress_reference(data[cfg.task], cfg)
-
-    elif analysis == "applyhfc":
-        noise = data.get("noise") if getattr(cfg, "process_empty_room", False) else None
-        raw, noise = apply_hfc(data[cfg.task], cfg, noise)
-        results[cfg.task] = raw
-        if noise is not None:
-            results["noise"] = noise
-
-    else:  # pragma: no cover
-        raise ValueError(f"Unknown analysis {analysis}")
-    return results
-
-
-def save_results(cfg: SimpleNamespace, analysis: str, results: Dict[str, Any]):
-    tasks = {k: v for k, v in results.items() if k not in {"bads", "ica"}}
-    print(f"\n[save_results] saving results for analysis={analysis}")
-    if analysis in {
-        "badsegments",
-        "badchannels",
-        "manualchannel",
-        "regressref",
-        "applyhfc",
-    }:
-        unique_bads = (
-            sorted(set(results.get("bads", []))) if results.get("bads") else []
-        )
-        for task, raw in tasks.items():
-            print(f"[save_results] writing task={task}")
-            bp = mne_bids.find_matching_paths(
-                root=cfg.bids_root,
-                subjects=cfg.subjects,
-                tasks=task,
-                sessions=cfg.sessions,
-                datatypes="meg",
-                ignore_nosub=True,
-                splits=None,
-                extensions=".fif",
-            )[0]
-            bp.split = None
-            if analysis in {"badchannels", "manualchannel"} and unique_bads:
-                if analysis == "badchannels":
-                    # merge existing and newly detected, keep unique
-                    merged = sorted({*raw.info.get("bads", []), *unique_bads})
-                    raw.info["bads"] = merged
-                else:
-                    raw.info["bads"] = list(unique_bads)
-                mne_bids.mark_channels(
-                    bp,
-                    ch_names=unique_bads,
-                    status="bad",
-                    descriptions="osl",
-                )
-            if "noise" in tasks and task != "noise":
-                er_bp = mne_bids.find_matching_paths(
-                    root=cfg.bids_root,
-                    subjects=cfg.subjects,
-                    tasks="noise",
-                    sessions=cfg.sessions,
-                    datatypes="meg",
-                    ignore_nosub=True,
-                    splits=None,
-                    extensions=".fif",
-                )[0]
-                mne_bids.write_raw_bids(
-                    raw,
-                    bp,
-                    allow_preload=True,
-                    overwrite=True,
-                    format="FIF",
-                    empty_room=er_bp,
-                )
-            else:
-                mne_bids.write_raw_bids(
-                    raw,
-                    bp,
-                    allow_preload=True,
-                    overwrite=True,
-                    format="FIF",
-                )
-
-    elif analysis == "badepochs":
-        ep_bp = mne_bids.find_matching_paths(
-            root=cfg.deriv_root,
-            subjects=cfg.subjects,
-            tasks=cfg.task,
-            sessions=cfg.sessions,
-            suffixes="epo",
-            processings="clean",
-            extensions=".fif",
-        )[0]
-        ep_bp.split = None
-        tasks[cfg.task].save(ep_bp, split_naming="bids", overwrite=True)
-
-    if analysis in {"autoica", "manualica"}:
-        # Update TSV + save ICA object
-        tsv_path = mne_bids.find_matching_paths(
-            root=cfg.deriv_root,
-            subjects=cfg.subjects,
-            tasks=cfg.task,
-            sessions=cfg.sessions,
-            suffixes="components",
-            processings="ica",
-            extensions=".tsv",
-        )[0]
-        df = pd.read_csv(tsv_path, sep="\t")
-        ica = results["ica"]
-        for comp in ica.exclude:
-            mask = df["component"].astype(str) == str(comp)
-            if mask.any():
-                df.loc[mask, "status"] = "bad"
-                df.loc[mask, "status_description"] = "manual"
-        df.to_csv(tsv_path, sep="\t", index=False)
-        ica_path = mne_bids.find_matching_paths(
-            root=cfg.deriv_root,
-            subjects=cfg.subjects,
-            tasks=cfg.task,
-            sessions=cfg.sessions,
-            suffixes="ica",
-            processings="ica",
-            extensions=".fif",
-        )[0]
-        ica.save(ica_path, overwrite=True)
-
-
-def parse_args():
-    p = argparse.ArgumentParser(description="Modular OPM auxiliary preprocessing")
-    p.add_argument(
+    parser.add_argument(
         "--analysis",
         required=True,
-        choices=[
-            "bad_segments",
-            "bad_channels",
-            "bad_epochs",
-            "manual_channel",
-            "auto_ica",
-            "manual_ica",
-            "regress_ref",
-            "apply_hfc",
-        ],
+        choices=ANALYSIS_CHOICES,
+        metavar="ANALYSIS",
+        help=(
+            f"Analysis type to run. Choices: {', '.join(ANALYSIS_CHOICES)}"
+        ),
     )
-    p.add_argument("--config", required=True)
-    return p.parse_args()
+
+    parser.add_argument(
+        "--config",
+        required=True,
+        type=str,
+        metavar="PATH",
+        help="Path to configuration Python file",
+    )
+
+    return parser.parse_args()
 
 
-def main():
+# -----------------------------------------------------------------------------
+# Module Import
+# -----------------------------------------------------------------------------
+
+
+def import_analysis_module(analysis_key: str) -> Callable:
+    """Dynamically import an analysis module and return its run function.
+
+    Parameters
+    ----------
+    analysis_key : str
+        Normalized analysis key (e.g., 'regressref').
+
+    Returns
+    -------
+    run_func : callable
+        The run(cfg) function from the analysis module.
+
+    Raises
+    ------
+    ValueError
+        If the analysis key is unknown.
+    ImportError
+        If the module cannot be imported.
+    """
+    if analysis_key not in ANALYSIS_REGISTRY:
+        raise ValueError(
+            f"Unknown analysis: {analysis_key}. "
+            f"Valid options: {list(ANALYSIS_REGISTRY.keys())}"
+        )
+
+    module_name = ANALYSIS_REGISTRY[analysis_key]
+    full_module_path = f"preprocessing.{module_name}"
+
+    # Import the module
+    module = importlib.import_module(full_module_path, package=".")
+
+    # Get the run function
+    if not hasattr(module, "run"):
+        raise ImportError(
+            f"Module {full_module_path} does not have a run() function"
+        )
+
+    return module.run
+
+
+# -----------------------------------------------------------------------------
+# Main Entry Point
+# -----------------------------------------------------------------------------
+
+
+def main() -> int:
+    """Main entry point for the CLI.
+
+    Returns
+    -------
+    exit_code : int
+        0 for success, 1 for error.
+    """
     args = parse_args()
 
-    cfg = _import_config(config_path=args.config)
-    _update_config_from_path(config=cfg, config_path=args.config)
-    analysis_key = args.analysis.replace("_", "")
-    # cfg = SimpleNamespace()
-    # _update_with_user_config(config=cfg, config_path=args.config)
+    # Normalize analysis key (remove underscores)
+    analysis_key = normalize_analysis_key(args.analysis)
 
-    if analysis_key == "manualchannel" and not getattr(cfg, "_manual_channels", False):
-        print("\n[main] manual channel selection disabled; exiting")
-        return
-    if analysis_key == "autoica":
-        if (
-            not getattr(cfg, "_auto_ica", False)
-            or getattr(cfg, "spatial_filter", None) != "ica"
-        ):
-            print("\n[main] auto ICA disabled; exiting")
-            return
-    if analysis_key == "manualica":
-        if (
-            not getattr(cfg, "_manual_ica", False)
-            or getattr(cfg, "spatial_filter", None) != "ica"
-        ):
-            print("\n[main] manual ICA disabled; exiting")
-            return
-    if analysis_key == "regressref" and not getattr(cfg, "_regress_ref", False):
-        print("\n[main] reference regression disabled; exiting")
-        return
-    if analysis_key == "applyhfc" and not getattr(cfg, "_do_HFC", False):
-        print("\n[main] HFC disabled; exiting")
-        return
+    # Print header
+    print()
+    print("=" * 70)
+    print("MNE-OPM Custom Preprocessing")
+    print("=" * 70)
+    print(f"  Analysis: {args.analysis}")
+    print(f"  Config:   {args.config}")
+    print("=" * 70)
+    print()
 
-    data = load_data(cfg, analysis_key)
-    results = run_analysis(cfg, analysis_key, data)
-    save_results(cfg, analysis_key, results)
+    try:
+        # Load configuration
+        cfg = load_config(args.config)
+
+        # Import and run analysis module
+        run_func = import_analysis_module(analysis_key)
+        run_func(cfg)
+
+        # Print footer
+        print()
+        print("=" * 70)
+        print(f"Analysis '{args.analysis}' completed successfully")
+        print("=" * 70)
+        print()
+
+        return 0
+
+    except FileNotFoundError as e:
+        print(f"\n[ERROR] File not found: {e}")
+        return 1
+    except ValueError as e:
+        print(f"\n[ERROR] Configuration error: {e}")
+        return 1
+    except Exception as e:
+        print(f"\n[ERROR] Analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

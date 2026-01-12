@@ -1,0 +1,7 @@
+# %% ZCA test
+
+import mne
+
+
+# %%
+
