@@ -1,14 +1,22 @@
 # run freesurfer
 # Harrison Ritz 2025
 
+# fail on first crash
+if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
+	set -eo pipefail
+	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
+	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
+fi
 
-## activate environment ----------------------------------------
-conda activate mne-opm
+# set config
+export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 
-
+# set fs variables
 old_sub=$SUBJECT
 export SUBJECT=${SUBJECT_NUM}_ses-${SESSION}
 export FS_ALLOW_DEEP=1
+
+echo ${FREESURFER_HOME}
 source $FREESURFER_HOME/SetUpFreeSurfer.sh
 
 

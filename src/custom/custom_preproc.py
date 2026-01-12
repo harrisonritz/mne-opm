@@ -188,32 +188,38 @@ def regress_reference(
         print("\n[regress_reference] using time-varying regression")
 
         if getattr(cfg, "_regress_ref_method", "window") == "window":
-            
             # get raw data
             raw_data = raw.get_data()
             info = raw.info
 
             # Filter reference channels for each frequency band
-            freq_bands = getattr(cfg, "_regress_ref_freqs", [
-                (None, 5.0),
-                # (5.0, 20.0),
-                # (20.0, None),
-            ])
-            ref_data_list = []
-            for l_freq, h_freq in freq_bands:
-                ref_filt = (
-                    raw.copy()
-                    .pick("ref_meg")
-                    .filter(
-                        l_freq=l_freq,
-                        h_freq=h_freq,
-                        fir_window="blackman",
-                        l_trans_bandwidth=5.0,
-                        h_trans_bandwidth=5.0,
-                    )
+            if getattr(cfg, "_regress_ref_freqs", None) is not None:
+                freq_bands = getattr(
+                    cfg,
+                    "_regress_ref_freqs",
+                    [
+                        (None, 5.0),
+                    ],
                 )
-                ref_data_list.append(ref_filt.get_data(picks="ref_meg"))
-                del ref_filt
+                ref_data_list = []
+                for l_freq, h_freq in freq_bands:
+                    ref_filt = (
+                        raw.copy()
+                        .pick("ref_meg")
+                        .filter(
+                            l_freq=l_freq,
+                            h_freq=h_freq,
+                            fir_window="blackman",
+                            h_trans_bandwidth=5.0,
+                        )
+                    )
+                    ref_data_list.append(ref_filt.get_data(picks="ref_meg"))
+                    del ref_filt
+            else:
+                ref_raw = raw.get_data(picks="ref_meg")
+                ref_raw -= np.mean(ref_raw, axis=1, keepdims=True)
+                ref_data_list = [ref_raw, ref_raw**2]
+                del ref_raw
 
             ref_data = stats.zscore(np.vstack(ref_data_list), axis=1)
             del ref_data_list
@@ -225,7 +231,7 @@ def regress_reference(
 
             # ------- sliding window regression ---------
             window_size = int(
-                sfreq * getattr(cfg, "_regress_ref_window", 10.0)
+                sfreq * getattr(cfg, "_regress_ref_window", 100.0)
             )  # window size
             step_size = int(window_size // 2)  # step size
             n_windows = int(np.ceil((n_times - window_size) / step_size))
@@ -236,7 +242,6 @@ def regress_reference(
                 f"[regress_reference] processing {n_windows} windows of {window_size} samples ({window_size / sfreq:.1f} sec) in steps of {step_size} samples ({step_size / sfreq:.1f} sec)"
             )
             for w in range(n_windows):
-                
                 # define window
                 start = w * step_size
                 end = np.min((start + window_size, n_times))
@@ -252,7 +257,7 @@ def regress_reference(
 
                 # QR decomposition with column pivoting
                 Q, _, _ = qr(X, pivoting=True, mode="economic")
-                Qd = Q[:(end - start), :]  # get data rows
+                Qd = Q[: (end - start), :]  # get data rows
 
                 # regress out reference from each channel
                 raw_data[mag_idx, start:end] -= (
@@ -367,13 +372,121 @@ def regress_reference(
             # raw_clean = mne.io.RawArray(raw_data, info)
 
     else:
-        raise NotImplementedError("static regression not implemented")
-        # print("\n[regress_reference] using standard regression")
-        # weights = mne.preprocessing.EOGRegression(
-        #     picks=cfg.ch_types[0], picks_artifact="ref_meg"
-        # ).fit(raw_filt)
-        # raw_clean = weights.apply(raw, copy=True)
-        # del weights
+        print("\n[regress_reference] using standard regression")
+        weights = mne.preprocessing.EOGRegression(
+            picks=cfg.ch_types[0],
+            picks_artifact="ref_meg",
+            proj=True,
+        ).fit(raw)
+        raw_clean = weights.apply(raw, copy=True)
+        del weights
+
+    if getattr(cfg, "_regress_ref_plot", False):
+        # plot shielding before/after using PSD
+        print("\n[regress_reference] plotting PSD before/after regression")
+
+        raw.plot(
+            precompute=True,
+            n_channels=64,
+            show_options=True,
+            show=True,
+            block=True,
+            lowpass=60.0,
+            decim=4,
+            scalings=dict(mag=1e-11, eyegaze=0.01, pupil=0.01),
+        )
+        raw_clean.plot(
+            precompute=True,
+            n_channels=64,
+            show_options=True,
+            show=True,
+            block=True,
+            lowpass=60.0,
+            decim=4,
+            scalings=dict(mag=1e-11, eyegaze=0.01, pupil=0.01),
+        )
+
+        picks = _picks_to_idx(raw.info, cfg.ch_types[0])
+
+        def get_psd(raw, picks):
+            data, freqs = raw.compute_psd(
+                n_fft=2048,
+                fmin=0,
+                fmax=100,
+                tmin=raw.times[int(raw.n_times * 0.25)],
+                tmax=raw.times[int(raw.n_times * 0.75)],
+                proj=True,
+                picks=picks,
+                n_jobs=-1,
+            ).get_data(return_freqs=True)
+            return data, freqs
+
+        power_to_db = lambda power: 10 * np.log10(power)
+
+        print("computing PSD for before...")
+        data_before, freqs_before = get_psd(raw, picks)
+        print("computing PSD for after...")
+        data_after, freqs_after = get_psd(raw_clean, picks)
+        print("computing PSDs... done")
+
+        mean_psd_before = np.mean(data_before, axis=0)
+        mean_psd_after = np.mean(data_after, axis=0)
+
+        # subplot psds -- first overlayed data, then show difference
+        plt.switch_backend("qt5agg")
+        plt.figure(figsize=(24, 10))
+
+        # plot seperate
+        plt.subplot(1, 2, 1)
+        for ch in range(data_before.shape[0]):
+            plt.semilogy(
+                freqs_before, data_before[ch], color="red", alpha=0.1, linewidth=1
+            )
+            plt.semilogy(
+                freqs_after, data_after[ch], color="blue", alpha=0.1, linewidth=1
+            )
+        plt.semilogy(
+            freqs_before,
+            mean_psd_before,
+            color="red",
+            alpha=1.0,
+            linewidth=2,
+            label="Before",
+        )
+        plt.semilogy(
+            freqs_after,
+            mean_psd_after,
+            color="blue",
+            alpha=1.0,
+            linewidth=2,
+            label="After",
+        )
+        plt.title("PSD before/after regression")
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Power Spectral Density (dB/Hz)")
+        plt.legend()
+
+        # plot difference
+        plt.subplot(1, 2, 2)
+        for ch in range(data_before.shape[0]):
+            plt.plot(
+                freqs_before,
+                power_to_db(data_after[ch]) - power_to_db(data_before[ch]),
+                color="green",
+                alpha=0.1,
+                linewidth=1,
+            )
+        plt.plot(
+            freqs_before,
+            power_to_db(mean_psd_after) - power_to_db(mean_psd_before),
+            color="black",
+            linewidth=2,
+        )
+        plt.axhline(0, color="red", linestyle="--")
+        plt.title("PSD Difference (After - Before)")
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Power Spectral Density (dB/Hz)")
+        plt.show()
 
     print("\nFinished reference regression!\n---------------\n")
 
