@@ -43,10 +43,10 @@ echo ""
 
 
 
-# echo ""
-# echo "======================= OSL: bad channels =============================================="
-# echo ""
-# python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
+echo ""
+echo "======================= OSL: bad channels =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
 
 
 
@@ -59,7 +59,7 @@ echo ""
 echo ""
 echo "======================= MNE: prep source space =============================================="
 echo ""
-mne_bids_pipeline --steps=source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
+mne_bids_pipeline --steps=source/make_bem_solution,source/setup_source_space --config=$CONFIG_PATH
 
 
 
