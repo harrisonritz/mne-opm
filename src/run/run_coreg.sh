@@ -42,6 +42,6 @@ export SUBJECT=$old_sub
 echo ""
 echo "======================= MNE: prep source space =============================================="
 echo ""
-mne_bids_pipeline --steps=source/make_bem_solution, source/setup_source_space --config=$CONFIG_PATH
+mne_bids_pipeline --steps=source/make_bem_solution,source/setup_source_space --config=$CONFIG_PATH
 
 

@@ -57,10 +57,14 @@ from typing import Any, Dict
 
 import mne
 import mne_bids
-from mne_bids import BIDSPath
+import mne_qt_browser
+from mne_bids import BIDSPath, find_matching_paths
 
 from ._base import BaseAnalysis
 from ._io import save_ica_bids
+
+mne.viz.set_browser_backend("qt")
+
 
 
 class ManualICAAnalysis(BaseAnalysis):
@@ -115,20 +119,39 @@ class ManualICAAnalysis(BaseAnalysis):
         subject = self.cfg.subjects[0] if isinstance(self.cfg.subjects, list) else self.cfg.subjects
         session = self.cfg.sessions[0] if isinstance(self.cfg.sessions, list) else self.cfg.sessions
 
-        bp_raw = BIDSPath(
+        # Find cleaned raw files using mne_bids
+        matching_files = find_matching_paths(
             root=self.cfg.deriv_root,
-            subject=subject,
-            session=session,
-            task=self.cfg.task,
-            datatype="meg",
-            suffix="raw",
-            processing="clean",
-            extension=".fif",
+            subjects=subject,
+            sessions=session,
+            tasks=self.cfg.task,
+            processings="clean",
+            suffixes="raw",
+            extensions=".fif",
+            datatypes="meg",
+            check=False,  # Allow non-standard suffix 'raw' for derivatives
         )
-        raw = mne_bids.read_raw_bids(bp_raw, extra_params={"preload": True})
+
+        if len(matching_files) == 0:
+            raise FileNotFoundError(
+                f"No cleaned raw files found for sub-{subject}/ses-{session}/task-{self.cfg.task}"
+            )
+        elif len(matching_files) > 1:
+            runs_found = [f.run for f in matching_files]
+            raise ValueError(
+                f"Multiple runs found: {runs_found}. "
+                "Please specify which run to use in the configuration."
+            )
+
+        # Use the matched file's run
+        run = matching_files[0].run
+        self.log(f"Detected run: {run}")
+
+        bp_raw = matching_files[0]
+        raw = mne.io.read_raw_fif(bp_raw.fpath, preload=True)
         self.log("Loaded cleaned raw data")
 
-        # Load ICA solution
+        # Load ICA solution (note: ICA files don't include run in filename)
         bp_ica = BIDSPath(
             root=self.cfg.deriv_root,
             subject=subject,
@@ -138,10 +161,11 @@ class ManualICAAnalysis(BaseAnalysis):
             suffix="ica",
             processing="ica",
             extension=".fif",
+            check=False,  # Allow non-standard suffix 'ica'
         )
         ica = mne.preprocessing.read_ica(bp_ica.fpath)
         self.log(f"Loaded ICA solution with {ica.n_components_} components")
-        self.log(f"Currently excluded: {ica.exclude}")
+        self.log(f"{len(ica.exclude)} currently excluded: {ica.exclude}")
 
         return {self.cfg.task: raw, "ica": ica}
 

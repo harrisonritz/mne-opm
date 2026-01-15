@@ -129,6 +129,7 @@ def save_ica_bids(
         suffix="ica",
         processing="ica",
         extension=".fif",
+        check=False,  # Allow non-standard suffix 'ica'
     )
 
     # Build components TSV path
@@ -141,72 +142,7 @@ def save_ica_bids(
         suffix="components",
         processing="ica",
         extension=".tsv",
-    )
-
-    # Update components TSV
-    df = pd.read_csv(tsv_path.fpath, sep="\t")
-    for comp in ica.exclude:
-        mask = df["component"].astype(str) == str(comp)
-        if mask.any():
-            df.loc[mask, "status"] = "bad"
-            df.loc[mask, "status_description"] = "manual"
-    df.to_csv(tsv_path.fpath, sep="\t", index=False)
-
-    # Save ICA object
-    ica.save(ica_path.fpath, overwrite=True)
-
-
-def save_ica_bids(
-    ica: mne.preprocessing.ICA,
-    cfg: SimpleNamespace,
-) -> None:
-    """Save ICA solution and update components TSV.
-
-    This function saves the ICA object and updates the components TSV file
-    to reflect which components are marked as bad.
-
-    Parameters
-    ----------
-    ica : mne.preprocessing.ICA
-        ICA object with excluded components marked.
-    cfg : SimpleNamespace
-        Configuration object containing BIDS settings.
-
-    Notes
-    -----
-    The components TSV is updated in place. Components in ica.exclude
-    are marked with status='bad' and status_description='manual'.
-
-    Examples
-    --------
-    >>> ica.exclude = [0, 3, 5]
-    >>> save_ica_bids(ica, cfg)
-    """
-    # Get subject/session
-    subject = cfg.subjects[0] if isinstance(cfg.subjects, list) else cfg.subjects
-    session = cfg.sessions[0] if isinstance(cfg.sessions, list) else cfg.sessions
-
-    # Build ICA path
-    ica_path = BIDSPath(
-        root=cfg.deriv_root,
-        subject=subject,
-        session=session,
-        task=cfg.task,
-        datatype="meg",
-        suffix="ica",
-        processing="ica",
-        extension=".fif",
-    )
-
-    # Build components TSV path
-    tsv_path = BIDSPath(
-        root=cfg.deriv_root,
-        subject=subject,
-        session=session,
-        task=cfg.task,
-        suffix="components",
-        processing="ica",
-        extension=".tsv",
+        check=False,  # Allow non-standard suffix 'components'
     )
 
     # Update components TSV

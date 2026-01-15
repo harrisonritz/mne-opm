@@ -56,6 +56,13 @@ echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_hfc --config=$CONFIG_PATH
 
 
+echo ""
+echo "======================= CUSTOM: Common Spatial Filter (ZCA) =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_zca --config=$CONFIG_PATH
+
+
+
 
 echo ""
 echo "======================= MNE: preprocessing =============================================="

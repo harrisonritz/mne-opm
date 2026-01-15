@@ -421,12 +421,12 @@ class ZCAFilterAnalysis(BaseAnalysis):
         # Step 1: Compute covariances
         self.log("Computing data covariance...")
         data_cov = mne.compute_raw_covariance(
-            raw, method="shrunk", rank="info", n_jobs=-1
+            raw, method="shrunk", rank="info", n_jobs=self.cfg.n_jobs
         )
 
         self.log("Computing noise covariance...")
         noise_cov = mne.compute_raw_covariance(
-            noise, method="shrunk", rank="info", n_jobs=-1
+            noise, method="shrunk", rank="info", n_jobs=self.cfg.n_jobs
         )
 
         # Step 2: Compute forward solution
@@ -439,7 +439,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
             meg=True,
             eeg=False,
             mindist=5.0,
-            n_jobs=-1,
+            n_jobs=self.cfg.n_jobs,
         )
 
         # Step 3: Compute inverse operator (for eigendecomposition)
@@ -467,7 +467,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
         coils = _prep_mf_coils(sss_info, ignore_ref=True, accuracy="accurate")
 
         ext_basis = _sss_basis(exp, coils)
-        ext_basis /= np.linalg.norm(ext_basis, axis=0) ** 0.8
+        ext_basis /= (np.linalg.norm(ext_basis, axis=0) ** 0.8)
 
         # Step 5: Build signal and noise transforms
         self.log("Building signal and noise transforms...")

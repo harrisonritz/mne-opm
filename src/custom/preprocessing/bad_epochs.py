@@ -105,6 +105,7 @@ class BadEpochsAnalysis(BaseAnalysis):
             suffix="epo",
             processing="clean",
             extension=".fif",
+            check=False,  # Allow non-standard suffix 'epo'
         )
 
         epochs = mne.read_epochs(bids_path.fpath, preload=True)
@@ -156,6 +157,7 @@ class BadEpochsAnalysis(BaseAnalysis):
             suffix="epo",
             processing="clean",
             extension=".fif",
+            check=False,  # Allow non-standard suffix 'epo'
         )
 
         epochs = results[self.cfg.task]

@@ -64,6 +64,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "manualchannel": "manual_channel",
     "applyhfc": "apply_hfc",
     "zcafilter": "zca_filter",
+    "applyzca": "zca_filter",  # Alias for zca_filter
     "badepochs": "bad_epochs",
     "autoica": "auto_ica",
     "manualica": "manual_ica",
@@ -77,6 +78,7 @@ ANALYSIS_CHOICES: list[str] = [
     "manual_channel",
     "apply_hfc",
     "zca_filter",
+    "apply_zca",  # Alias for zca_filter
     "bad_epochs",
     "auto_ica",
     "manual_ica",
