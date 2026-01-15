@@ -42,6 +42,7 @@ ANALYSIS_CONFIG_FLAGS: dict[str, str] = {
     "manualica": "_manual_ica",
     "regressref": "_regress_ref",
     "applyhfc": "_do_HFC",
+    "zcafilter": "_do_ZCA",
 }
 
 # Analyses that require spatial_filter="ica" to be set

@@ -35,3 +35,13 @@ python $ROOT_DIR/src/custom/auto_coreg.py
 
 # revert to original subject formatting
 export SUBJECT=$old_sub
+
+
+
+## prep source space ----------------------------------------
+echo ""
+echo "======================= MNE: prep source space =============================================="
+echo ""
+mne_bids_pipeline --steps=source/make_bem_solution, source/setup_source_space --config=$CONFIG_PATH
+
+
