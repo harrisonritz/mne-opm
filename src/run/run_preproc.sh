@@ -30,13 +30,6 @@ echo ""
 
 
 echo ""
-echo "======================= OSL: bad segment =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
-
-
-
-echo ""
 echo "======================= OSL: bad channels =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
@@ -60,6 +53,13 @@ echo ""
 echo "======================= CUSTOM: Common Spatial Filter (ZCA) =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_zca --config=$CONFIG_PATH
+
+
+echo ""
+echo "======================= OSL: bad segment =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
+
 
 
 

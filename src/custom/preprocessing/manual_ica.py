@@ -165,7 +165,7 @@ class ManualICAAnalysis(BaseAnalysis):
         )
         ica = mne.preprocessing.read_ica(bp_ica.fpath)
         self.log(f"Loaded ICA solution with {ica.n_components_} components")
-        self.log(f"{len(ica.exclude)} currently excluded: {ica.exclude}")
+        self.log(f"Currently excluded ({len(ica.exclude)}): {ica.exclude}")
 
         return {self.cfg.task: raw, "ica": ica}
 
@@ -240,7 +240,7 @@ class ManualICAAnalysis(BaseAnalysis):
         ica.plot_sources(inst=raw, show_scrollbars=True, block=True)
 
         # Report final exclusions
-        self.log(f"Final excluded components: {ica.exclude}")
+        self.log(f"Final excluded components ({len(ica.exclude)}): {ica.exclude}")
 
         return ica
 
