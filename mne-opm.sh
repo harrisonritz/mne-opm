@@ -22,27 +22,27 @@ export PYTHON_GIL=1
 export PYTHON_JIT=1
 
 # Defaults
-PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
-EXPERIMENT="TSXpilot"
-ANALYSIS="trial"
-SUBJECT="009"
-SESSION="01"
-CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
-FREESURFER_HOME=/Applications/freesurfer/8.1.0
-FAIL_ON_FIRST_CRASH=1
+# PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
+# EXPERIMENT="TSXpilot"
+# ANALYSIS="trial"
+# SUBJECT="009"
+# SESSION="01"
+# CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
+# FREESURFER_HOME=/Applications/freesurfer/8.1.0
+# FAIL_ON_FIRST_CRASH=1
 
-DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"
-SUBJECTS_DIR="/Users/hr0283/Projects/TSX_OPM/data/$EXPERIMENT/freesurfer"
-T1W_PATH=$SUBJECTS_DIR/anat/sub-$SUBJECT/anat_ses-01_T1w_acq-0.8mm-MPR_t1w.nii.gz
-T2W_PATH=$SUBJECTS_DIR/anat/sub-$SUBJECT/anat_ses-01_T2w_acq-0.8mm-MPR_t2w.nii.gz
+# DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"
+# SUBJECTS_DIR="/Users/hr0283/Projects/TSX_OPM/data/$EXPERIMENT/freesurfer"
+# T1W_PATH=$SUBJECTS_DIR/anat/sub-$SUBJECT/anat_ses-01_T1w_acq-0.8mm-MPR_t1w.nii.gz
+# T2W_PATH=$SUBJECTS_DIR/anat/sub-$SUBJECT/anat_ses-01_T2w_acq-0.8mm-MPR_t2w.nii.gz
 
 
 # DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/___Export_Folder/opm_data/data"
 # SUBJECTS_DIR="/Users/hr0283/freesurfer/$EXPERIMENT"
 
-MAX_WORKERS=20
+# MAX_WORKERS=20
 
-usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--t1w <T1w image path>] [--fail-on-first-crash] [--help]"
+usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--subjects-dir <subjects directory>] [--t1w <T1w image path>] [--fail-on-first-crash] [--help]"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
             EXPERIMENT=$2
             shift 2
             ;;
-        -s|--sub|--subj|--subject)
+        -rrr|--sub|--subj|--subject)
             SUBJECT=$2
             shift 2
             ;;
@@ -72,11 +72,15 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --session)
-            ANALYSIS=$2
+            SESSION=$2
             shift 2
             ;;
         --fs)
             FREESURFER_HOME=$2
+            shift 2
+            ;;
+        --subjects-dir)
+            SUBJECTS_DIR=$2
             shift 2
             ;;
         --t1w)
