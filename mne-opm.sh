@@ -192,7 +192,9 @@ fi
 
 
 # run the analysis pipeline
-echo "\nStarting '${PIPELINE}' pipeline on experiment '${EXPERIMENT}' for subject '${SUBJECT}' [${MAX_WORKERS} workers]\n--------------\n"
+echo "------------------------------------------------------------"
+echo "Starting '${PIPELINE}' pipeline on experiment '${EXPERIMENT}' for subject '${SUBJECT}' [${MAX_WORKERS} workers]"
+echo "------------------------------------------------------------"
 source "$ROOT_DIR/src/run/run_$PIPELINE.sh"
 
 
