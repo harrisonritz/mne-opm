@@ -97,7 +97,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fail-on-first-crash)
             FAIL_ON_FIRST_CRASH=1
-            shift 2
+            shift 1
             ;;
         -h|--help)
             echo $usage
