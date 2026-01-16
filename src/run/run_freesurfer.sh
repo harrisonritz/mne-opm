@@ -16,10 +16,9 @@ old_sub=$SUBJECT
 export SUBJECT=${SUBJECT_NUM}_ses-${SESSION}
 export FS_ALLOW_DEEP=1
 
-echo ${FREESURFER_HOME}
+echo "fs home: ${FREESURFER_HOME}"
 source $FREESURFER_HOME/SetUpFreeSurfer.sh
-
-
+echo "freesurfer version: $(recon-all --version)"
 # ------------------------------
 
 
