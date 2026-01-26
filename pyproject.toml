@@ -1,9 +1,9 @@
 [project]
 name = "mne-opm"
 version = "0.1.0"
-description = "Add your description here"
+description = "OPM preprocessing and analysis tools built on MNE-Python and MNE-BIDS-PIPELINE"
 readme = "README.md"
-requires-python = "=3.13"
+requires-python = "~=3.13.0"
 dependencies = [
     "dcm2niix>=1.0.20250506",
     "ipykernel>=7.1.0",
