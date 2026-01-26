@@ -3,7 +3,7 @@
 
 # fail on first crash
 if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
-	set -eo pipefail
+	set -o pipefail # enable pipefail option
 	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
 	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
 fi
@@ -47,7 +47,7 @@ fi
 # Check if freesurfer has already been run
 if [ -d "$SUBJECTS_DIR/$SUBJECT/mri" ]; then
     echo "FreeSurfer has already been run for subject: $SUBJECT"
-    return
+    return 0
 fi
 
 # Check if T1W_PATH exists
