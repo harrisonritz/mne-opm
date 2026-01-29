@@ -3,10 +3,11 @@
 
 # fail on first crash
 if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
+    set +e pipefail # disable errexit to allow trap to catch errors
 	set -o pipefail # enable pipefail option
 	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
 	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
-fi
+fi 
 
 # set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
@@ -21,6 +22,8 @@ source $FREESURFER_HOME/SetUpFreeSurfer.sh
 echo "freesurfer version: $(recon-all --version)"
 # ------------------------------
 
+# MAX_WORKERS=1
+# echo "Using $MAX_WORKERS workers for freesurfer processing"
 
 ## RUN FREESURFER ------------------
 echo ""
