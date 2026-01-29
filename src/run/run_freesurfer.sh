@@ -22,7 +22,6 @@ echo "freesurfer version: $(recon-all --version)"
 # ------------------------------
 
 
-
 ## RUN FREESURFER ------------------
 echo ""
 echo "RUNNING FREESURFER --------------------------"
