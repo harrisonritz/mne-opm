@@ -93,13 +93,13 @@ plot_kwargs = dict(
 
 # use GUI for setting fiducials
 if not glob(os.path.join(SUBJECTS_DIR, SUBJECT, "bem", "*fiducials.fif")):
-    print("\n-------use gui")
+    print("\n------- Using GUI -------")
     try:
         coreg = mne.gui.coregistration(
             inst=fname_raw, subject=SUBJECT, subjects_dir=SUBJECTS_DIR, block=True
         )
     except Exception as e:
-        print(f"------ Error in GUI coregistration: {e}")
+        print(f"------ Error in GUI coregistration: {e} -------")
 
 coreg = mne.coreg.Coregistration(info, SUBJECT, SUBJECTS_DIR, fiducials="estimated")
 
