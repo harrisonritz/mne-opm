@@ -21,7 +21,7 @@ mne.viz.set_browser_backend("qt")
 # %% parameters
 HAIR_GROW = 5.0
 OMIT_DISTANCE = 2.5 / 1e3
-N_ROUNDS = 3
+N_ROUNDS = 2
 
 
 # %% get info
