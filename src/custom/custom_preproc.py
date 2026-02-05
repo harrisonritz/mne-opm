@@ -68,6 +68,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "badepochs": "bad_epochs",
     "autoica": "auto_ica",
     "manualica": "manual_ica",
+    "coreg": "coreg",
 }
 
 # Human-readable names for CLI choices (with underscores)
@@ -82,6 +83,7 @@ ANALYSIS_CHOICES: list[str] = [
     "bad_epochs",
     "auto_ica",
     "manual_ica",
+    "coreg",
 ]
 
 

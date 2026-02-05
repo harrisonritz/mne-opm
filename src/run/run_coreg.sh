@@ -12,6 +12,9 @@ fi
 # set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 
+# FreeSurfer requires SUBJECT in sub-XX_ses-XX format
+# MNE requires SUBJECT as just XX
+# Swap for coreg step, then restore
 old_sub=$SUBJECT
 export SUBJECT=${SUBJECT_NUM}_ses-${SESSION}
 
@@ -20,22 +23,20 @@ export SUBJECT=${SUBJECT_NUM}_ses-${SESSION}
 echo ""
 echo "RUNNING COREGISTRATION --------------------------"
 echo "ROOT_DIR: $ROOT_DIR"
-echo "EXPERIMENT: $EXPERIMENT"
 echo "SUBJECT: $SUBJECT"
-echo "SESSION: $SESSION"
-echo "RAW_DIR: $RAW_DIR"
-echo "BIDS_DIR: $BIDS_DIR"
-echo "SUBJECTS_DIR: $SUBJECTS_DIR"
+echo "CONFIG_PATH: $CONFIG_PATH"
 echo "--------------------------"
 echo ""
 
 
-python $ROOT_DIR/src/custom/auto_coreg.py
+# Run coregistration via custom preprocessing dispatcher
+python $ROOT_DIR/src/custom/custom_preproc.py \
+    --analysis=coreg \
+    --config=$CONFIG_PATH
 
 
-# revert to original subject formatting
+# Restore original subject formatting for MNE
 export SUBJECT=$old_sub
-
 
 
 ## prep source space ----------------------------------------

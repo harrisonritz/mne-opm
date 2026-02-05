@@ -48,6 +48,7 @@ from . import (
     bad_epochs,
     auto_ica,
     manual_ica,
+    coreg,
 )
 
 # Import shared utilities
@@ -67,6 +68,7 @@ __all__ = [
     "bad_epochs",
     "auto_ica",
     "manual_ica",
+    "coreg",
     # Shared utilities
     "BaseAnalysis",
     "SEGMENT_LEN_SEC",

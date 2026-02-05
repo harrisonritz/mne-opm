@@ -1,4 +1,33 @@
 #  RUN COREG
+#
+# DEPRECATED: This script is deprecated. Use the new preprocessing module instead:
+#     python src/custom/custom_preproc.py --analysis=coreg --config=/path/to/config.py
+#
+# This file will be removed in a future release.
+
+raise DeprecationWarning(
+    "\n\n"
+    "=" * 70 + "\n"
+    "DEPRECATED: auto_coreg.py is deprecated and no longer supported.\n"
+    "\n"
+    "Please use the new preprocessing module instead:\n"
+    "    python src/custom/custom_preproc.py --analysis=coreg --config=/path/to/config.py\n"
+    "\n"
+    "The new module provides:\n"
+    "  - Consistent interface with other preprocessing steps\n"
+    "  - Configuration via config file instead of environment variables\n"
+    "  - Better error handling and logging\n"
+    "\n"
+    "Required config settings:\n"
+    "  _coreg = True  # Enable coregistration\n"
+    "  subjects_dir = '/path/to/freesurfer/subjects'\n"
+    "\n"
+    "Optional config settings:\n"
+    "  _coreg_hair_grow = 5.0       # Hair growth offset (mm)\n"
+    "  _coreg_omit_distance = 0.0025  # HSP omit distance (m)\n"
+    "  _coreg_n_rounds = 2          # Number of ICP rounds\n"
+    "=" * 70 + "\n"
+)
 
 
 # %% imports
@@ -108,7 +137,7 @@ coreg.set_scale_mode("Uniform")
 coreg.fit_fiducials(verbose=True)
 
 # fit head shape points
-coreg.set_scale_mode("3-axis")
+coreg.set_scale_mode("Uniform")
 coreg.set_grow_hair(HAIR_GROW)
 
 
