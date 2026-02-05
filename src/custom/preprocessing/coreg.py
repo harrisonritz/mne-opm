@@ -158,9 +158,10 @@ class CoregAnalysis(BaseAnalysis):
             session = parts[1] if len(parts) > 1 else session_raw
             self.log(f"Parsed FreeSurfer format: {fs_subject} -> subject={subject}, session={session}")
         else:
-            # MNE format: just the subject number
-            subject = str(subject_raw)
-            session = str(session_raw)
+            # MNE format: just the subject number - ensure zero-padding to 3 digits
+            subject = str(subject_raw).lstrip("0") or "0"  # normalize first
+            subject = subject.zfill(3)  # pad to 3 digits (e.g., "8" -> "008")
+            session = str(session_raw).zfill(2)  # pad session to 2 digits
             fs_subject = f"sub-{subject}_ses-{session}"
 
         # Find MEG file using BIDS subject format (just the number)

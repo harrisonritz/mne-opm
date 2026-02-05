@@ -12,11 +12,11 @@ fi
 # set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 
-# FreeSurfer requires SUBJECT in sub-XX_ses-XX format
-# MNE requires SUBJECT as just XX
-# Swap for coreg step, then restore
-old_sub=$SUBJECT
-export SUBJECT=${SUBJECT_NUM}_ses-${SESSION}
+# SUBJECT stays in MNE format (just the number, e.g., "008") for config loading
+# coreg.py constructs the FreeSurfer subject name (sub-XX_ses-YY) internally
+# Zero-pad subject to 3 digits for consistency
+SUBJECT_PADDED=$(printf "%03d" $((10#${SUBJECT})))
+export SUBJECT=$SUBJECT_PADDED
 
 
 ## COREGISTRATION ----------------------------------------
@@ -33,10 +33,6 @@ echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py \
     --analysis=coreg \
     --config=$CONFIG_PATH
-
-
-# Restore original subject formatting for MNE
-export SUBJECT=$old_sub
 
 
 ## prep source space ----------------------------------------

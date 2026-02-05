@@ -16,28 +16,10 @@ echo ""
 
 # init
 source .venv/bin/activate   # activate virtual environment
-export MPLBACKEND=qt5agg
 export MNE_BROWSER_BACKEND=qt
 export PYTHON_GIL=1
 export PYTHON_JIT=1
 
-# Defaults
-# PIPELINE="func" # default pipeline; e.g., bids, coreg, freesurfer, preproc, sensor, source
-# EXPERIMENT="TSXpilot"
-# ANALYSIS="trial"
-# SUBJECT="009"
-# SESSION="01"
-# CONFIG_BASE="/Users/hr0283/Projects/TSX_OPM/analysis/config"
-# FREESURFER_HOME=/Applications/freesurfer/8.1.0
-# FAIL_ON_FIRST_CRASH=1
-
-# DATA_BASE="/Users/hr0283/Projects/TSX_OPM/data"
-# SUBJECTS_DIR="/Users/hr0283/Projects/TSX_OPM/data/$EXPERIMENT/freesurfer"
-
-# DATA_BASE="/Users/hr0283/Brown Dropbox/Harrison Ritz/___Export_Folder/opm_data/data"
-# SUBJECTS_DIR="/Users/hr0283/freesurfer/$EXPERIMENT"
-
-# MAX_WORKERS=20
 
 usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--subjects-dir <subjects directory>] [--t1w <T1w image path>] [--fail-on-first-crash] [--help]"
 
