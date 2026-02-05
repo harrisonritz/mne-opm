@@ -415,7 +415,12 @@ class AutoICAAnalysis(BaseAnalysis):
         # Print raw metric statistics
         self.log("=== Diagnostic Metrics Summary ===")
         for name, vals, side in metrics_list:
-            direction = "high=bad" if side == 1 else "low=bad"
+            if side == 0:
+                direction = "both tails"
+            elif side == 1:
+                direction = "high=bad"
+            else:
+                direction = "low=bad"
             self.log(
                 f"  {name}: mean={np.mean(vals):.3f}, std={np.std(vals):.3f}, "
                 f"min={np.min(vals):.3f}, max={np.max(vals):.3f} ({direction})"
@@ -617,6 +622,13 @@ class AutoICAAnalysis(BaseAnalysis):
         metrics : list
             List of (metric_name, transformed_values, outlier_side) tuples.
             outlier_side: 1 = high values are bad, -1 = low values are bad.
+
+        Notes
+        -----
+        GESD assumes normality. Transforms are chosen to improve normality:
+        - Log transforms for positive-valued, right-skewed metrics
+        - Raw values when already approximately normal
+        - Signed sqrt for kurtosis to preserve sign while reducing skew
         """
         metrics = []
 
@@ -624,19 +636,24 @@ class AutoICAAnalysis(BaseAnalysis):
         log_hf = np.log(diagnostics["hf_ratio"] + 1e-10)
         metrics.append(("log_hf_ratio", log_hf, 1))
 
-        # 2. |Temporal kurtosis|: high = transient artifact
-        abs_kurt = np.abs(diagnostics["source_kurtosis"])
-        metrics.append(("abs_temporal_kurtosis", abs_kurt, 1))
+        # 2. Temporal kurtosis: high = non-Gaussian artifact
+        source_kurt = diagnostics["source_kurtosis"]
+        signed_sqrt_kurt = np.sign(source_kurt) * np.sqrt(np.abs(source_kurt)  + 1e-10)
+        metrics.append(("temporal_kurtosis_sqrt", signed_sqrt_kurt, 1))
 
         # 3. Autocorrelation: low = white noise artifact
-        #    Neural signals have high autocorr; noise has low
-        metrics.append(("autocorr_1lag", diagnostics["autocorr_1lag"], -1))
+        autocorr = diagnostics["autocorr_1lag"]
+        autocorr_clipped = np.clip(autocorr, -0.999, 0.999)
+        fisher_z = np.arctanh(autocorr_clipped)  # Fisher z-transform
+        metrics.append(("autocorr_fisher_z", fisher_z, -1))
 
         # 4. Spectral slope: high (less negative) = flat spectrum = muscle/noise
         metrics.append(("spectral_slope", diagnostics["spectral_slope"], 1))
 
         # 5. Spatial kurtosis: high = focal/single-channel artifact
-        metrics.append(("abs_spatial_kurtosis", diagnostics["spatial_kurtosis"], 1))
+        spatial_kurt = diagnostics["spatial_kurtosis"]
+        signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(np.abs(spatial_kurt) + 1e-10)
+        metrics.append(("spatial_kurtosis_sqrt", signed_sqrt_spatial, 1))
 
         return metrics
 
