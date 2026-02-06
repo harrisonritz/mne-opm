@@ -53,11 +53,11 @@ except Exception:
     _HAVE_QT_BROWSER: bool = False
 
 # Try to set Qt as the browser backend
-try:
-    mne.viz.set_browser_backend("qt")
-except Exception:
-    # Fallback silently if Qt is not available
-    pass
+# try:
+#     mne.viz.set_browser_backend("qt")
+# except Exception:
+#     # Fallback silently if Qt is not available
+#     pass
 
 
 def have_qt_browser() -> bool:

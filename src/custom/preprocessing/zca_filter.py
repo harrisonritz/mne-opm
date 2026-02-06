@@ -459,11 +459,11 @@ class ZCAFilterAnalysis(BaseAnalysis):
         fwd_sing = inv["sing"]
 
         # Step 4: Compute external SSS basis
-        self.log(f"Computing external SSS basis (order={ext_order * 2})...")
+        self.log(f"Computing external SSS basis (order={ext_order})...")
         sss_info = pick_info(
             info, mne.pick_types(info, meg=True, eeg=False, exclude="bads")
         )
-        exp = dict(origin=(0.0, 0.0, 0.0), int_order=0, ext_order=ext_order * 2)
+        exp = dict(origin=(0.0, 0.0, 0.0), int_order=0, ext_order=ext_order)
         coils = _prep_mf_coils(sss_info, ignore_ref=True, accuracy="accurate")
 
         ext_basis = _sss_basis(exp, coils)

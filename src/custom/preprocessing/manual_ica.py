@@ -63,7 +63,7 @@ from mne_bids import BIDSPath, find_matching_paths
 from ._base import BaseAnalysis
 from ._io import save_ica_bids
 
-mne.viz.set_browser_backend("qt")
+# mne.viz.set_browser_backend("qt")
 
 
 
