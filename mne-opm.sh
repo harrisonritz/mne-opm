@@ -16,7 +16,6 @@ echo ""
 
 # init
 source .venv/bin/activate   # activate virtual environment
-export MNE_BROWSER_BACKEND=qt
 export PYTHON_GIL=1
 export PYTHON_JIT=1
 
