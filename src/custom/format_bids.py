@@ -553,11 +553,56 @@ def bids_conversion(cfg):
         raw_events, raw_id = mne.events_from_annotations(raw, regexp="trial")
         raw_shape = raw_events.shape[0]
 
-        raw_onset = 0 if raw_shape < eye_shape else raw_shape - eye_shape
-        raw_times = (raw_events[raw_onset:, 0] / raw.info["sfreq"]) - raw.first_time
+        # Determine event matching strategy based on recording lengths.
+        # When the eye-tracker is shorter (e.g. battery died), its events
+        # correspond to the FIRST part of the MEG session, so we must align
+        # from the beginning. The original logic aligned from the end, which
+        # is correct when one device simply started recording earlier.
+        eye_duration = eye.times[-1] - eye.times[0]
+        raw_duration = raw.times[-1] - raw.times[0]
+        eye_shorter = eye_duration < raw_duration
 
-        eye_onset = 0 if eye_shape < raw_shape else eye_shape - raw_shape
-        eye_times = (eye_events[eye_onset:, 0] / eye.info["sfreq"]) - eye.first_time
+        if eye_shorter:
+            # Eye-tracker died early: match from the beginning
+            n_match = min(eye_shape, raw_shape)
+            raw_times = (raw_events[:n_match, 0] / raw.info["sfreq"]) - raw.first_time
+            eye_times = (eye_events[:n_match, 0] / eye.info["sfreq"]) - eye.first_time
+            print(
+                f"\nEye-tracker shorter than MEG — aligning from start "
+                f"(matching first {n_match} events)."
+            )
+        else:
+            # Normal case: align from end (one device may have started first)
+            raw_onset = 0 if raw_shape < eye_shape else raw_shape - eye_shape
+            raw_times = (raw_events[raw_onset:, 0] / raw.info["sfreq"]) - raw.first_time
+
+            eye_onset = 0 if eye_shape < raw_shape else eye_shape - raw_shape
+            eye_times = (eye_events[eye_onset:, 0] / eye.info["sfreq"]) - eye.first_time
+
+        # --- Pad eye data with zeros if shorter than raw ---
+        # This prevents realign_raw from cropping the MEG data when the
+        # eye-tracker recording is shorter (e.g. battery died mid-session).
+        # We use zeros (not NaN) to avoid issues with MNE resampling/processing.
+        eye_was_padded = False
+        eye_original_duration = eye_duration  # remember original duration (in seconds)
+
+        if eye_shorter:
+            eye_was_padded = True
+            # Rough estimate: how many seconds of padding needed in eye's time base.
+            # Add 100% safety margin so realign_raw never crops raw.
+            pad_duration = (raw_duration - eye_duration) * 2.0 + 10.0
+            pad_n_samples = int(np.ceil(pad_duration * eye.info["sfreq"]))
+            print(
+                f"\n*** Eye-tracker shorter than MEG by {raw_duration - eye_duration:.1f}s. "
+                f"Padding eye data with {pad_duration:.1f}s ({pad_n_samples} samples) of zeros. ***\n"
+            )
+
+            # Create zero padding array for all eye channels
+            pad_data = np.zeros((eye._data.shape[0], pad_n_samples))
+            eye._data = np.concatenate([eye._data, pad_data], axis=1)
+
+            # Update the Raw object's internal length tracking
+            eye._last_samps = np.array([eye._first_samps[0] + eye._data.shape[1] - 1])
 
         # realign the raw data --------
         print("\nRealigning eye-tracking data to OPM...")
@@ -591,6 +636,43 @@ def bids_conversion(cfg):
         eye = mne.io.RawArray(eye._data, eye.info, first_samp=0, copy="both")
         eye.set_annotations(eye_ann)
 
+        # --- Ensure eye and raw have the same number of samples ---
+        # After realign_raw, there may be a small length mismatch. Pad eye
+        # with zeros or trim excess padding so it exactly matches raw.
+        n_raw = raw._data.shape[1]
+        n_eye = eye._data.shape[1]
+        if n_eye < n_raw:
+            pad_n = n_raw - n_eye
+            print(f"Padding eye with {pad_n} zero samples to match raw length.")
+            pad_data = np.zeros((eye._data.shape[0], pad_n))
+            eye._data = np.concatenate([eye._data, pad_data], axis=1)
+            eye._last_samps = np.array([eye._first_samps[0] + eye._data.shape[1] - 1])
+        elif n_eye > n_raw:
+            print(f"Trimming {n_eye - n_raw} samples from eye to match raw length.")
+            eye._data = eye._data[:, :n_raw]
+            eye._last_samps = np.array([eye._first_samps[0] + n_raw - 1])
+
+        # --- Add no_eyetrack annotation for the zero-padded region ---
+        # If eye was padded, mark the region after the original eye data ended.
+        # We use the original eye duration (pre-padding) to compute the boundary.
+        if eye_was_padded:
+            # The eye data was aligned to raw via realign_raw, so after
+            # first_samp reset the valid eye data covers [0, eye_original_duration].
+            # Everything after that is zero-padded.
+            no_eye_onset = eye_original_duration
+            no_eye_duration = raw.times[-1] - no_eye_onset
+            if no_eye_duration > 0:
+                raw.annotations.append(
+                    onset=no_eye_onset,
+                    duration=no_eye_duration,
+                    description="no_eyetrack",
+                )
+                print(
+                    f"Added no_eyetrack annotation from {no_eye_onset:.1f}s to "
+                    f"{no_eye_onset + no_eye_duration:.1f}s "
+                    f"({no_eye_duration:.1f}s of zero-padded eye data)."
+                )
+
         # add eye to raw ------------------------------------
         raw.add_channels([eye], force_update_info=True)
         # print_info(raw,eye,530)
@@ -618,6 +700,8 @@ def bids_conversion(cfg):
             )
 
         print(
+            "\nupdated raw ----------------------\n",
+            raw,
             "\nupdated info ----------------------\n",
             raw.info,
             "\n----------------------\n",
