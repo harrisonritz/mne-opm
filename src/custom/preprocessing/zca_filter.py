@@ -479,6 +479,9 @@ class ZCAFilterAnalysis(BaseAnalysis):
         signal_cov_mat = signal_trans @ data_cov["data"] @ signal_trans.T
         noise_cov_mat = noise_trans @ data_cov["data"] @ noise_trans.T
 
+        # signal_cov_mat = signal_trans @ signal_trans.T
+        # noise_cov_mat = noise_trans  @ noise_trans.T
+
         # Symmetrize for numerical stability
         signal_cov_mat = (signal_cov_mat + signal_cov_mat.T) / 2
         signal_cov_mat = (
@@ -497,21 +500,24 @@ class ZCAFilterAnalysis(BaseAnalysis):
         denom = signal_cov_mat + noise_cov_mat
         denom = (denom + denom.T) / 2
 
-        eigenvalues, eigenvectors = eigh(signal_cov_mat, denom)
+        eigenvalues_noise, eigenvectors_noise = eigh(noise_cov_mat, denom)
 
-        # Step 7: Select signal components based on threshold
-        self.log(f"Selecting components (threshold={threshold})...")
+        # Select noise components (high eigenvalues = most noise-like)
         if threshold <= 1.0:
-            mask = eigenvalues >= threshold
-            U_signal = eigenvectors[:, mask]
+            # threshold on signal → noise eigenvalue cutoff is (1 - threshold)
+            noise_mask = eigenvalues_noise > (1.0 - threshold)
+            U_noise = eigenvectors_noise[:, noise_mask]
+            U_signal = eigenvectors_noise[:, ~noise_mask]
         else:
-            n_components = int(threshold)
-            idx = np.argsort(eigenvalues)[::-1][:n_components]
-            U_signal = eigenvectors[:, idx]
+            n_signal = int(threshold)
+            n_noise = eigenvectors_noise.shape[1] - n_signal
+            idx = np.argsort(eigenvalues_noise)[::-1][:n_noise]
+            U_noise = eigenvectors_noise[:, idx]
+            U_signal = eigenvectors_noise[:, ~np.isin(np.arange(eigenvectors_noise.shape[1]), idx)]
 
         n_channels = U_signal.shape[0]
         n_signal = U_signal.shape[1]
-        n_noise = n_channels - n_signal
+        n_noise =  U_noise.shape[1]
 
         self.log(f"Signal subspace: {n_signal} dimensions")
         self.log(f"Noise subspace: {n_noise} dimensions")
@@ -521,7 +527,6 @@ class ZCAFilterAnalysis(BaseAnalysis):
             return raw, noise, []
 
         # Step 8: Compute noise subspace (orthogonal complement)
-        U_noise = null_space(U_signal.T)
         self.log(f"Created {U_noise.shape[1]} noise projectors")
 
         # Step 9: Create SSP projectors

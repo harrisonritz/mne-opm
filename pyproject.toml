@@ -22,8 +22,8 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-mne-bids = { git = "https://github.com/harrisonritz/mne-bids.git", rev = "mne-opm" }
-mne-bids-pipeline = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git", rev = "mne-opm" }
+mne-bids = { git = "https://github.com/harrisonritz/mne-bids.git", branch = "mne-opm" }
+mne-bids-pipeline = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git", branch = "mne-opm" }
 osl-ephys = { git = "https://github.com/harrisonritz/osl-ephys.git" }
 mne = { git = "https://github.com/harrisonritz/mne-python.git", branch = "mne-opm" }
 
