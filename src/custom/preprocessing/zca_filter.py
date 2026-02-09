@@ -476,11 +476,11 @@ class ZCAFilterAnalysis(BaseAnalysis):
 
         # Step 6: Compute GED
         self.log("Computing generalized eigendecomposition...")
-        signal_cov_mat = signal_trans @ data_cov["data"] @ signal_trans.T
-        noise_cov_mat = noise_trans @ data_cov["data"] @ noise_trans.T
+        # signal_cov_mat = signal_trans @ data_cov["data"] @ signal_trans.T
+        # noise_cov_mat = noise_trans @ data_cov["data"] @ noise_trans.T
 
-        # signal_cov_mat = signal_trans @ signal_trans.T
-        # noise_cov_mat = noise_trans  @ noise_trans.T
+        signal_cov_mat = signal_trans @ signal_trans.T
+        noise_cov_mat = noise_trans  @ noise_trans.T
 
         # Symmetrize for numerical stability
         signal_cov_mat = (signal_cov_mat + signal_cov_mat.T) / 2

@@ -579,34 +579,72 @@ def bids_conversion(cfg):
             eye_onset = 0 if eye_shape < raw_shape else eye_shape - raw_shape
             eye_times = (eye_events[eye_onset:, 0] / eye.info["sfreq"]) - eye.first_time
 
-        # --- Pad eye data with zeros if shorter than raw ---
-        # This prevents realign_raw from cropping the MEG data when the
-        # eye-tracker recording is shorter (e.g. battery died mid-session).
-        # We use zeros (not NaN) to avoid issues with MNE resampling/processing.
-        eye_was_padded = False
-        eye_original_duration = eye_duration  # remember original duration (in seconds)
+        # ---- Bilateral zero-padding of eye data -------------------------
+        # ALWAYS pad eye with a large amount of zeros on BOTH sides.
+        # This guarantees that realign_raw crops eye (never raw), regardless
+        # of clock drift or start-time offsets.  There is zero cost to
+        # over-padding because realign_raw trims the excess automatically.
+        eye_original_duration = eye_duration  # remember original length (seconds)
 
-        if eye_shorter:
-            eye_was_padded = True
-            # Rough estimate: how many seconds of padding needed in eye's time base.
-            # Add 100% safety margin so realign_raw never crops raw.
-            pad_duration = (raw_duration - eye_duration) * 2.0 + 10.0
-            pad_n_samples = int(np.ceil(pad_duration * eye.info["sfreq"]))
-            print(
-                f"\n*** Eye-tracker shorter than MEG by {raw_duration - eye_duration:.1f}s. "
-                f"Padding eye data with {pad_duration:.1f}s ({pad_n_samples} samples) of zeros. ***\n"
-            )
+        # Compute polynomial fit BEFORE padding so we can later determine
+        # where the real eye data maps in raw time (for no_eyetrack annotations).
+        # Fit: t_raw = zero_ord_est + first_ord_est * t_eye
+        from numpy.polynomial.polynomial import Polynomial
+        _poly = Polynomial.fit(x=eye_times, y=raw_times, deg=1)
+        _coefs = _poly.convert(domain=(-1, 1)).coef
+        zero_ord_est, first_ord_est = float(_coefs[0]), float(_coefs[1])
 
-            # Create zero padding array for all eye channels
-            pad_data = np.zeros((eye._data.shape[0], pad_n_samples))
-            eye._data = np.concatenate([eye._data, pad_data], axis=1)
+        print(f"\n--- Eye-tracking alignment diagnostics ---")
+        print(f"  First matched event: raw_times[0]={raw_times[0]:.3f}s, eye_times[0]={eye_times[0]:.3f}s")
+        print(f"  Last matched event:  raw_times[-1]={raw_times[-1]:.3f}s, eye_times[-1]={eye_times[-1]:.3f}s")
+        print(f"  Durations: raw={raw_duration:.1f}s, eye={eye_duration:.1f}s")
+        print(f"  Event counts: raw={raw_shape}, eye={eye_shape}")
+        print(f"  Pre-pad polynomial: zero_ord={zero_ord_est:.3f}s, first_ord={first_ord_est:.6f}")
 
-            # Update the Raw object's internal length tracking
-            eye._last_samps = np.array([eye._first_samps[0] + eye._data.shape[1] - 1])
+        PAD_SECONDS = np.abs(raw_duration - eye_duration) + 60.0  # 1 minute of zeros on each side
+        pad_n = int(np.ceil(PAD_SECONDS * eye.info["sfreq"]))
+
+        # --- Start padding ---
+        pad_start = np.zeros((eye._data.shape[0], pad_n))
+        eye._data = np.concatenate([pad_start, eye._data], axis=1)
+        eye._first_samps = np.array([eye._first_samps[0] - pad_n])
+        eye._last_samps = np.array([eye._first_samps[0] + eye._data.shape[1] - 1])
+        eye_times += PAD_SECONDS  # events shifted right by pad amount
+
+        # --- End padding ---
+        pad_end = np.zeros((eye._data.shape[0], pad_n))
+        eye._data = np.concatenate([eye._data, pad_end], axis=1)
+        eye._last_samps = np.array([eye._first_samps[0] + eye._data.shape[1] - 1])
+
+        padded_eye_dur = eye._data.shape[1] / eye.info["sfreq"]
+        post_pad_zero_ord = zero_ord_est - first_ord_est * PAD_SECONDS
+        print(
+            f"\n*** Bilateral eye padding applied ***\n"
+            f"  Original eye duration: {eye_original_duration:.1f}s\n"
+            f"  Padded eye duration:   {padded_eye_dur:.1f}s  "
+            f"(+{PAD_SECONDS:.0f}s start, +{PAD_SECONDS:.0f}s end)\n"
+            f"  Raw duration:          {raw_duration:.1f}s\n"
+            f"  Pre-pad zero_ord:      {zero_ord_est:.3f}s → "
+            f"post-pad ≈ {post_pad_zero_ord:.1f}s "
+            f"(negative → eye gets cropped, not raw)"
+        )
+
+        # Count trial events before alignment for verification
+        n_trial_before = len(mne.events_from_annotations(raw, regexp="trial")[0])
 
         # realign the raw data --------
         print("\nRealigning eye-tracking data to OPM...")
         mne.preprocessing.realign_raw(raw, eye, raw_times, eye_times, verbose=True)
+
+        # Verify no trial events were lost
+        n_trial_after = len(mne.events_from_annotations(raw, regexp="trial")[0])
+        if n_trial_after < n_trial_before:
+            print(
+                f"\n*** WARNING: realign_raw removed {n_trial_before - n_trial_after} trial events "
+                f"({n_trial_before} -> {n_trial_after}). This may cause metadata mismatches! ***\n"
+            )
+        else:
+            print(f"  Trial events preserved: {n_trial_before} -> {n_trial_after}")
 
         def print_info(raw, eye, idx):
             print(f"\n\n[{idx}]******** raw info *************")
@@ -652,26 +690,34 @@ def bids_conversion(cfg):
             eye._data = eye._data[:, :n_raw]
             eye._last_samps = np.array([eye._first_samps[0] + n_raw - 1])
 
-        # --- Add no_eyetrack annotation for the zero-padded region ---
-        # If eye was padded, mark the region after the original eye data ended.
-        # We use the original eye duration (pre-padding) to compute the boundary.
-        if eye_was_padded:
-            # The eye data was aligned to raw via realign_raw, so after
-            # first_samp reset the valid eye data covers [0, eye_original_duration].
-            # Everything after that is zero-padded.
-            no_eye_onset = eye_original_duration
-            no_eye_duration = raw.times[-1] - no_eye_onset
-            if no_eye_duration > 0:
-                raw.annotations.append(
-                    onset=no_eye_onset,
-                    duration=no_eye_duration,
-                    description="no_eyetrack",
-                )
-                print(
-                    f"Added no_eyetrack annotation from {no_eye_onset:.1f}s to "
-                    f"{no_eye_onset + no_eye_duration:.1f}s "
-                    f"({no_eye_duration:.1f}s of zero-padded eye data)."
-                )
+        # --- Add no_eyetrack annotations for zero-padded regions ---
+        # Use the pre-padding polynomial (t_raw = zero_ord_est + first_ord_est * t_eye)
+        # to map the original eye recording boundaries into raw time.
+        # At t_eye=0 (start of real eye):  t_raw = zero_ord_est
+        # At t_eye=eye_dur (end of real eye): t_raw = zero_ord_est + first_ord_est * eye_dur
+        eye_real_start_raw = max(0.0, zero_ord_est)
+        eye_real_end_raw = min(raw.times[-1], zero_ord_est + first_ord_est * eye_original_duration)
+
+        print(f"\n--- No-eyetrack annotation boundaries ---")
+        print(f"  Real eye data covers {eye_real_start_raw:.1f}s to {eye_real_end_raw:.1f}s in raw time")
+        print(f"  Raw duration: {raw.times[-1]:.1f}s")
+
+        if eye_real_start_raw > 1.0:
+            raw.annotations.append(
+                onset=0.0,
+                duration=eye_real_start_raw,
+                description="no_eyetrack",
+            )
+            print(f"  Added no_eyetrack: 0.0s to {eye_real_start_raw:.1f}s (start)")
+
+        if eye_real_end_raw < raw.times[-1] - 1.0:
+            no_eye_dur = raw.times[-1] - eye_real_end_raw
+            raw.annotations.append(
+                onset=eye_real_end_raw,
+                duration=no_eye_dur,
+                description="no_eyetrack",
+            )
+            print(f"  Added no_eyetrack: {eye_real_end_raw:.1f}s to {raw.times[-1]:.1f}s (end)")
 
         # add eye to raw ------------------------------------
         raw.add_channels([eye], force_update_info=True)

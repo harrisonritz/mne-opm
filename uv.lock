@@ -1311,8 +1311,8 @@ full = [
 
 [[package]]
 name = "mne-bids-pipeline"
-version = "0.1.0.dev969+g25d538e1a"
-source = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm#25d538e1aa21dd6f3217bad18dd4ceb5a1fd8a0e" }
+version = "0.1.0.dev970+gce4bd14af"
+source = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm#ce4bd14af7055fe32ad4d9242c2c916ce8795f38" }
 dependencies = [
     { name = "annotated-types" },
     { name = "autoreject" },
