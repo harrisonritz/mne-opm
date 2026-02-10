@@ -576,7 +576,8 @@ class AutoICAAnalysis(BaseAnalysis):
         source_deriv_vars = np.var(np.diff(sources, axis=1), axis=1)
         sensor_deriv_var = topo_norms_sq * source_deriv_vars
 
-        hf_ratio = sensor_deriv_var / (sensor_var + 1e-20)
+        # hf_ratio = sensor_deriv_var / (sensor_var + 1e-20)
+        hf_ratio = np.sqrt(sensor_var + 1e-20)
 
         # Temporal kurtosis
         source_kurt = kurtosis(sources, axis=1, fisher=True)
