@@ -151,7 +151,12 @@ def save_ica_bids(
         mask = df["component"].astype(str) == str(comp)
         if mask.any():
             df.loc[mask, "status"] = "bad"
-            df.loc[mask, "status_description"] = "manual"
+            try:
+                df.loc[mask, "status_description"] = "manual"
+            except Exception as e:
+                print("Exception: ", e)
+                print(f"Warning: 'status_description' column not found in {tsv_path.fpath}. Skipping description update.")
+                print(f"masked df: {df.loc[mask]}")
     df.to_csv(tsv_path.fpath, sep="\t", index=False)
 
     # Save ICA object
