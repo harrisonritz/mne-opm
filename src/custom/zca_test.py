@@ -1,7 +1,14 @@
 # %% ZCA test
 
+import sys
+from pathlib import Path
+
+_SRC_DIR = str(Path(__file__).resolve().parent.parent)
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 import mne
-from preprocessing._config import load_config
+from custom.preprocessing._config import load_config
 from mne_bids import BIDSPath, get_head_mri_trans
 from mne.preprocessing.maxwell import _prep_mf_coils, _sss_basis
 from mne._fiff.pick import _picks_to_idx, pick_info

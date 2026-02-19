@@ -1,53 +1,22 @@
 """Tests for custom_preproc.py — CLI dispatcher and analysis registry.
 
-custom_preproc.py uses CWD-relative imports (``from preprocessing._config ...``)
-so we cannot directly import it from the test runner.  Instead, we test:
-  1. The registry data and module lookup by importing the module from disk
-  2. The normalize_analysis_key function (via _config, which is importable)
-  3. That every registered module is actually importable from preprocessing.*
+Now that custom_preproc.py uses absolute imports (``custom.preprocessing.*``),
+we can import it directly as a library module.
 """
 
 from __future__ import annotations
 
 import importlib
-import sys
+import inspect
 
 import pytest
 
+from custom.custom_preproc import (
+    ANALYSIS_CHOICES,
+    ANALYSIS_REGISTRY,
+    import_analysis_module,
+)
 from custom.preprocessing._config import normalize_analysis_key
-
-
-# ---------------------------------------------------------------------------
-# Local copy of the registry (mirrors custom_preproc.py)
-# ---------------------------------------------------------------------------
-
-ANALYSIS_REGISTRY = {
-    "regressref": "regress_ref",
-    "badsegments": "bad_segments",
-    "badchannels": "bad_channels",
-    "manualchannel": "manual_channel",
-    "applyhfc": "apply_hfc",
-    "zcafilter": "zca_filter",
-    "applyzca": "zca_filter",
-    "badepochs": "bad_epochs",
-    "autoica": "auto_ica",
-    "manualica": "manual_ica",
-    "coreg": "coreg",
-}
-
-ANALYSIS_CHOICES = [
-    "regress_ref",
-    "bad_segments",
-    "bad_channels",
-    "manual_channel",
-    "apply_hfc",
-    "zca_filter",
-    "apply_zca",
-    "bad_epochs",
-    "auto_ica",
-    "manual_ica",
-    "coreg",
-]
 
 
 # ---------------------------------------------------------------------------
@@ -97,22 +66,47 @@ class TestAnalysisRegistry:
 
 
 # ---------------------------------------------------------------------------
-# Dynamic module import
+# import_analysis_module
+# ---------------------------------------------------------------------------
+
+class TestImportAnalysisModule:
+    """Tests for the import_analysis_module dispatcher."""
+
+    def test_unknown_key_raises_value_error(self):
+        with pytest.raises(ValueError, match="Unknown analysis"):
+            import_analysis_module("nonexistent_key")
+
+    def test_import_returns_callable(self):
+        for key in ["badsegments", "badchannels", "regressref", "applyhfc"]:
+            run_func = import_analysis_module(key)
+            assert callable(run_func), f"run() for {key} should be callable"
+
+    def test_imported_run_has_cfg_param(self):
+        run_func = import_analysis_module("badsegments")
+        sig = inspect.signature(run_func)
+        assert "cfg" in sig.parameters
+
+    @pytest.mark.parametrize("key", list(ANALYSIS_REGISTRY.keys()))
+    def test_all_registered_modules_importable(self, key):
+        """Every module in the registry should be importable."""
+        run_func = import_analysis_module(key)
+        assert callable(run_func)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic module import (direct)
 # ---------------------------------------------------------------------------
 
 class TestDynamicModuleImport:
-    """Test that every registered analysis module is importable and has run()."""
+    """Test that every registered analysis module is importable via importlib."""
 
     @pytest.mark.parametrize(
         "module_name",
         sorted(set(ANALYSIS_REGISTRY.values())),
     )
     def test_module_importable(self, module_name):
-        """Each module in the registry should be importable from preprocessing."""
         mod = importlib.import_module(f"custom.preprocessing.{module_name}")
-        assert hasattr(mod, "run"), (
-            f"Module custom.preprocessing.{module_name} has no run() function"
-        )
+        assert hasattr(mod, "run")
 
     @pytest.mark.parametrize(
         "module_name",
@@ -127,14 +121,9 @@ class TestDynamicModuleImport:
         sorted(set(ANALYSIS_REGISTRY.values())),
     )
     def test_run_accepts_cfg_param(self, module_name):
-        import inspect
-
         mod = importlib.import_module(f"custom.preprocessing.{module_name}")
         sig = inspect.signature(mod.run)
-        assert "cfg" in sig.parameters, (
-            f"run() in custom.preprocessing.{module_name} "
-            f"does not have a 'cfg' parameter"
-        )
+        assert "cfg" in sig.parameters
 
     def test_unknown_module_fails(self):
         with pytest.raises(ModuleNotFoundError):

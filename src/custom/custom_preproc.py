@@ -46,9 +46,16 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
+from pathlib import Path
 from typing import Callable
 
-from preprocessing._config import load_config, normalize_analysis_key
+# Ensure the parent of this file's directory (i.e. ``src/``) is on sys.path
+# so that both ``custom.preprocessing.*`` and ``preprocessing.*`` resolve.
+_SRC_DIR = str(Path(__file__).resolve().parent.parent)
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+from custom.preprocessing._config import load_config, normalize_analysis_key
 
 
 # -----------------------------------------------------------------------------
@@ -159,10 +166,10 @@ def import_analysis_module(analysis_key: str) -> Callable:
         )
 
     module_name = ANALYSIS_REGISTRY[analysis_key]
-    full_module_path = f"preprocessing.{module_name}"
+    full_module_path = f"custom.preprocessing.{module_name}"
 
     # Import the module
-    module = importlib.import_module(full_module_path, package=".")
+    module = importlib.import_module(full_module_path)
 
     # Get the run function
     if not hasattr(module, "run"):
