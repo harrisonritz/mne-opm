@@ -1,8 +1,13 @@
 # mne-opm
 
+[![Documentation Status](https://readthedocs.org/projects/mne-opm/badge/?version=latest)](https://mne-opm.readthedocs.io/en/latest/?badge=latest)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
+
 OPM-MEG preprocessing pipeline based on MNE-Python, mne-bids-pipeline, and OSL-ephys. This repository contains
 utility scripts, custom pre-processing glue code, and run scripts to convert data to BIDS, run preprocessing,
 inspect and curate bad channels/epochs, run coregistration and FreeSurfer, and prepare sensor/source outputs.
+
+**[Full documentation on ReadTheDocs](https://mne-opm.readthedocs.io)**
 
 This README documents how to set up the environment, prepare your data and configuration, and run the pipeline
 using the provided run scripts.

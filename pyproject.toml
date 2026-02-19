@@ -4,6 +4,20 @@ version = "0.1.0"
 description = "OPM preprocessing and analysis tools built on MNE-Python and MNE-BIDS-PIPELINE"
 readme = "README.md"
 requires-python = "~=3.13.0"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Harrison Ritz" },
+]
+keywords = ["MEG", "OPM", "MNE", "preprocessing", "neuroimaging", "BIDS"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     "dcm2niix>=1.0.20250506",
     "dupy>=1.2105.11",
@@ -21,6 +35,12 @@ dependencies = [
     "vtk>=9.5.2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/harrisonritz/mne-opm"
+Documentation = "https://mne-opm.readthedocs.io"
+Repository = "https://github.com/harrisonritz/mne-opm"
+Issues = "https://github.com/harrisonritz/mne-opm/issues"
+
 [tool.uv.sources]
 mne-bids = { git = "https://github.com/harrisonritz/mne-bids.git", branch = "mne-opm" }
 mne-bids-pipeline = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git", branch = "mne-opm" }
@@ -31,6 +51,12 @@ mne = { git = "https://github.com/harrisonritz/mne-python.git", branch = "mne-op
 dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "myst-parser>=3.0",
+    "sphinx-copybutton>=0.5",
 ]
 
 [tool.uv]
