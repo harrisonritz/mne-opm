@@ -27,7 +27,21 @@ mne-bids-pipeline = { git = "https://github.com/harrisonritz/mne-bids-pipeline.g
 osl-ephys = { git = "https://github.com/harrisonritz/osl-ephys.git" }
 mne = { git = "https://github.com/harrisonritz/mne-python.git", branch = "mne-opm" }
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+]
+
 [tool.uv]
 override-dependencies = [
     "mne @ git+https://github.com/harrisonritz/mne-python.git@mne-opm"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::RuntimeWarning",
 ]

@@ -1,0 +1,318 @@
+"""Tests for auto_ica.py — ICA component diagnostics, metrics, and GESD logic.
+
+These tests focus on the computational methods that can be validated with
+synthetic data, without needing real BIDS or ICA files.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import mne
+import numpy as np
+import pytest
+from scipy.stats import kurtosis
+
+from custom.preprocessing.auto_ica import AutoICAAnalysis
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def ica_cfg():
+    """Config for auto ICA tests."""
+    return SimpleNamespace(
+        _auto_ica=True,
+        spatial_filter="ica",
+        ch_types=["mag"],
+        deriv_root="/tmp/deriv",
+        subjects=["001"],
+        sessions=["01"],
+        task="restingstate",
+        ref_bads=False,  # disable ref method by default
+        gesd_bads=True,
+    )
+
+
+@pytest.fixture()
+def synthetic_ica_and_raw():
+    """Create a synthetic ICA + Raw pair for testing diagnostics.
+
+    Returns (ica, raw) where ica has been fit on raw.
+    """
+    rng = np.random.RandomState(42)
+    n_ch = 20
+    sfreq = 300.0
+    n_times = int(sfreq * 5)  # 5 seconds
+
+    # Create raw
+    info = mne.create_info(
+        [f"MEG{i:03d}" for i in range(n_ch)],
+        sfreq, ["mag"] * n_ch,
+    )
+    data = rng.randn(n_ch, n_times) * 1e-13
+    raw = mne.io.RawArray(data, info)
+
+    # Fit ICA
+    ica = mne.preprocessing.ICA(
+        n_components=10, method="fastica", random_state=42, max_iter=100
+    )
+    ica.fit(raw)
+
+    return ica, raw
+
+
+# ---------------------------------------------------------------------------
+# is_enabled
+# ---------------------------------------------------------------------------
+
+class TestAutoICAIsEnabled:
+    def test_enabled_when_both_set(self, ica_cfg):
+        assert AutoICAAnalysis(ica_cfg).is_enabled() is True
+
+    def test_disabled_without_flag(self, ica_cfg):
+        ica_cfg._auto_ica = False
+        assert AutoICAAnalysis(ica_cfg).is_enabled() is False
+
+    def test_disabled_without_spatial_filter(self, ica_cfg):
+        ica_cfg.spatial_filter = None
+        assert AutoICAAnalysis(ica_cfg).is_enabled() is False
+
+    def test_disabled_with_wrong_spatial_filter(self, ica_cfg):
+        ica_cfg.spatial_filter = "ssp"
+        assert AutoICAAnalysis(ica_cfg).is_enabled() is False
+
+
+# ---------------------------------------------------------------------------
+# _ica_component_diagnostics
+# ---------------------------------------------------------------------------
+
+class TestICAComponentDiagnostics:
+    """Test that diagnostic metrics are computed correctly."""
+
+    def test_returns_expected_keys(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica, raw)
+
+        expected_keys = {
+            "sensor_var",
+            "sensor_deriv_var",
+            "hf_ratio",
+            "source_kurtosis",
+            "autocorr_1lag",
+            "spectral_slope",
+            "spatial_kurtosis",
+        }
+        assert set(diag.keys()) == expected_keys
+
+    def test_metric_shapes(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica, raw)
+
+        n_comps = ica.n_components_
+        for key, vals in diag.items():
+            assert len(vals) == n_comps, (
+                f"Metric '{key}' has length {len(vals)}, expected {n_comps}"
+            )
+
+    def test_sensor_var_positive(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica, raw)
+        assert np.all(diag["sensor_var"] >= 0)
+
+    def test_autocorr_in_range(self, ica_cfg, synthetic_ica_and_raw):
+        """Autocorrelation should be in [-1, 1]."""
+        ica, raw = synthetic_ica_and_raw
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica, raw)
+        assert np.all(diag["autocorr_1lag"] >= -1.0)
+        assert np.all(diag["autocorr_1lag"] <= 1.0)
+
+    def test_hf_ratio_positive(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica, raw)
+        assert np.all(diag["hf_ratio"] > 0)
+
+
+# ---------------------------------------------------------------------------
+# _prepare_metrics_for_gesd
+# ---------------------------------------------------------------------------
+
+class TestPrepareMetricsForGESD:
+    """Test metric transformation and direction labeling."""
+
+    @pytest.fixture()
+    def sample_diagnostics(self):
+        """Create sample diagnostics dictionary."""
+        rng = np.random.RandomState(42)
+        n = 15  # number of components
+        return {
+            "sensor_var": np.abs(rng.randn(n)) * 1e-25,
+            "sensor_deriv_var": np.abs(rng.randn(n)) * 1e-25,
+            "hf_ratio": np.abs(rng.randn(n)) * 1e-12,
+            "source_kurtosis": rng.randn(n) * 3,
+            "autocorr_1lag": np.clip(rng.randn(n) * 0.3 + 0.5, -0.99, 0.99),
+            "spectral_slope": rng.randn(n) * 0.5 - 1.5,
+            "spatial_kurtosis": rng.randn(n) * 2,
+        }
+
+    def test_returns_list_of_tuples(self, ica_cfg, sample_diagnostics):
+        analysis = AutoICAAnalysis(ica_cfg)
+        metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
+        assert isinstance(metrics, list)
+        for item in metrics:
+            assert len(item) == 3  # (name, values, direction)
+            name, vals, side = item
+            assert isinstance(name, str)
+            assert isinstance(vals, np.ndarray)
+            assert side in (-1, 0, 1)
+
+    def test_five_metrics_produced(self, ica_cfg, sample_diagnostics):
+        analysis = AutoICAAnalysis(ica_cfg)
+        metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
+        assert len(metrics) == 5
+
+    def test_metric_names(self, ica_cfg, sample_diagnostics):
+        analysis = AutoICAAnalysis(ica_cfg)
+        metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
+        names = [m[0] for m in metrics]
+        assert "log_hf_ratio" in names
+        assert "temporal_kurtosis_sqrt" in names
+        assert "autocorr_fisher_z" in names
+        assert "spectral_slope" in names
+        assert "spatial_kurtosis_sqrt" in names
+
+    def test_directions(self, ica_cfg, sample_diagnostics):
+        analysis = AutoICAAnalysis(ica_cfg)
+        metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
+        direction_map = {name: side for name, _, side in metrics}
+
+        assert direction_map["log_hf_ratio"] == 1  # high = bad
+        assert direction_map["temporal_kurtosis_sqrt"] == 1
+        assert direction_map["autocorr_fisher_z"] == -1  # low = bad
+        assert direction_map["spectral_slope"] == 1
+        assert direction_map["spatial_kurtosis_sqrt"] == 1
+
+    def test_no_nans_in_output(self, ica_cfg, sample_diagnostics):
+        analysis = AutoICAAnalysis(ica_cfg)
+        metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
+        for name, vals, _ in metrics:
+            assert not np.any(np.isnan(vals)), f"NaN found in {name}"
+
+    def test_fisher_z_handles_extreme_autocorr(self, ica_cfg):
+        """Autocorrelation near +/-1 should be clipped before arctanh."""
+        analysis = AutoICAAnalysis(ica_cfg)
+        diagnostics = {
+            "sensor_var": np.ones(5),
+            "sensor_deriv_var": np.ones(5),
+            "hf_ratio": np.ones(5),
+            "source_kurtosis": np.zeros(5),
+            "autocorr_1lag": np.array([0.999, -0.999, 1.0, -1.0, 0.5]),
+            "spectral_slope": np.zeros(5),
+            "spatial_kurtosis": np.zeros(5),
+        }
+        metrics = analysis._prepare_metrics_for_gesd(diagnostics)
+        fisher_z_vals = next(v for n, v, _ in metrics if n == "autocorr_fisher_z")
+        assert not np.any(np.isinf(fisher_z_vals)), "Fisher z should not be infinite"
+
+
+# ---------------------------------------------------------------------------
+# _label_by_gesd_new (PCA-whitened GESD)
+# ---------------------------------------------------------------------------
+
+class TestLabelByGESDNew:
+    """Test the PCA-whitened GESD method with synthetic ICA."""
+
+    def test_does_not_crash(self, ica_cfg, synthetic_ica_and_raw):
+        """Run the full pipeline on synthetic data without crashing."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_gesd_new(ica, raw)
+        assert isinstance(result, mne.preprocessing.ICA)
+
+    def test_exclude_list_is_sorted_unique(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_gesd_new(ica, raw)
+        assert result.exclude == sorted(set(result.exclude))
+
+    def test_exclude_indices_valid(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_gesd_new(ica, raw)
+        for idx in result.exclude:
+            assert 0 <= idx < ica.n_components_
+
+    def test_skips_when_too_few_components(self, ica_cfg, synthetic_ica_and_raw):
+        """Should skip GESD when < 5 components remain."""
+        ica, raw = synthetic_ica_and_raw
+        # Exclude almost all components
+        ica.exclude = list(range(ica.n_components_ - 3))
+        n_excluded_before = len(ica.exclude)
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_gesd_new(ica, raw)
+        # Should not add any more (too few remaining)
+        assert len(result.exclude) == n_excluded_before
+
+
+# ---------------------------------------------------------------------------
+# _auto_ica integration
+# ---------------------------------------------------------------------------
+
+class TestAutoICAIntegration:
+    """Test the full _auto_ica method."""
+
+    def test_gesd_only(self, ica_cfg, synthetic_ica_and_raw):
+        """With ref_bads=False, only GESD should run."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.ref_bads = False
+        ica_cfg.gesd_bads = True
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._auto_ica(ica, raw)
+        assert isinstance(result, mne.preprocessing.ICA)
+        # Exclude list should be sorted and deduplicated
+        assert result.exclude == sorted(set(result.exclude))
+
+    def test_no_methods_enabled(self, ica_cfg, synthetic_ica_and_raw):
+        """With both methods disabled, no components should be excluded."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.ref_bads = False
+        ica_cfg.gesd_bads = False
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._auto_ica(ica, raw)
+        assert result.exclude == []
+
+
+# ---------------------------------------------------------------------------
+# _label_by_gesd_old
+# ---------------------------------------------------------------------------
+
+class TestLabelByGESDOld:
+    """Test the legacy GESD method."""
+
+    def test_does_not_crash(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_gesd_old(ica, raw)
+        assert isinstance(result, mne.preprocessing.ICA)
+
+    def test_skips_when_too_few_components(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = list(range(ica.n_components_ - 3))
+        n_before = len(ica.exclude)
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_gesd_old(ica, raw)
+        assert len(result.exclude) == n_before
