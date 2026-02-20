@@ -64,6 +64,20 @@ override-dependencies = [
     "mne @ git+https://github.com/harrisonritz/mne-python.git@mne-opm"
 ]
 
+[tool.coverage.run]
+source = ["custom"]
+omit = [
+    "src/custom/auto_coreg.py",
+    "src/custom/zca_test.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
