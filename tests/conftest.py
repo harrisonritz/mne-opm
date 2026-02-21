@@ -67,7 +67,7 @@ def _make_info(
         loc[9:12] = t2
         ch["loc"] = loc
 
-    info["meas_date"] = None
+    info.set_meas_date(None)
     return info
 
 
@@ -152,3 +152,57 @@ def base_cfg(tmp_dir) -> SimpleNamespace:
         n_jobs=1,
         spatial_filter=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Fixtures — synthetic data with injected artifacts
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def raw_with_bad_channel(meg_info, rng) -> mne.io.RawArray:
+    """Raw data where MEG001 has 100x higher variance (clearly bad)."""
+    n_ch = len(meg_info["ch_names"])
+    n_samples = int(meg_info["sfreq"] * 10)
+    data = rng.randn(n_ch, n_samples) * 1e-13
+    # Make MEG001 (index 1) a bad channel — 100x larger variance
+    data[1, :] *= 100.0
+    return mne.io.RawArray(data, meg_info)
+
+
+@pytest.fixture()
+def raw_with_artifact_segment(rng) -> mne.io.RawArray:
+    """Raw data with a large-amplitude artifact segment at 4–5 s.
+
+    Uses 30 MEG channels so OSL thresholds (5% * n_ch >= 1) are met.
+    """
+    info = _make_info(n_meg=30, n_ref=3, sfreq=300.0)
+    n_ch = len(info["ch_names"])
+    n_samples = int(info["sfreq"] * 10)
+    data = rng.randn(n_ch, n_samples) * 1e-13
+    # Large artifact from 4–5 s on MEG channels only
+    n_meg = 30
+    start = int(4 * info["sfreq"])
+    stop = int(5 * info["sfreq"])
+    data[:n_meg, start:stop] *= 100.0
+    return mne.io.RawArray(data, info)
+
+
+@pytest.fixture()
+def raw_with_ref_contamination(rng) -> tuple[mne.io.RawArray, np.ndarray]:
+    """Raw where MEG channels are contaminated by ref_meg signals.
+
+    Returns (raw, brain_signal) where brain_signal is the original
+    uncontaminated MEG data for verification.
+    """
+    sfreq = 300.0
+    n_samples = int(sfreq * 10)
+    n_meg, n_ref = 10, 3
+
+    ref_signals = rng.randn(n_ref, n_samples) * 1e-12
+    mixing = rng.randn(n_meg, n_ref)
+    brain = rng.randn(n_meg, n_samples) * 1e-14
+    meg_data = brain + mixing @ ref_signals
+
+    info = _make_info(n_meg=n_meg, n_ref=n_ref, sfreq=sfreq)
+    data = np.vstack([meg_data, ref_signals])
+    return mne.io.RawArray(data, info), brain

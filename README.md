@@ -2,7 +2,7 @@
 
 [![Documentation Status](https://readthedocs.org/projects/mne-opm/badge/?version=latest)](https://mne-opm.readthedocs.io/en/latest/?badge=latest)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
-[![Coverage](https://img.shields.io/badge/coverage-43%25-orange.svg)](https://github.com/harrisonritz/mne-opm)
+[![Coverage](https://img.shields.io/badge/coverage-67%25-yellowgreen.svg)](https://github.com/harrisonritz/mne-opm)
 
 OPM-MEG preprocessing pipeline based on MNE-Python, mne-bids-pipeline, and OSL-ephys. This repository contains
 utility scripts, custom pre-processing glue code, and run scripts to convert data to BIDS, run preprocessing,
