@@ -2,12 +2,12 @@
 # Harrison Ritz 2025
 
 
-## activate environment ----------------------------------------
-conda activate mne-opm
-
-## fixed variables
-export MPLBACKEND=agg
-
+# fail on first crash
+if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
+	set -eo pipefail
+	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
+	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
+fi
 
 # set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
@@ -29,4 +29,5 @@ echo ""
 
 
 ## run mne_bids_pipeline ----------------------------------------
-mne_bids_pipeline --steps=sensor --config=$CONFIG_PATH
+mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,sensor/decoding_full_epochs,sensor/decoding_time_by_time --config=$CONFIG_PATH
+# mne_bids_pipeline --steps=sensor/decoding_full_epochs,sensor/decoding_time_by_time --config=$CONFIG_PATH --no-cache

@@ -5,3 +5,6 @@ data/*
 my-mne-opm.sh
 .python-version
 local-mne-opm.sh
+/.vscode
+docs/_build/
+.coverage

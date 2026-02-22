@@ -1,14 +1,38 @@
 #  RUN COREG
+#
+# DEPRECATED: This script is deprecated. Use the new preprocessing module instead:
+#     python src/custom/custom_preproc.py --analysis=coreg --config=/path/to/config.py
+#
+# This file will be removed in a future release.
 
-HAIR_GROW = 5.0
-OMIT_DISTANCE = 2.5/1e3
-N_ROUNDS = 3
+raise DeprecationWarning(
+    "\n\n"
+    "=" * 70 + "\n"
+    "DEPRECATED: auto_coreg.py is deprecated and no longer supported.\n"
+    "\n"
+    "Please use the new preprocessing module instead:\n"
+    "    python src/custom/custom_preproc.py --analysis=coreg --config=/path/to/config.py\n"
+    "\n"
+    "The new module provides:\n"
+    "  - Consistent interface with other preprocessing steps\n"
+    "  - Configuration via config file instead of environment variables\n"
+    "  - Better error handling and logging\n"
+    "\n"
+    "Required config settings:\n"
+    "  _coreg = True  # Enable coregistration\n"
+    "  subjects_dir = '/path/to/freesurfer/subjects'\n"
+    "\n"
+    "Optional config settings:\n"
+    "  _coreg_hair_grow = 5.0       # Hair growth offset (mm)\n"
+    "  _coreg_omit_distance = 0.0025  # HSP omit distance (m)\n"
+    "  _coreg_n_rounds = 2          # Number of ICP rounds\n"
+    "=" * 70 + "\n"
+)
 
 
 # %% imports
-from dataclasses import dataclass
+import mne_qt_browser
 import os
-from click import pause
 import mne
 import numpy as np
 from mne.io import read_info
@@ -18,23 +42,27 @@ from mne_bids import (
     get_anat_landmarks,
     write_anat,
 )
-from dotenv import load_dotenv, find_dotenv
 from glob import glob
 
-
-import mne_qt_browser
 mne.viz.set_browser_backend("qt")
+
+
+# %% parameters
+HAIR_GROW = 5.0
+OMIT_DISTANCE = 2.5 / 1e3
+N_ROUNDS = 2
+
 
 # %% get info
 
 BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"
-SUBJECTS_DIR = f"{os.environ.get('SUBJECTS_DIR')}" 
+SUBJECTS_DIR = f"{os.environ.get('SUBJECTS_DIR')}"
 
 # get SUBJECT enviromental veriable
 SUBJECT = f"{os.environ.get('SUBJECT')}"
 if SUBJECT is None:
     raise ValueError("Please set the SUBJECT environment variable.")
-SUBJECT_NUM = SUBJECT.split('_')[0].split('-')[1]
+SUBJECT_NUM = SUBJECT.split("_")[0].split("-")[1]
 
 TASK = os.environ.get("EXPERIMENT")
 if TASK is None:
@@ -46,7 +74,9 @@ if SESSION is None:
 
 
 # check if landmarks already written
-print(f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}")
+print(
+    f"Running coreg for {SUBJECT_NUM}/{SUBJECT} with task {TASK} and session {SESSION}"
+)
 
 
 # get info
@@ -90,23 +120,24 @@ plot_kwargs = dict(
 )
 
 
-
 # use GUI for setting fiducials
-if not glob(os.path.join(SUBJECTS_DIR, SUBJECT, 'bem', "*fiducials.fif")):
-    print('\n-------use gui')
+if not glob(os.path.join(SUBJECTS_DIR, SUBJECT, "bem", "*fiducials.fif")):
+    print("\n------- Using GUI -------")
     try:
-        coreg = mne.gui.coregistration(inst=fname_raw, subject=SUBJECT, subjects_dir=SUBJECTS_DIR, block=True)
+        coreg = mne.gui.coregistration(
+            inst=fname_raw, subject=SUBJECT, subjects_dir=SUBJECTS_DIR, block=True
+        )
     except Exception as e:
-        print(f"------ Error in GUI coregistration: {e}")
+        print(f"------ Error in GUI coregistration: {e} -------")
 
-coreg = mne.coreg.Coregistration(info, SUBJECT, SUBJECTS_DIR, fiducials='estimated')
+coreg = mne.coreg.Coregistration(info, SUBJECT, SUBJECTS_DIR, fiducials="estimated")
 
 # fit fiducials
-coreg.set_scale_mode('Uniform')
+coreg.set_scale_mode("Uniform")
 coreg.fit_fiducials(verbose=True)
 
 # fit head shape points
-coreg.set_scale_mode('3-axis')
+coreg.set_scale_mode("Uniform")
 coreg.set_grow_hair(HAIR_GROW)
 
 
@@ -126,8 +157,6 @@ for rr in range(N_ROUNDS):
 # pause("\n\nPress any key to continue after inspecting the coregistration plot...\n")
 
 
-
-
 # %% save t1w info
 
 
@@ -136,22 +165,22 @@ t1w_fs_path = os.path.join(SUBJECTS_DIR, SUBJECT, "mri", "T1.mgz")
 
 # BIDS T1 path
 t1w_bids_path = BIDSPath(
-    subject=SUBJECT_NUM, 
-    session=SESSION, 
-    root=BIDS_DIR, 
+    subject=SUBJECT_NUM,
+    session=SESSION,
+    root=BIDS_DIR,
     suffix="T1w",
     datatype="anat",
     extension=".nii",
-    )
+)
 
 # BIDS anat dir
 anat_bids_path = BIDSPath(
-    subject=SUBJECT_NUM, 
-    session=SESSION, 
-    root=BIDS_DIR, 
+    subject=SUBJECT_NUM,
+    session=SESSION,
+    root=BIDS_DIR,
     suffix="T1w",
     datatype="anat",
-    )
+)
 
 # use ``trans`` to transform landmarks from the ``raw`` file to
 # the voxel space of the image

@@ -1,17 +1,93 @@
 [project]
 name = "mne-opm"
 version = "0.1.0"
-description = "Add your description here"
+description = "OPM preprocessing and analysis tools built on MNE-Python and MNE-BIDS-PIPELINE"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
-
-[project.optional-dependencies]
-dev = [
-	"pytest>=8.2",
-	"pytest-cov>=5.0",
+requires-python = "~=3.13.0"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Harrison Ritz" },
+]
+keywords = ["MEG", "OPM", "MNE", "preprocessing", "neuroimaging", "BIDS"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "dcm2niix>=1.0.20250506",
+    "dupy>=1.2105.11",
+    "ipykernel>=7.1.0",
+    "mne",
+    "mne-bids",
+    "mne-bids-pipeline",
+    "mne-qt-browser>=0.7.4",
+    "openmeeg>=2.5.16",
+    "osl-ephys",
+    "pyopengl>=3.1.10",
+    "pyqt5>=5.15.11",
+    "pyvista>=0.46.4",
+    "trame>=3.12.0",
+    "vtk>=9.5.2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/harrisonritz/mne-opm"
+Documentation = "https://mne-opm.readthedocs.io"
+Repository = "https://github.com/harrisonritz/mne-opm"
+Issues = "https://github.com/harrisonritz/mne-opm/issues"
+
+[tool.uv.sources]
+mne-bids = { git = "https://github.com/harrisonritz/mne-bids.git", branch = "mne-opm" }
+mne-bids-pipeline = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git", branch = "mne-opm" }
+osl-ephys = { git = "https://github.com/harrisonritz/osl-ephys.git" }
+mne = { git = "https://github.com/harrisonritz/mne-python.git", branch = "mne-opm" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "myst-parser>=3.0",
+    "sphinx-copybutton>=0.5",
+]
+
+[tool.uv]
+override-dependencies = [
+    "mne @ git+https://github.com/harrisonritz/mne-python.git@mne-opm"
+]
+
+[tool.coverage.run]
+source = ["custom"]
+omit = [
+    "src/custom/auto_coreg.py",
+    "src/custom/zca_test.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
-addopts = "-q"
 testpaths = ["tests"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::RuntimeWarning",
+]

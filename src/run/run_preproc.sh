@@ -2,22 +2,16 @@
 # Harrison Ritz 2025
 
 
-## activate environment ----------------------------------------
-conda activate mne-opm
-
-## fixed variables
-export MPLBACKEND=agg
+# fail on first crash
+if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
+	set -eo pipefail
+	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
+	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
+fi
 
 # set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 
-
-# fail on first crash
-if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
-	set -euo pipefail
-	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
-	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
-fi
 
 ## RUN PREPROCESSING ------------------
 echo ""
@@ -32,20 +26,6 @@ echo "BIDS_DIR: $BIDS_DIR"
 echo "SUBJECTS_DIR: $SUBJECTS_DIR"
 echo "--------------------------"
 echo ""
-
-
-
-echo ""
-echo "======================= CUSTOM: reference regression =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress_ref --config=$CONFIG_PATH
-
-
-
-echo ""
-echo "======================= OSL: bad segment =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
 
 
 
@@ -69,11 +49,32 @@ echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_hfc --config=$CONFIG_PATH
 
 
+echo ""
+echo "======================= CUSTOM: Common Spatial Filter (ZCA) =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_zca --config=$CONFIG_PATH
+
+
+echo ""
+echo "======================= OSL: bad segment =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
+
+
+
+
 
 echo ""
 echo "======================= MNE: preprocessing =============================================="
 echo ""
 mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
+
+
+
+echo ""
+echo "======================= Manual: automatic ICA rejection =============================================="
+echo ""
+python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=auto_ica --config=$CONFIG_PATH
 
 
 

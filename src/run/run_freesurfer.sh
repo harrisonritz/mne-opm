@@ -1,20 +1,29 @@
 # run freesurfer
 # Harrison Ritz 2025
 
+# fail on first crash
+if [ "${FAIL_ON_FIRST_CRASH}" = "1" ]; then
+    set +e pipefail # disable errexit to allow trap to catch errors
+	set -o pipefail # enable pipefail option
+	trap 'echo "[FAIL-FAST] Error at line $LINENO. Exiting." >&2' ERR
+	echo "[FAIL-FAST] Enabled: pipeline will stop on first failure."
+fi 
 
-## activate environment ----------------------------------------
-conda activate mne-opm
+# set config
+export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 
-
+# set fs variables
 old_sub=$SUBJECT
 export SUBJECT=${SUBJECT_NUM}_ses-${SESSION}
 export FS_ALLOW_DEEP=1
+
+echo "fs home: ${FREESURFER_HOME}"
 source $FREESURFER_HOME/SetUpFreeSurfer.sh
-
-
+echo "freesurfer version: $(recon-all --version)"
 # ------------------------------
 
-
+# MAX_WORKERS=1
+# echo "Using $MAX_WORKERS workers for freesurfer processing"
 
 ## RUN FREESURFER ------------------
 echo ""
@@ -40,7 +49,7 @@ fi
 # Check if freesurfer has already been run
 if [ -d "$SUBJECTS_DIR/$SUBJECT/mri" ]; then
     echo "FreeSurfer has already been run for subject: $SUBJECT"
-    return
+    return 0
 fi
 
 # Check if T1W_PATH exists
