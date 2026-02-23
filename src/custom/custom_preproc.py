@@ -7,7 +7,9 @@ in the preprocessing subpackage.
 
 Provided analyses (CLI --analysis):
     regress_ref    -> Regress out reference channel signals
-    bad_segments   -> Detect & annotate bad raw data segments
+    bad_segments   -> Detect & annotate bad raw data segments (legacy)
+    bad_segments_1 -> Stage 1: coarse bad segment detection (pre-spatial filter)
+    bad_segments_2 -> Stage 2: fine bad segment detection (post-spatial filter)
     bad_channels   -> Statistical detection of bad channels
     manual_channel -> Interactive visual marking of bad channels
     apply_hfc      -> Apply homogeneous field correction (HFC) projections
@@ -67,6 +69,8 @@ from custom.preprocessing._config import load_config, normalize_analysis_key
 ANALYSIS_REGISTRY: dict[str, str] = {
     "regressref": "regress_ref",
     "badsegments": "bad_segments",
+    "badsegments1": "bad_segments",
+    "badsegments2": "bad_segments",
     "badchannels": "bad_channels",
     "manualchannel": "manual_channel",
     "applyhfc": "apply_hfc",
@@ -82,6 +86,8 @@ ANALYSIS_REGISTRY: dict[str, str] = {
 ANALYSIS_CHOICES: list[str] = [
     "regress_ref",
     "bad_segments",
+    "bad_segments_1",
+    "bad_segments_2",
     "bad_channels",
     "manual_channel",
     "apply_hfc",
@@ -211,6 +217,10 @@ def main() -> int:
     try:
         # Load configuration
         cfg = load_config(args.config)
+
+        # Extract stage suffix for staged analyses (e.g., badsegments1 -> "1")
+        if analysis_key.startswith("badsegments") and len(analysis_key) > len("badsegments"):
+            cfg._bad_segments_stage = analysis_key[len("badsegments"):]
 
         # Import and run analysis module
         run_func = import_analysis_module(analysis_key)

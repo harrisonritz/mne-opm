@@ -30,6 +30,13 @@ echo ""
 
 
 echo ""
+echo "======================= OSL: bad segment 1 =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH
+
+
+
+echo ""
 echo "======================= OSL: bad channels =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
@@ -56,9 +63,9 @@ python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_zca --config=$CON
 
 
 echo ""
-echo "======================= OSL: bad segment =============================================="
+echo "======================= OSL: bad segment 2 =============================================="
 echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments --config=$CONFIG_PATH
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_2 --config=$CONFIG_PATH
 
 
 

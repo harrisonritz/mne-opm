@@ -29,8 +29,10 @@ echo ""
 
 
 ## run mne_bids_pipeline ----------------------------------------
-mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,sensor/decoding_full_epochs,sensor/decoding_time_by_time --config=$CONFIG_PATH
+# mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,sensor/decoding_full_epochs,sensor/decoding_time_by_time --config=$CONFIG_PATH
 # mne_bids_pipeline --steps=sensor/decoding_full_epochs,sensor/decoding_time_by_time --config=$CONFIG_PATH --no-cache
+mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov --config=$CONFIG_PATH
+
 
 ## run custom multivariate decoding ----------------------------------------
 echo ""
