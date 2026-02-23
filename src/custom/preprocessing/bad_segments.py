@@ -91,6 +91,7 @@ from osl_ephys.preprocessing.osl_wrappers import bad_segments as osl_bad_segment
 import mne_bids
 
 from ._base import BaseAnalysis, SEGMENT_LEN_SEC
+from ._io import write_raw_bids_preserve_events
 
 
 # -- Default per-stage parameters (used when config has no _bad_segments_params)
@@ -308,7 +309,7 @@ class BadSegmentsAnalysis(BaseAnalysis):
             )
             if er_bids_path and task != "noise":
                 write_kwargs["empty_room"] = er_bids_path
-            mne_bids.write_raw_bids(**write_kwargs)
+            write_raw_bids_preserve_events(**write_kwargs)
             self.log(f"Saved task={task}")
 
     # ------------------------------------------------------------------

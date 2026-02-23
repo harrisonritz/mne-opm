@@ -369,6 +369,18 @@ def convert_triggers(raw: mne.io.Raw, cfg: SimpleNamespace) -> mne.io.Raw:
     if getattr(cfg, "response_desc", None):
         raw.annotations.rename(cfg.response_desc)
 
+    # Drop trigger stim channels now that all event information is captured
+    # in annotations.  Keeping them would cause mne_bids.write_raw_bids()
+    # to re-extract events with different find_events parameters whenever
+    # the data is re-saved later in the pipeline (e.g. by bad_segments),
+    # which can produce a different event count and break metadata alignment.
+    stim_channels_to_drop = [ch for ch in trigger_channels + ["Trigger Combined"]
+                             if ch in raw.ch_names]
+    if stim_channels_to_drop:
+        raw.drop_channels(stim_channels_to_drop)
+        print(f"Dropped {len(stim_channels_to_drop)} trigger stim channels: "
+              f"{stim_channels_to_drop}")
+
     print("Trigger & Response conversion completed.\n----------\n")
     return raw
 

@@ -10,6 +10,8 @@ multiple mne_bids calls (like save_ica_bids which updates TSV + saves ICA).
 
 Core Functions
 --------------
+write_raw_bids_preserve_events
+    Wrapper around write_raw_bids that preserves events.tsv/json.
 save_ica_bids
     Save ICA solution and update components TSV (combines two operations).
 get_bids_path_for_task
@@ -27,12 +29,69 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 
 import mne
+import mne_bids
 from mne_bids import BIDSPath
 import pandas as pd
+
+
+def write_raw_bids_preserve_events(**write_kwargs) -> None:
+    """Write raw data to BIDS while preserving the existing events files.
+
+    ``mne_bids.write_raw_bids()`` regenerates *_events.tsv* and
+    *_events.json* from ``raw.annotations`` every time it is called.
+    Because the annotation ↔ events.tsv round-trip is lossy (e.g. BAD
+    annotations become event rows, timing quantisation differences),
+    repeated writes corrupt the canonical event table produced during
+    the initial BIDS conversion.
+
+    This wrapper backs up events.tsv / events.json before the write and
+    restores them afterwards so that only the raw data file and other
+    sidecar files (channels.tsv, etc.) are updated.
+
+    Parameters
+    ----------
+    **write_kwargs
+        All keyword arguments forwarded to
+        ``mne_bids.write_raw_bids()``.  Must include ``bids_path``.
+
+    Notes
+    -----
+    If no events files exist yet (first-time write), the function falls
+    through to a plain ``write_raw_bids`` call with no backup/restore.
+    """
+    bp: BIDSPath = write_kwargs["bids_path"]
+
+    # Derive the events sidecar paths from the raw BIDSPath
+    events_tsv: Path = bp.copy().update(
+        suffix="events", extension=".tsv"
+    ).fpath
+    events_json: Path = bp.copy().update(
+        suffix="events", extension=".json"
+    ).fpath
+
+    # Back up existing events files
+    tsv_backup = Path(str(events_tsv) + ".bak") if events_tsv.exists() else None
+    json_backup = Path(str(events_json) + ".bak") if events_json.exists() else None
+
+    if tsv_backup is not None:
+        shutil.copy2(events_tsv, tsv_backup)
+    if json_backup is not None:
+        shutil.copy2(events_json, json_backup)
+
+    try:
+        mne_bids.write_raw_bids(**write_kwargs)
+    finally:
+        # Restore the original events files
+        if tsv_backup is not None and tsv_backup.exists():
+            shutil.move(str(tsv_backup), str(events_tsv))
+        if json_backup is not None and json_backup.exists():
+            shutil.move(str(json_backup), str(events_json))
 
 
 def get_bids_path_for_task(

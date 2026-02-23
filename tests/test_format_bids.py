@@ -202,13 +202,19 @@ class TestConvertTriggers:
         raw.annotations.append(onset=0.5, duration=0.1, description="dummy")
         return raw
 
-    def test_adds_combined_trigger_channel(self, raw_with_triggers):
+    def test_drops_stim_channels(self, raw_with_triggers):
+        """After convert_triggers, stim channels should be dropped."""
         cfg = SimpleNamespace(
             trigger_desc={1: "stim_a", 3: "stim_b"},
             response_desc={},
         )
         raw_out = convert_triggers(raw_with_triggers, cfg)
-        assert "Trigger Combined" in raw_out.ch_names
+        # Trigger Combined and individual trigger channels should be gone
+        assert "Trigger Combined" not in raw_out.ch_names
+        stim_chs = [ch for ch in raw_out.ch_names if ch.startswith("Trigger")]
+        assert len(stim_chs) == 0, (
+            f"Stim channels should be dropped, found: {stim_chs}"
+        )
 
     def test_creates_annotations(self, raw_with_triggers):
         cfg = SimpleNamespace(

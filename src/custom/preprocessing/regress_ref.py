@@ -69,6 +69,7 @@ from scipy import stats
 from scipy.linalg import qr
 
 from ._base import BaseAnalysis
+from ._io import write_raw_bids_preserve_events
 
 
 class RegressReferenceAnalysis(BaseAnalysis):
@@ -228,7 +229,7 @@ class RegressReferenceAnalysis(BaseAnalysis):
             )
             if er_bids_path and task != "noise":
                 write_kwargs["empty_room"] = er_bids_path
-            mne_bids.write_raw_bids(**write_kwargs)
+            write_raw_bids_preserve_events(**write_kwargs)
             self.log(f"Saved task={task}")
 
     def _regress_reference(

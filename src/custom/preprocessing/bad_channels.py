@@ -56,6 +56,7 @@ from osl_ephys.preprocessing.osl_wrappers import bad_channels as osl_bad_channel
 import mne_bids
 
 from ._base import BaseAnalysis
+from ._io import write_raw_bids_preserve_events
 
 
 class BadChannelsAnalysis(BaseAnalysis):
@@ -238,7 +239,7 @@ class BadChannelsAnalysis(BaseAnalysis):
             )
             if er_bids_path and task != "noise":
                 write_kwargs["empty_room"] = er_bids_path
-            mne_bids.write_raw_bids(**write_kwargs)
+            write_raw_bids_preserve_events(**write_kwargs)
             self.log(f"Saved task={task}")
 
     def _detect_bad_channels(self, raw: mne.io.BaseRaw) -> list[str]:

@@ -186,8 +186,9 @@ class TestBadSegmentsLoadData:
 # ---------------------------------------------------------------------------
 
 class TestBadSegmentsSaveResults:
+    @patch("custom.preprocessing.bad_segments.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.bad_segments.mne_bids")
-    def test_save_writes_annotated_raw(self, mock_bids, raw_meg, bad_seg_cfg):
+    def test_save_writes_annotated_raw(self, mock_bids, mock_write, raw_meg, bad_seg_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
@@ -196,7 +197,7 @@ class TestBadSegmentsSaveResults:
         results = {bad_seg_cfg.task: raw_meg, "bads": []}
         analysis.save_results(results)
 
-        mock_bids.write_raw_bids.assert_called_once()
+        mock_write.assert_called_once()
 
     @patch("custom.preprocessing.bad_segments.mne_bids")
     def test_save_no_paths_raises(self, mock_bids, raw_meg, bad_seg_cfg):
@@ -206,9 +207,10 @@ class TestBadSegmentsSaveResults:
         with pytest.raises(FileNotFoundError, match="No file found"):
             analysis.save_results(results)
 
+    @patch("custom.preprocessing.bad_segments.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.bad_segments.mne_bids")
     def test_save_with_empty_room_association(
-        self, mock_bids, raw_meg, bad_seg_cfg
+        self, mock_bids, mock_write, raw_meg, bad_seg_cfg
     ):
         """save_results should pass empty_room kwarg for task data."""
         mock_bp = MagicMock()
@@ -220,9 +222,9 @@ class TestBadSegmentsSaveResults:
         analysis.save_results(results)
 
         # Should write both noise and task
-        assert mock_bids.write_raw_bids.call_count == 2
+        assert mock_write.call_count == 2
         # The task write should include empty_room
-        task_call_kwargs = mock_bids.write_raw_bids.call_args_list[-1][1]
+        task_call_kwargs = mock_write.call_args_list[-1][1]
         assert "empty_room" in task_call_kwargs
 
 
@@ -231,9 +233,10 @@ class TestBadSegmentsSaveResults:
 # ---------------------------------------------------------------------------
 
 class TestBadSegmentsModuleRun:
+    @patch("custom.preprocessing.bad_segments.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.bad_segments.mne_bids")
     def test_run_entry_point(
-        self, mock_bids, raw_with_artifact_segment, bad_seg_cfg
+        self, mock_bids, mock_write, raw_with_artifact_segment, bad_seg_cfg
     ):
         """End-to-end: run(cfg) should load, detect, and save."""
         mock_bp = MagicMock()
@@ -244,4 +247,4 @@ class TestBadSegmentsModuleRun:
         run(bad_seg_cfg)
 
         mock_bids.read_raw_bids.assert_called()
-        mock_bids.write_raw_bids.assert_called()
+        mock_write.assert_called()

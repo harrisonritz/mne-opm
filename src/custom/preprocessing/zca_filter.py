@@ -79,6 +79,7 @@ from mne.preprocessing.maxwell import _prep_mf_coils, _sss_basis
 from scipy.linalg import eigh, null_space
 
 from ._base import BaseAnalysis
+from ._io import write_raw_bids_preserve_events
 
 
 class ZCAFilterAnalysis(BaseAnalysis):
@@ -273,7 +274,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
             )
             if er_bids_path and task != "noise":
                 write_kwargs["empty_room"] = er_bids_path
-            mne_bids.write_raw_bids(**write_kwargs)
+            write_raw_bids_preserve_events(**write_kwargs)
             self.log(f"Saved task={task}")
 
     def _get_fs_subject(self) -> str:

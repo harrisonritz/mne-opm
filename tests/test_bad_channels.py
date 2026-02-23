@@ -171,8 +171,9 @@ class TestBadChannelsLoadData:
 class TestBadChannelsSaveResults:
     """Test save_results merges bads and calls write_raw_bids."""
 
+    @patch("custom.preprocessing.bad_channels.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_save_merges_bads_into_raw(self, mock_bids, raw_meg, bad_ch_cfg):
+    def test_save_merges_bads_into_raw(self, mock_bids, mock_write, raw_meg, bad_ch_cfg):
         """save_results should merge detected bads into raw.info['bads']."""
         mock_bp = MagicMock()
         mock_bp.split = None
@@ -187,11 +188,12 @@ class TestBadChannelsSaveResults:
         assert "MEG003" in raw_meg.info["bads"]
         # Verify mark_channels was called
         mock_bids.mark_channels.assert_called()
-        # Verify write_raw_bids was called
-        mock_bids.write_raw_bids.assert_called()
+        # Verify write_raw_bids_preserve_events was called
+        mock_write.assert_called()
 
+    @patch("custom.preprocessing.bad_channels.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_save_no_bads_still_writes(self, mock_bids, raw_meg, bad_ch_cfg):
+    def test_save_no_bads_still_writes(self, mock_bids, mock_write, raw_meg, bad_ch_cfg):
         """save_results with empty bads should still write raw."""
         mock_bp = MagicMock()
         mock_bp.split = None
@@ -201,7 +203,7 @@ class TestBadChannelsSaveResults:
         results = {bad_ch_cfg.task: raw_meg, "bads": []}
         analysis.save_results(results)
 
-        mock_bids.write_raw_bids.assert_called_once()
+        mock_write.assert_called_once()
         # mark_channels should NOT be called with empty bads
         mock_bids.mark_channels.assert_not_called()
 
@@ -213,8 +215,9 @@ class TestBadChannelsSaveResults:
 class TestBadChannelsModuleRun:
     """Test the module-level run(cfg) function."""
 
+    @patch("custom.preprocessing.bad_channels.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_run_calls_execute(self, mock_bids, raw_meg, bad_ch_cfg):
+    def test_run_calls_execute(self, mock_bids, mock_write, raw_meg, bad_ch_cfg):
         """run(cfg) should construct the analysis and call execute."""
         mock_bp = MagicMock()
         mock_bp.split = None
@@ -225,4 +228,4 @@ class TestBadChannelsModuleRun:
         run(bad_ch_cfg)
 
         mock_bids.read_raw_bids.assert_called()
-        mock_bids.write_raw_bids.assert_called()
+        mock_write.assert_called()

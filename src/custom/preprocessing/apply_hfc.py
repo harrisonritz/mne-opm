@@ -61,6 +61,7 @@ import mne
 import mne_bids
 
 from ._base import BaseAnalysis
+from ._io import write_raw_bids_preserve_events
 
 
 class ApplyHFCAnalysis(BaseAnalysis):
@@ -223,7 +224,7 @@ class ApplyHFCAnalysis(BaseAnalysis):
             )
             if er_bids_path and task != "noise":
                 write_kwargs["empty_room"] = er_bids_path
-            mne_bids.write_raw_bids(**write_kwargs)
+            write_raw_bids_preserve_events(**write_kwargs)
             self.log(f"Saved task={task}")
 
     def _apply_hfc(
