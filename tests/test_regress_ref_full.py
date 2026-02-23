@@ -196,8 +196,9 @@ class TestRegressLoadData:
 # ---------------------------------------------------------------------------
 
 class TestRegressSaveResults:
+    @patch("custom.preprocessing.regress_ref.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.regress_ref.mne_bids")
-    def test_save_writes_data(self, mock_bids, raw_meg, regress_cfg):
+    def test_save_writes_data(self, mock_bids, mock_write, raw_meg, regress_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
@@ -206,7 +207,7 @@ class TestRegressSaveResults:
         results = {regress_cfg.task: raw_meg, "bads": []}
         analysis.save_results(results)
 
-        mock_bids.write_raw_bids.assert_called_once()
+        mock_write.assert_called_once()
 
     @patch("custom.preprocessing.regress_ref.mne_bids")
     def test_save_no_paths_raises(self, mock_bids, raw_meg, regress_cfg):
@@ -216,9 +217,10 @@ class TestRegressSaveResults:
         with pytest.raises(FileNotFoundError):
             analysis.save_results(results)
 
+    @patch("custom.preprocessing.regress_ref.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.regress_ref.mne_bids")
     def test_save_with_empty_room_association(
-        self, mock_bids, raw_meg, regress_cfg
+        self, mock_bids, mock_write, raw_meg, regress_cfg
     ):
         mock_bp = MagicMock()
         mock_bp.split = None
@@ -228,8 +230,8 @@ class TestRegressSaveResults:
         results = {"noise": raw_meg, regress_cfg.task: raw_meg, "bads": []}
         analysis.save_results(results)
 
-        assert mock_bids.write_raw_bids.call_count == 2
-        task_call_kwargs = mock_bids.write_raw_bids.call_args_list[-1][1]
+        assert mock_write.call_count == 2
+        task_call_kwargs = mock_write.call_args_list[-1][1]
         assert "empty_room" in task_call_kwargs
 
 
@@ -244,9 +246,10 @@ class TestRegressModuleRun:
         captured = capsys.readouterr()
         assert "Disabled" in captured.out
 
+    @patch("custom.preprocessing.regress_ref.write_raw_bids_preserve_events")
     @patch("custom.preprocessing.regress_ref.mne_bids")
     def test_run_end_to_end(
-        self, mock_bids, raw_with_ref_contamination, regress_cfg
+        self, mock_bids, mock_write, raw_with_ref_contamination, regress_cfg
     ):
         raw, _ = raw_with_ref_contamination
         mock_bp = MagicMock()
@@ -257,4 +260,4 @@ class TestRegressModuleRun:
         run(regress_cfg)
 
         mock_bids.read_raw_bids.assert_called()
-        mock_bids.write_raw_bids.assert_called()
+        mock_write.assert_called()
