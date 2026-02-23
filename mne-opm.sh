@@ -127,6 +127,7 @@ export SUBJECT
 export SUBJECT_NUM=sub-$SUBJECT
 export ANALYSIS
 export SESSION
+export TSX_DIR
 
 export ROOT_DIR=$PWD
 

@@ -274,35 +274,35 @@ class TestPipelineFactories:
     """Test that pipeline factories return valid sklearn pipelines."""
 
     def test_make_time_clf_returns_pipeline(self):
-        clf = _make_time_clf(rank=5)
+        clf = _make_time_clf(n_components=5)
         assert hasattr(clf, "fit")
         assert hasattr(clf, "predict")
         assert len(clf.steps) == 3
 
     def test_make_epoch_clf_returns_pipeline(self):
-        clf = _make_epoch_clf()
+        clf = _make_epoch_clf(n_components=0.99)
         assert hasattr(clf, "fit")
         assert hasattr(clf, "predict")
         assert len(clf.steps) == 4
 
     def test_time_clf_pca_components(self):
-        """PCA n_components should match rank."""
-        clf = _make_time_clf(rank=7)
+        """PCA n_components should match the value passed in."""
+        clf = _make_time_clf(n_components=7)
         pca_step = clf.steps[1][1]
         assert pca_step.n_components == 7
 
     def test_epoch_clf_pca_variance(self):
-        """Epoch PCA should use 0.9 variance threshold."""
-        clf = _make_epoch_clf()
+        """Epoch PCA should use the variance threshold passed in."""
+        clf = _make_epoch_clf(n_components=0.99)
         pca_step = clf.steps[2][1]
-        assert pca_step.n_components == 0.9
+        assert pca_step.n_components == 0.99
 
     def test_time_clf_first_step_is_mnn(self):
-        clf = _make_time_clf(rank=5)
+        clf = _make_time_clf(n_components=5)
         assert isinstance(clf.steps[0][1], MultivariateNoiseNormalizer)
 
     def test_epoch_clf_first_step_is_mnn(self):
-        clf = _make_epoch_clf()
+        clf = _make_epoch_clf(n_components=0.99)
         assert isinstance(clf.steps[0][1], MultivariateNoiseNormalizer)
 
 

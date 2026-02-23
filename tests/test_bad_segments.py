@@ -31,6 +31,8 @@ def bad_seg_cfg(tmp_path):
         sessions=["01"],
         task="restingstate",
         ch_types=["mag"],
+        l_freq=0.1,
+        h_freq=30.0,
         process_empty_room=False,
         find_breaks=False,
         n_jobs=1,
@@ -58,7 +60,7 @@ class TestDetectBadSegments:
     def test_task_mode_two_pass(
         self, raw_with_artifact_segment, bad_seg_cfg
     ):
-        """Task mode uses two passes and should detect the artifact."""
+        """Task mode should detect the artifact segment."""
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         result = analysis._detect_bad_segments(
             raw_with_artifact_segment, is_noise=False
