@@ -106,6 +106,8 @@ class TestICAComponentDiagnostics:
             "autocorr_1lag",
             "spectral_slope",
             "spatial_kurtosis",
+            "spectral_deriv_kurtosis",
+            "spectral_resid_kurtosis",
         }
         assert set(diag.keys()) == expected_keys
 
@@ -140,6 +142,67 @@ class TestICAComponentDiagnostics:
         diag = analysis._ica_component_diagnostics(ica, raw)
         assert np.all(diag["hf_ratio"] > 0)
 
+    def test_spectral_deriv_kurtosis_higher_for_narrow_band(self, ica_cfg):
+        """Narrow-band artifact should produce higher spectral derivative kurtosis.
+
+        A synthetic component with a boxcar power spectrum (sharp onset/offset at
+        a narrow band) should yield higher d(log_psd)/df kurtosis than a broadband
+        component with a smooth 1/f-like spectrum.
+        """
+        rng = np.random.RandomState(0)
+        n_ch = 20
+        sfreq = 300.0
+        n_times = int(sfreq * 10)  # 10 s for stable spectral estimates
+
+        # --- Broadband 1/f-like component ---
+        # Filter white noise through a 1/f filter in frequency domain
+        freqs_template = np.fft.rfftfreq(n_times, 1 / sfreq)
+        freqs_template[0] = 1.0  # avoid divide-by-zero at DC
+        amplitude = 1.0 / freqs_template  # 1/f amplitude
+        phase = rng.uniform(0, 2 * np.pi, size=len(freqs_template))
+        spectrum = amplitude * np.exp(1j * phase)
+        broadband = np.fft.irfft(spectrum, n=n_times)  # (n_times,)
+
+        # --- Narrow-band artifact: sinusoid at 20 Hz + low-amplitude broadband ---
+        t = np.arange(n_times) / sfreq
+        narrowband = np.sin(2 * np.pi * 20 * t) + 0.05 * rng.randn(n_times)
+
+        # Package as two-component ICA source matrix (n_components, n_times)
+        # We bypass fitting ICA by mocking the source extraction
+        sources = np.vstack([broadband, narrowband])
+        sources = sources / sources.std(axis=1, keepdims=True)  # normalize
+
+        # Build a minimal Raw + ICA mock so _ica_component_diagnostics can run
+        info = mne.create_info(
+            [f"MEG{i:03d}" for i in range(n_ch)], sfreq, ["mag"] * n_ch
+        )
+        data = rng.randn(n_ch, n_times) * 1e-13
+        raw = mne.io.RawArray(data, info)
+
+        ica = mne.preprocessing.ICA(n_components=2, method="fastica", random_state=0, max_iter=200)
+        ica.fit(raw)
+
+        # Monkey-patch get_sources to return our controlled sources
+        mock_src_obj = MagicMock()
+        mock_src_obj.get_data.return_value = sources
+        ica.get_sources = MagicMock(return_value=mock_src_obj)
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica, raw)
+
+        deriv_kurt = diag["spectral_deriv_kurtosis"]
+        resid_kurt = diag["spectral_resid_kurtosis"]
+
+        # Narrow-band component (index 1) should have higher kurtosis on both metrics
+        assert deriv_kurt[1] > deriv_kurt[0], (
+            f"Expected narrow-band deriv kurtosis ({deriv_kurt[1]:.2f}) > "
+            f"broadband ({deriv_kurt[0]:.2f})"
+        )
+        assert resid_kurt[1] > resid_kurt[0], (
+            f"Expected narrow-band resid kurtosis ({resid_kurt[1]:.2f}) > "
+            f"broadband ({resid_kurt[0]:.2f})"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _prepare_metrics_for_gesd
@@ -161,6 +224,8 @@ class TestPrepareMetricsForGESD:
             "autocorr_1lag": np.clip(rng.randn(n) * 0.3 + 0.5, -0.99, 0.99),
             "spectral_slope": rng.randn(n) * 0.5 - 1.5,
             "spatial_kurtosis": rng.randn(n) * 2,
+            "spectral_deriv_kurtosis": rng.randn(n) * 2,
+            "spectral_resid_kurtosis": rng.randn(n) * 2,
         }
 
     def test_returns_list_of_tuples(self, ica_cfg, sample_diagnostics):
@@ -174,10 +239,10 @@ class TestPrepareMetricsForGESD:
             assert isinstance(vals, np.ndarray)
             assert side in (-1, 0, 1)
 
-    def test_five_metrics_produced(self, ica_cfg, sample_diagnostics):
+    def test_seven_metrics_produced(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
-        assert len(metrics) == 5
+        assert len(metrics) == 7
 
     def test_metric_names(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
@@ -188,6 +253,8 @@ class TestPrepareMetricsForGESD:
         assert "autocorr_fisher_z" in names
         assert "spectral_slope" in names
         assert "spatial_kurtosis_sqrt" in names
+        assert "spectral_deriv_kurtosis_sqrt" in names
+        assert "spectral_resid_kurtosis_sqrt" in names
 
     def test_directions(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
@@ -199,6 +266,8 @@ class TestPrepareMetricsForGESD:
         assert direction_map["autocorr_fisher_z"] == -1  # low = bad
         assert direction_map["spectral_slope"] == 1
         assert direction_map["spatial_kurtosis_sqrt"] == 1
+        assert direction_map["spectral_deriv_kurtosis_sqrt"] == 1  # high = bad (sharp transitions)
+        assert direction_map["spectral_resid_kurtosis_sqrt"] == 1  # high = bad (clustered deviation)
 
     def test_no_nans_in_output(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
@@ -217,6 +286,8 @@ class TestPrepareMetricsForGESD:
             "autocorr_1lag": np.array([0.999, -0.999, 1.0, -1.0, 0.5]),
             "spectral_slope": np.zeros(5),
             "spatial_kurtosis": np.zeros(5),
+            "spectral_deriv_kurtosis": np.zeros(5),
+            "spectral_resid_kurtosis": np.zeros(5),
         }
         metrics = analysis._prepare_metrics_for_gesd(diagnostics)
         fisher_z_vals = next(v for n, v, _ in metrics if n == "autocorr_fisher_z")

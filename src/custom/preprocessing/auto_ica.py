@@ -588,14 +588,34 @@ class AutoICAAnalysis(BaseAnalysis):
         autocorr_denom = np.sum(s_centered**2, axis=1)
         autocorr_1lag = autocorr_num / autocorr_denom
 
-        # Spectral slope
+        # Spectral slope, derivative, and residual metrics
         nperseg = min(n_times, int(2 * sfreq))
         freqs, psd = welch(sources, sfreq, nperseg=nperseg, axis=1)
+
+        # --- Spectral derivative kurtosis (all Welch frequencies) ---
+        # d(log_psd)/df: fractional change in power per Hz.
+        # A boxcar artifact creates two sharp steps (onset/offset) → heavy-tailed
+        # derivative distribution → high kurtosis.
+        df = freqs[1] - freqs[0]  # uniform frequency spacing from Welch
+        log_psd_all = np.log10(psd + 1e-20)  # (n_components, n_freqs)
+        spectral_deriv = np.diff(log_psd_all, axis=1) / df  # (n_components, n_freqs-1)
+        spectral_deriv_kurtosis = kurtosis(spectral_deriv, axis=1, fisher=True)
+
+        # --- Spectral slope and residual kurtosis (fmin-fmax band) ---
+        # Fit a power-law (1/f^n) baseline in log-log space, then take the
+        # kurtosis of the residuals. Narrow-band artifacts create a concentrated
+        # bump above the baseline → high residual kurtosis.
         freq_mask = (freqs >= fmin) & (freqs <= fmax)
         log_freqs = np.log10(freqs[freq_mask])
         log_psd = np.log10(psd[:, freq_mask] + 1e-20)
         X = np.column_stack([log_freqs, np.ones_like(log_freqs)])
-        spectral_slope = np.linalg.lstsq(X, log_psd.T, rcond=None)[0][0]
+        coeffs = np.linalg.lstsq(X, log_psd.T, rcond=None)[0]  # (2, n_components)
+        spectral_slope = coeffs[0]  # (n_components,)
+
+        # Residuals: how much each frequency deviates from the 1/f baseline
+        log_psd_fit = (X @ coeffs).T  # (n_components, n_freqs_masked)
+        residuals = log_psd - log_psd_fit  # (n_components, n_freqs_masked)
+        spectral_resid_kurtosis = kurtosis(residuals, axis=1, fisher=True)
 
         # Spatial kurtosis
         spatial_kurt = kurtosis(topos, axis=0, fisher=True)
@@ -608,6 +628,8 @@ class AutoICAAnalysis(BaseAnalysis):
             "autocorr_1lag": autocorr_1lag,
             "spectral_slope": spectral_slope,
             "spatial_kurtosis": spatial_kurt,
+            "spectral_deriv_kurtosis": spectral_deriv_kurtosis,
+            "spectral_resid_kurtosis": spectral_resid_kurtosis,
         }
 
     def _prepare_metrics_for_gesd(self, diagnostics: dict) -> list:
@@ -655,6 +677,21 @@ class AutoICAAnalysis(BaseAnalysis):
         spatial_kurt = diagnostics["spatial_kurtosis"]
         signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(np.abs(spatial_kurt) + 1e-10)
         metrics.append(("spatial_kurtosis_sqrt", signed_sqrt_spatial, 1))
+
+        # 6. Spectral derivative kurtosis: high = sharp narrow-band transitions.
+        # d(log_psd)/df has heavy tails when the spectrum has sudden onset/offset
+        # edges (boxcar-like artifact). Natural 1/f spectra are smooth → low kurtosis.
+        spec_deriv_kurt = diagnostics["spectral_deriv_kurtosis"]
+        signed_sqrt_spec_deriv = np.sign(spec_deriv_kurt) * np.sqrt(np.abs(spec_deriv_kurt) + 1e-10)
+        metrics.append(("spectral_deriv_kurtosis_sqrt", signed_sqrt_spec_deriv, 1))
+
+        # 7. Spectral residual kurtosis: high = concentrated deviation from 1/f.
+        # Residuals from the power-law fit are near-Gaussian for typical brain ICs.
+        # A narrow-band artifact creates a localized bump above the baseline
+        # → heavy-tailed residuals → high kurtosis.
+        spec_resid_kurt = diagnostics["spectral_resid_kurtosis"]
+        signed_sqrt_spec_resid = np.sign(spec_resid_kurt) * np.sqrt(np.abs(spec_resid_kurt) + 1e-10)
+        metrics.append(("spectral_resid_kurtosis_sqrt", signed_sqrt_spec_resid, 1))
 
         return metrics
 
