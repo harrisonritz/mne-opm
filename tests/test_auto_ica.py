@@ -337,6 +337,258 @@ class TestLabelByGESDNew:
 
 
 # ---------------------------------------------------------------------------
+# _label_by_corrmap (spatial template matching)
+# ---------------------------------------------------------------------------
+
+class TestLabelByCorrmap:
+    """Tests for _label_by_corrmap template matching via corrmap."""
+
+    # ---- graceful-skip cases ------------------------------------------------
+
+    def test_skips_when_no_template_dir_set(self, ica_cfg, synthetic_ica_and_raw):
+        """Returns ICA unchanged when corrmap_template_dir is not configured."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        # corrmap_template_dir deliberately NOT set
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+        assert result.exclude == []
+
+    def test_skips_when_dir_missing(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
+        """Returns ICA unchanged when the template directory does not exist."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path / "nonexistent")
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+        assert result.exclude == []
+
+    def test_skips_when_reference_channels_missing(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """Returns ICA unchanged when reference_channels.npy is absent."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path)  # dir exists but no .npy
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+        assert result.exclude == []
+
+    def test_skips_when_no_template_files_match(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """Skips gracefully when no eog_*.npy / ecg_*.npy files are found."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.corrmap_eog = True
+        ica_cfg.corrmap_ecg = False
+        ica_cfg.n_eog_templates = 3
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+        assert result.exclude == []
+
+    def test_skips_when_both_types_disabled(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """Returns ICA unchanged when both corrmap_eog and corrmap_ecg are False."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.corrmap_eog = False
+        ica_cfg.corrmap_ecg = False
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+        assert result.exclude == []
+
+    # ---- detection tests ----------------------------------------------------
+
+    def test_detects_eog_matching_component(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """A template built from an ICA component's own topography must be found."""
+        ica, raw = synthetic_ica_and_raw
+        components = ica.get_components()  # (n_channels, n_components)
+        target_idx = 0
+        target_topo = components[:, target_idx]
+
+        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        np.save(str(tmp_path / "eog_01.npy"), target_topo)
+
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.n_eog_templates = 1
+        ica_cfg.corrmap_eog = True
+        ica_cfg.corrmap_ecg = False
+        ica_cfg.corrmap_threshold = 0.9  # high threshold: only near-exact match
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+
+        assert target_idx in result.exclude, (
+            f"Expected component {target_idx} in exclude, got {result.exclude}"
+        )
+        assert target_idx in result.labels_.get("eog", [])
+
+    def test_detects_ecg_matching_component(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """ECG template matching works the same way as EOG."""
+        ica, raw = synthetic_ica_and_raw
+        components = ica.get_components()
+        target_idx = 1
+        target_topo = components[:, target_idx]
+
+        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        np.save(str(tmp_path / "ecg_01.npy"), target_topo)
+
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.n_eog_templates = 0
+        ica_cfg.n_ecg_templates = 1
+        ica_cfg.corrmap_eog = False
+        ica_cfg.corrmap_ecg = True
+        ica_cfg.corrmap_threshold = 0.9
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+
+        assert target_idx in result.exclude
+        assert target_idx in result.labels_.get("ecg", [])
+
+    def test_labels_and_exclude_are_consistent(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """Every component in ica.labels_['eog'] must also appear in ica.exclude."""
+        ica, raw = synthetic_ica_and_raw
+        components = ica.get_components()
+        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
+
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.n_eog_templates = 1
+        ica_cfg.corrmap_eog = True
+        ica_cfg.corrmap_ecg = False
+        ica_cfg.corrmap_threshold = 0.9
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+
+        for idx in result.labels_.get("eog", []):
+            assert idx in result.exclude
+
+    def test_multiple_templates_accumulate(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """Matches from multiple templates of the same type are unioned, not overwritten."""
+        ica, raw = synthetic_ica_and_raw
+        components = ica.get_components()
+        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        # Two templates targeting different components
+        np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
+        np.save(str(tmp_path / "eog_02.npy"), components[:, 1])
+
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.n_eog_templates = 2
+        ica_cfg.corrmap_eog = True
+        ica_cfg.corrmap_ecg = False
+        ica_cfg.corrmap_threshold = 0.9
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+
+        # Both targets should be matched
+        assert 0 in result.exclude
+        assert 1 in result.exclude
+
+    # ---- channel alignment --------------------------------------------------
+
+    def test_channel_subset_alignment(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """Reference with extra channels aligns correctly to the ICA's subset."""
+        ica, raw = synthetic_ica_and_raw
+        components = ica.get_components()
+        target_topo = components[:, 0]
+
+        # Reference = ICA channels + 5 phantom channels not in the ICA
+        ica_channels = list(ica.ch_names)
+        extra_channels = [f"EXTRA{i:03d}" for i in range(5)]
+        ref_channels = np.array(ica_channels + extra_channels)
+
+        # Template has values for all reference channels; extras are noise
+        rng = np.random.RandomState(42)
+        full_template = np.concatenate([target_topo, rng.randn(5) * 0.01])
+
+        np.save(str(tmp_path / "reference_channels.npy"), ref_channels)
+        np.save(str(tmp_path / "eog_01.npy"), full_template)
+
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.n_eog_templates = 1
+        ica_cfg.corrmap_eog = True
+        ica_cfg.corrmap_ecg = False
+        ica_cfg.corrmap_threshold = 0.9
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+
+        # Should not crash, and should still identify the target component
+        assert isinstance(result, mne.preprocessing.ICA)
+        assert 0 in result.exclude
+
+    def test_n_templates_limits_files_used(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """n_eog_templates=1 should only use the first template file."""
+        ica, raw = synthetic_ica_and_raw
+        components = ica.get_components()
+        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        # Template 1 targets component 0 (will be used)
+        np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
+        # Template 2 targets component 1 (should be ignored when n_eog_templates=1)
+        np.save(str(tmp_path / "eog_02.npy"), components[:, 1])
+
+        ica.exclude = []
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg.n_eog_templates = 1  # only use first
+        ica_cfg.corrmap_eog = True
+        ica_cfg.corrmap_ecg = False
+        ica_cfg.corrmap_threshold = 0.9
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._label_by_corrmap(ica, raw)
+
+        assert 0 in result.exclude        # component from template 1
+        assert 1 not in result.exclude    # component from template 2 (ignored)
+
+    # ---- integration --------------------------------------------------------
+
+    def test_corrmap_bads_wired_into_auto_ica(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """corrmap_bads=True calls _label_by_corrmap inside _auto_ica."""
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.ref_bads = False
+        ica_cfg.gesd_bads = False
+        ica_cfg.corrmap_bads = True
+        # Point at a dir with no reference_channels.npy → graceful skip
+        ica_cfg.corrmap_template_dir = str(tmp_path)
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        result = analysis._auto_ica(ica, raw)
+
+        # Should complete without error (skips due to missing reference file)
+        assert isinstance(result, mne.preprocessing.ICA)
+        assert result.exclude == []
+
+
+# ---------------------------------------------------------------------------
 # _auto_ica integration
 # ---------------------------------------------------------------------------
 

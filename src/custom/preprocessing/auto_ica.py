@@ -50,6 +50,7 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -74,6 +75,7 @@ class AutoICAAnalysis(BaseAnalysis):
     Uses multiple strategies to identify artifact components:
     - Reference sensor correlation (if ref_bads=True)
     - GESD outlier detection on kurtosis/variance (if gesd_bads=True)
+    - Spatial template matching via corrmap (if corrmap_bads=True)
 
     Components identified by any method are added to ica.exclude
     and will be removed when ICA is applied to the data.
@@ -236,6 +238,10 @@ class AutoICAAnalysis(BaseAnalysis):
         if getattr(self.cfg, "gesd_bads", True):
             ica = self._label_by_gesd_new(ica, raw)
 
+        # Spatial template matching via corrmap
+        if getattr(self.cfg, "corrmap_bads", False):
+            ica = self._label_by_corrmap(ica, raw)
+
         # Remove duplicates from exclude list
         ica.exclude = sorted(set(ica.exclude))
 
@@ -291,6 +297,209 @@ class AutoICAAnalysis(BaseAnalysis):
 
         # Cleanup
         del ref_raw, ref_ica, ref_src
+
+        return ica
+
+    def _label_by_corrmap(
+        self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
+    ) -> mne.preprocessing.ICA:
+        """Identify bad components by matching against pre-computed spatial templates.
+
+        Loads topographic templates (ICA mixing-matrix columns) from a directory
+        of ``.npy`` files and uses ``mne.preprocessing.corrmap`` to find ICA
+        components whose spatial patterns correlate with each template.  This is
+        useful for detecting EOG / ECG artifacts when no physiological reference
+        channel is available.
+
+        Template directory layout::
+
+            <corrmap_template_dir>/
+                reference_channels.npy   # 1-D array of channel-name strings
+                eog_01.npy               # topography for EOG template 1
+                eog_02.npy               # topography for EOG template 2
+                ecg_01.npy               # topography for ECG template 1
+                ...
+
+        Channel alignment
+        -----------------
+        Templates are defined on a *reference* channel set stored in
+        ``reference_channels.npy``.  The current ICA may have a different
+        (usually smaller) channel set due to sensor dropout.  For each template,
+        a per-channel lookup maps reference values onto the ICA's channel order;
+        channels in the ICA that are absent from the reference get a template
+        weight of 0 and are effectively ignored in the correlation.
+
+        Configuration attributes
+        ------------------------
+        corrmap_bads : bool
+            Master enable switch (default ``False``).
+        corrmap_template_dir : str
+            Path to the template directory.
+        corrmap_eog : bool
+            Use EOG templates (default ``True``).
+        corrmap_ecg : bool
+            Use ECG templates (default ``True``).
+        n_eog_templates : int
+            Number of EOG templates to use, in alphabetical order (default 3).
+        n_ecg_templates : int
+            Number of ECG templates to use, in alphabetical order (default 3).
+        corrmap_threshold : float | 'auto'
+            Correlation threshold passed to corrmap (default ``'auto'``).
+
+        Parameters
+        ----------
+        ica : mne.preprocessing.ICA
+            ICA solution.
+        raw : mne.io.BaseRaw
+            Raw data (used for channel-type metadata).
+
+        Returns
+        -------
+        ica : mne.preprocessing.ICA
+            ICA with matched components added to ``ica.exclude`` and
+            ``ica.labels_``.
+        """
+        self.log("Identifying bad components using corrmap template matching...")
+
+        # --- Validate template directory ---
+        template_dir_str = getattr(self.cfg, "corrmap_template_dir", "")
+        if not template_dir_str:
+            self.log("corrmap_template_dir not set; skipping")
+            return ica
+
+        template_dir = Path(template_dir_str)
+        if not template_dir.is_dir():
+            self.log(f"Template directory not found: {template_dir}; skipping")
+            return ica
+
+        # --- Load reference channel list ---
+        ref_channels_path = template_dir / "reference_channels.npy"
+        if not ref_channels_path.exists():
+            self.log(
+                f"reference_channels.npy not found in {template_dir}; skipping"
+            )
+            return ica
+
+        ref_channels = np.load(str(ref_channels_path), allow_pickle=True).tolist()
+        ref_channel_to_idx = {name: i for i, name in enumerate(ref_channels)}
+
+        # --- Report channel alignment ---
+        ica_channels = ica.ch_names
+        n_shared = sum(1 for ch in ica_channels if ch in ref_channel_to_idx)
+        n_total = len(ica_channels)
+        self.log(
+            f"Channel alignment: {n_shared}/{n_total} ICA channels "
+            f"found in reference set ({len(ref_channels)} channels)"
+        )
+        if n_shared < 0.9 * n_total:
+            self.log(
+                f"Warning: only {n_shared}/{n_total} ICA channels are in the "
+                "reference set — template matching may be unreliable."
+            )
+
+        # --- Determine which artifact types and how many templates to use ---
+        threshold = getattr(self.cfg, "corrmap_threshold", "auto")
+        ch_type = (
+            self.cfg.ch_types[0]
+            if hasattr(self.cfg, "ch_types") and self.cfg.ch_types
+            else "mag"
+        )
+
+        type_configs = []
+        if getattr(self.cfg, "corrmap_eog", True):
+            n_eog = getattr(self.cfg, "n_eog_templates", 3)
+            if n_eog > 0:
+                type_configs.append(("eog", n_eog))
+        if getattr(self.cfg, "corrmap_ecg", True):
+            n_ecg = getattr(self.cfg, "n_ecg_templates", 3)
+            if n_ecg > 0:
+                type_configs.append(("ecg", n_ecg))
+
+        if not type_configs:
+            self.log("No artifact types enabled for corrmap; skipping")
+            return ica
+
+        # --- Run corrmap for each artifact type ---
+        for artifact_type, n_templates in type_configs:
+            template_files = sorted(
+                template_dir.glob(f"{artifact_type}_*.npy")
+            )[:n_templates]
+
+            if not template_files:
+                self.log(
+                    f"No {artifact_type} templates found "
+                    f"(pattern: {artifact_type}_*.npy); skipping"
+                )
+                continue
+
+            self.log(
+                f"Running corrmap: {len(template_files)} "
+                f"{artifact_type} template(s), threshold={threshold!r}"
+            )
+
+            # Accumulate matched indices across all templates for this type.
+            # Each corrmap call may overwrite ica.labels_[artifact_type], so we
+            # collect the union manually.
+            accumulated_idx: set[int] = set(ica.labels_.get(artifact_type, []))
+
+            for template_path in template_files:
+                template_ref = np.load(str(template_path))  # (n_ref_channels,)
+
+                # Align template to ICA channel order.
+                # For channels not in the reference, weight = 0 (ignored).
+                template_aligned = np.array(
+                    [
+                        template_ref[ref_channel_to_idx[ch]]
+                        if ch in ref_channel_to_idx
+                        else 0.0
+                        for ch in ica_channels
+                    ],
+                    dtype=float,
+                )
+
+                # Clear the label so we can detect only the new matches from
+                # this template call.
+                ica.labels_.pop(artifact_type, None)
+
+                try:
+                    mne.preprocessing.corrmap(
+                        [ica],
+                        template=template_aligned,
+                        label=artifact_type,
+                        threshold=threshold,
+                        ch_type=ch_type,
+                        plot=False,
+                        show=False,
+                        verbose=False,
+                    )
+                except Exception as exc:
+                    self.log(
+                        f"  {template_path.name}: corrmap raised {type(exc).__name__}"
+                        f"({exc}); skipping this template"
+                    )
+                    continue
+
+                newly_matched = set(ica.labels_.get(artifact_type, []))
+                new_finds = newly_matched - accumulated_idx
+                accumulated_idx |= newly_matched
+
+                self.log(
+                    f"  {template_path.name}: "
+                    + (
+                        f"{len(new_finds)} new → {sorted(new_finds)}"
+                        if new_finds
+                        else "no new matches"
+                    )
+                )
+
+            # Write back accumulated labels and extend exclude list.
+            final_idx = sorted(accumulated_idx)
+            ica.labels_[artifact_type] = final_idx
+            if final_idx:
+                self.log(f"{artifact_type}: adding components {final_idx} to exclude")
+                ica.exclude.extend(final_idx)
+            else:
+                self.log(f"{artifact_type}: no components matched")
 
         return ica
 
