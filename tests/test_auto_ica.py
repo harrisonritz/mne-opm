@@ -346,10 +346,10 @@ class TestLabelByCorrmap:
     # ---- graceful-skip cases ------------------------------------------------
 
     def test_skips_when_no_template_dir_set(self, ica_cfg, synthetic_ica_and_raw):
-        """Returns ICA unchanged when corrmap_template_dir is not configured."""
+        """Returns ICA unchanged when _corrmap_template_dir is not configured."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        # corrmap_template_dir deliberately NOT set
+        # _corrmap_template_dir deliberately NOT set
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
@@ -358,7 +358,7 @@ class TestLabelByCorrmap:
         """Returns ICA unchanged when the template directory does not exist."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path / "nonexistent")
+        ica_cfg._corrmap_template_dir = str(tmp_path / "nonexistent")
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
@@ -369,7 +369,7 @@ class TestLabelByCorrmap:
         """Returns ICA unchanged when reference_channels.npy is absent."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path)  # dir exists but no .npy
+        ica_cfg._corrmap_template_dir = str(tmp_path)  # dir exists but no .npy
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
@@ -381,10 +381,10 @@ class TestLabelByCorrmap:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.corrmap_eog = True
-        ica_cfg.corrmap_ecg = False
-        ica_cfg.n_eog_templates = 3
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._corrmap_eog = True
+        ica_cfg._corrmap_ecg = False
+        ica_cfg._n_eog_templates = 3
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
@@ -392,13 +392,13 @@ class TestLabelByCorrmap:
     def test_skips_when_both_types_disabled(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """Returns ICA unchanged when both corrmap_eog and corrmap_ecg are False."""
+        """Returns ICA unchanged when both _corrmap_eog and _corrmap_ecg are False."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.corrmap_eog = False
-        ica_cfg.corrmap_ecg = False
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._corrmap_eog = False
+        ica_cfg._corrmap_ecg = False
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
@@ -418,11 +418,11 @@ class TestLabelByCorrmap:
         np.save(str(tmp_path / "eog_01.npy"), target_topo)
 
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.n_eog_templates = 1
-        ica_cfg.corrmap_eog = True
-        ica_cfg.corrmap_ecg = False
-        ica_cfg.corrmap_threshold = 0.9  # high threshold: only near-exact match
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._n_eog_templates = 1
+        ica_cfg._corrmap_eog = True
+        ica_cfg._corrmap_ecg = False
+        ica_cfg._corrmap_threshold = 0.9  # high threshold: only near-exact match
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
@@ -445,12 +445,12 @@ class TestLabelByCorrmap:
         np.save(str(tmp_path / "ecg_01.npy"), target_topo)
 
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.n_eog_templates = 0
-        ica_cfg.n_ecg_templates = 1
-        ica_cfg.corrmap_eog = False
-        ica_cfg.corrmap_ecg = True
-        ica_cfg.corrmap_threshold = 0.9
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._n_eog_templates = 0
+        ica_cfg._n_ecg_templates = 1
+        ica_cfg._corrmap_eog = False
+        ica_cfg._corrmap_ecg = True
+        ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
@@ -468,11 +468,11 @@ class TestLabelByCorrmap:
         np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
 
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.n_eog_templates = 1
-        ica_cfg.corrmap_eog = True
-        ica_cfg.corrmap_ecg = False
-        ica_cfg.corrmap_threshold = 0.9
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._n_eog_templates = 1
+        ica_cfg._corrmap_eog = True
+        ica_cfg._corrmap_ecg = False
+        ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
@@ -492,11 +492,11 @@ class TestLabelByCorrmap:
         np.save(str(tmp_path / "eog_02.npy"), components[:, 1])
 
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.n_eog_templates = 2
-        ica_cfg.corrmap_eog = True
-        ica_cfg.corrmap_ecg = False
-        ica_cfg.corrmap_threshold = 0.9
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._n_eog_templates = 2
+        ica_cfg._corrmap_eog = True
+        ica_cfg._corrmap_ecg = False
+        ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
@@ -528,11 +528,11 @@ class TestLabelByCorrmap:
         np.save(str(tmp_path / "eog_01.npy"), full_template)
 
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.n_eog_templates = 1
-        ica_cfg.corrmap_eog = True
-        ica_cfg.corrmap_ecg = False
-        ica_cfg.corrmap_threshold = 0.9
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._n_eog_templates = 1
+        ica_cfg._corrmap_eog = True
+        ica_cfg._corrmap_ecg = False
+        ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
@@ -544,21 +544,21 @@ class TestLabelByCorrmap:
     def test_n_templates_limits_files_used(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """n_eog_templates=1 should only use the first template file."""
+        """_n_eog_templates=1 should only use the first template file."""
         ica, raw = synthetic_ica_and_raw
         components = ica.get_components()
         np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
         # Template 1 targets component 0 (will be used)
         np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
-        # Template 2 targets component 1 (should be ignored when n_eog_templates=1)
+        # Template 2 targets component 1 (should be ignored when _n_eog_templates=1)
         np.save(str(tmp_path / "eog_02.npy"), components[:, 1])
 
         ica.exclude = []
-        ica_cfg.corrmap_template_dir = str(tmp_path)
-        ica_cfg.n_eog_templates = 1  # only use first
-        ica_cfg.corrmap_eog = True
-        ica_cfg.corrmap_ecg = False
-        ica_cfg.corrmap_threshold = 0.9
+        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._n_eog_templates = 1  # only use first
+        ica_cfg._corrmap_eog = True
+        ica_cfg._corrmap_ecg = False
+        ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
@@ -568,17 +568,17 @@ class TestLabelByCorrmap:
 
     # ---- integration --------------------------------------------------------
 
-    def test_corrmap_bads_wired_into_auto_ica(
+    def test__corrmap_bads_wired_into_auto_ica(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """corrmap_bads=True calls _label_by_corrmap inside _auto_ica."""
+        """_corrmap_bads=True calls _label_by_corrmap inside _auto_ica."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg.ref_bads = False
         ica_cfg.gesd_bads = False
-        ica_cfg.corrmap_bads = True
+        ica_cfg._corrmap_bads = True
         # Point at a dir with no reference_channels.npy → graceful skip
-        ica_cfg.corrmap_template_dir = str(tmp_path)
+        ica_cfg._corrmap_template_dir = str(tmp_path)
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._auto_ica(ica, raw)

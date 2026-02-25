@@ -75,7 +75,7 @@ class AutoICAAnalysis(BaseAnalysis):
     Uses multiple strategies to identify artifact components:
     - Reference sensor correlation (if ref_bads=True)
     - GESD outlier detection on kurtosis/variance (if gesd_bads=True)
-    - Spatial template matching via corrmap (if corrmap_bads=True)
+    - Spatial template matching via corrmap (if _corrmap_bads=True)
 
     Components identified by any method are added to ica.exclude
     and will be removed when ICA is applied to the data.
@@ -239,7 +239,7 @@ class AutoICAAnalysis(BaseAnalysis):
             ica = self._label_by_gesd_new(ica, raw)
 
         # Spatial template matching via corrmap
-        if getattr(self.cfg, "corrmap_bads", False):
+        if getattr(self.cfg, "_corrmap_bads", False):
             ica = self._label_by_corrmap(ica, raw)
 
         # Remove duplicates from exclude list
@@ -313,7 +313,7 @@ class AutoICAAnalysis(BaseAnalysis):
 
         Template directory layout::
 
-            <corrmap_template_dir>/
+            <_corrmap_template_dir>/
                 reference_channels.npy   # 1-D array of channel-name strings
                 eog_01.npy               # topography for EOG template 1
                 eog_02.npy               # topography for EOG template 2
@@ -331,19 +331,19 @@ class AutoICAAnalysis(BaseAnalysis):
 
         Configuration attributes
         ------------------------
-        corrmap_bads : bool
+        _corrmap_bads : bool
             Master enable switch (default ``False``).
-        corrmap_template_dir : str
+        _corrmap_template_dir : str
             Path to the template directory.
-        corrmap_eog : bool
+        _corrmap_eog : bool
             Use EOG templates (default ``True``).
-        corrmap_ecg : bool
+        _corrmap_ecg : bool
             Use ECG templates (default ``True``).
-        n_eog_templates : int
+        _n_eog_templates : int
             Number of EOG templates to use, in alphabetical order (default 3).
-        n_ecg_templates : int
+        _n_ecg_templates : int
             Number of ECG templates to use, in alphabetical order (default 3).
-        corrmap_threshold : float | 'auto'
+        _corrmap_threshold : float | 'auto'
             Correlation threshold passed to corrmap (default ``'auto'``).
 
         Parameters
@@ -362,9 +362,9 @@ class AutoICAAnalysis(BaseAnalysis):
         self.log("Identifying bad components using corrmap template matching...")
 
         # --- Validate template directory ---
-        template_dir_str = getattr(self.cfg, "corrmap_template_dir", "")
+        template_dir_str = getattr(self.cfg, "_corrmap_template_dir", "")
         if not template_dir_str:
-            self.log("corrmap_template_dir not set; skipping")
+            self.log("_corrmap_template_dir not set; skipping")
             return ica
 
         template_dir = Path(template_dir_str)
@@ -398,7 +398,7 @@ class AutoICAAnalysis(BaseAnalysis):
             )
 
         # --- Determine which artifact types and how many templates to use ---
-        threshold = getattr(self.cfg, "corrmap_threshold", "auto")
+        threshold = getattr(self.cfg, "_corrmap_threshold", "auto")
         ch_type = (
             self.cfg.ch_types[0]
             if hasattr(self.cfg, "ch_types") and self.cfg.ch_types
@@ -406,12 +406,12 @@ class AutoICAAnalysis(BaseAnalysis):
         )
 
         type_configs = []
-        if getattr(self.cfg, "corrmap_eog", True):
-            n_eog = getattr(self.cfg, "n_eog_templates", 3)
+        if getattr(self.cfg, "_corrmap_eog", True):
+            n_eog = getattr(self.cfg, "_n_eog_templates", 3)
             if n_eog > 0:
                 type_configs.append(("eog", n_eog))
-        if getattr(self.cfg, "corrmap_ecg", True):
-            n_ecg = getattr(self.cfg, "n_ecg_templates", 3)
+        if getattr(self.cfg, "_corrmap_ecg", True):
+            n_ecg = getattr(self.cfg, "_n_ecg_templates", 3)
             if n_ecg > 0:
                 type_configs.append(("ecg", n_ecg))
 
