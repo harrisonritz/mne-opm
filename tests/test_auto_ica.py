@@ -382,9 +382,8 @@ class TestLabelByCorrmap:
         ica.exclude = []
         np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
         ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._corrmap_eog = True
-        ica_cfg._corrmap_ecg = False
         ica_cfg._n_eog_templates = 3
+        ica_cfg._n_ecg_templates = 0
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
@@ -392,13 +391,13 @@ class TestLabelByCorrmap:
     def test_skips_when_both_types_disabled(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """Returns ICA unchanged when both _corrmap_eog and _corrmap_ecg are False."""
+        """Returns ICA unchanged when _n_eog_templates and _n_ecg_templates are both 0."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
         ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._corrmap_eog = False
-        ica_cfg._corrmap_ecg = False
+        ica_cfg._n_eog_templates = 0
+        ica_cfg._n_ecg_templates = 0
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
@@ -420,8 +419,7 @@ class TestLabelByCorrmap:
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 1
-        ica_cfg._corrmap_eog = True
-        ica_cfg._corrmap_ecg = False
+        ica_cfg._n_ecg_templates = 0
         ica_cfg._corrmap_threshold = 0.9  # high threshold: only near-exact match
 
         analysis = AutoICAAnalysis(ica_cfg)
@@ -448,8 +446,6 @@ class TestLabelByCorrmap:
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 0
         ica_cfg._n_ecg_templates = 1
-        ica_cfg._corrmap_eog = False
-        ica_cfg._corrmap_ecg = True
         ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
@@ -470,8 +466,7 @@ class TestLabelByCorrmap:
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 1
-        ica_cfg._corrmap_eog = True
-        ica_cfg._corrmap_ecg = False
+        ica_cfg._n_ecg_templates = 0
         ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
@@ -494,8 +489,7 @@ class TestLabelByCorrmap:
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 2
-        ica_cfg._corrmap_eog = True
-        ica_cfg._corrmap_ecg = False
+        ica_cfg._n_ecg_templates = 0
         ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
@@ -530,8 +524,7 @@ class TestLabelByCorrmap:
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 1
-        ica_cfg._corrmap_eog = True
-        ica_cfg._corrmap_ecg = False
+        ica_cfg._n_ecg_templates = 0
         ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
@@ -556,8 +549,7 @@ class TestLabelByCorrmap:
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 1  # only use first
-        ica_cfg._corrmap_eog = True
-        ica_cfg._corrmap_ecg = False
+        ica_cfg._n_ecg_templates = 0
         ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)

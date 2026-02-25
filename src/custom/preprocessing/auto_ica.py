@@ -335,14 +335,12 @@ class AutoICAAnalysis(BaseAnalysis):
             Master enable switch (default ``False``).
         _corrmap_template_dir : str
             Path to the template directory.
-        _corrmap_eog : bool
-            Use EOG templates (default ``True``).
-        _corrmap_ecg : bool
-            Use ECG templates (default ``True``).
         _n_eog_templates : int
-            Number of EOG templates to use, in alphabetical order (default 3).
+            Number of EOG templates to use, in alphabetical order. Set to 0
+            to skip EOG matching entirely (default 3).
         _n_ecg_templates : int
-            Number of ECG templates to use, in alphabetical order (default 3).
+            Number of ECG templates to use, in alphabetical order. Set to 0
+            to skip ECG matching entirely (default 3).
         _corrmap_threshold : float | 'auto'
             Correlation threshold passed to corrmap (default ``'auto'``).
 
@@ -406,14 +404,12 @@ class AutoICAAnalysis(BaseAnalysis):
         )
 
         type_configs = []
-        if getattr(self.cfg, "_corrmap_eog", True):
-            n_eog = getattr(self.cfg, "_n_eog_templates", 3)
-            if n_eog > 0:
-                type_configs.append(("eog", n_eog))
-        if getattr(self.cfg, "_corrmap_ecg", True):
-            n_ecg = getattr(self.cfg, "_n_ecg_templates", 3)
-            if n_ecg > 0:
-                type_configs.append(("ecg", n_ecg))
+        n_eog = getattr(self.cfg, "_n_eog_templates", 3)
+        if n_eog > 0:
+            type_configs.append(("eog", n_eog))
+        n_ecg = getattr(self.cfg, "_n_ecg_templates", 3)
+        if n_ecg > 0:
+            type_configs.append(("ecg", n_ecg))
 
         if not type_configs:
             self.log("No artifact types enabled for corrmap; skipping")
