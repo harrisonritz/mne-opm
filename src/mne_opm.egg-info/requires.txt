@@ -1,5 +1,6 @@
 dcm2niix>=1.0.20250506
 dupy>=1.2105.11
+imageio[ffmpeg]>=2.37.2
 ipykernel>=7.1.0
 mne
 mne-bids

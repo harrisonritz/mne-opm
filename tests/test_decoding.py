@@ -16,8 +16,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from custom.transformers import MultivariateNoiseNormalizer
 from custom.run_decoding import (
-    MultivariateNoiseNormalizer,
     get_data_rank,
     _prep_contrast,
     _make_time_clf,
@@ -190,6 +190,21 @@ class TestMultivariateNoiseNormalizer:
         mnn = MultivariateNoiseNormalizer().fit(X, y)
         assert mnn.whitening_.shape == (6, 6)
         assert mnn.coloring_.shape == (6, 6)
+
+    def test_pickle_roundtrip(self, rng):
+        """Fitted transformer must survive pickle (joblib/loky workers)."""
+        import pickle
+
+        X = rng.randn(40, 8) * 1e-13
+        y = np.array([0] * 20 + [1] * 20)
+        mnn = MultivariateNoiseNormalizer().fit(X, y)
+
+        data = pickle.dumps(mnn)
+        mnn2 = pickle.loads(data)
+
+        np.testing.assert_array_equal(mnn2.whitening_, mnn.whitening_)
+        np.testing.assert_array_equal(mnn2.coloring_, mnn.coloring_)
+        np.testing.assert_array_equal(mnn2.transform(X), mnn.transform(X))
 
 
 # ---------------------------------------------------------------------------

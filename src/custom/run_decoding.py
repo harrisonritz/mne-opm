@@ -34,80 +34,18 @@ from mne.decoding import (
     get_coef,
 )
 from mne_bids import BIDSPath
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.covariance import LedoitWolf
-from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import LeaveOneGroupOut, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.svm import LinearSVC
+
+from custom.transformers import FlexPCA, MultivariateNoiseNormalizer
 
 # Add mne-bids-pipeline to path for importing utilities
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "mne-bids-pipeline"))
 
 from mne_bids_pipeline._config_import import _update_config_from_path, _import_config
 from mne_bids_pipeline._config_utils import sanitize_cond_name
-
-
-# ---------------------------------------------------------------------------
-# MultivariateNoiseNormalizer
-# ---------------------------------------------------------------------------
-
-class MultivariateNoiseNormalizer(BaseEstimator, TransformerMixin):
-    """Pre-whiten data by a LedoitWolf estimate of the noise covariance.
-
-    Noise is estimated from within-class residuals: each class mean is
-    subtracted from training samples before fitting LedoitWolf, so the
-    covariance captures noise variance rather than signal variance.
-
-    Handles both 2-D and 3-D inputs:
-
-    * **2-D** ``(n_samples, n_features)`` — used directly.
-      Called per time-step inside ``SlidingEstimator``.
-
-    * **3-D** ``(n_samples, n_channels, n_times)`` — time points are pooled
-      to estimate a channel-space covariance (n_channels x n_channels),
-      then whitening is applied channel-wise at every time step.
-      This keeps computation tractable before ``Vectorizer``.
-
-    Implements ``inverse_transform`` so ``get_coef(..., inverse_transform=True)``
-    can propagate patterns back to sensor space through the full pipeline.
-    """
-
-    def fit(self, X, y=None):
-        if X.ndim == 3:
-            n_epochs, n_channels, n_times = X.shape
-            X_2d = X.transpose(0, 2, 1).reshape(-1, n_channels)
-            y_2d = np.tile(y, n_times) if y is not None else None
-        else:
-            X_2d = X
-            y_2d = y
-
-        X_res = X_2d.copy()
-        if y_2d is not None:
-            for cls in np.unique(y_2d):
-                mask = y_2d == cls
-                X_res[mask] -= X_res[mask].mean(axis=0)
-
-        lw = LedoitWolf().fit(X_res)
-        cov = lw.covariance_
-
-        vals, vecs = np.linalg.eigh(cov)
-        vals = np.maximum(vals, 1e-10)
-
-        self.whitening_ = vecs @ np.diag(1.0 / np.sqrt(vals)) @ vecs.T
-        self.coloring_ = vecs @ np.diag(np.sqrt(vals)) @ vecs.T
-        return self
-
-    def transform(self, X, y=None):
-        if X.ndim == 3:
-            return (X.transpose(0, 2, 1) @ self.whitening_).transpose(0, 2, 1)
-        return X @ self.whitening_
-
-    def inverse_transform(self, X):
-        if X.ndim == 3:
-            return (X.transpose(0, 2, 1) @ self.coloring_).transpose(0, 2, 1)
-        return X @ self.coloring_
 
 
 # ---------------------------------------------------------------------------
@@ -137,29 +75,6 @@ def _resolve_n_components(setting, rank):
     if isinstance(setting, str) and setting.lower() == "rank":
         return rank
     return setting
-
-
-class FlexPCA(PCA):
-    """PCA that caps n_components at min(n_samples, n_features) during fit.
-
-    When n_components is an integer exceeding the data dimensions (e.g. the
-    data rank is larger than the number of CV-fold samples), it is silently
-    reduced to min(n_samples, n_features) so the fit never raises.
-    Float values (variance-ratio mode) are left untouched.
-    """
-
-    def _clamp(self, X):
-        max_comp = min(X.shape)
-        if isinstance(self.n_components, (int, np.integer)) and self.n_components > max_comp:
-            self.n_components = max_comp
-
-    def fit(self, X, y=None):
-        self._clamp(X)
-        return super().fit(X, y)
-
-    def fit_transform(self, X, y=None):
-        self._clamp(X)
-        return super().fit_transform(X, y)
 
 
 def get_data_rank(epochs):

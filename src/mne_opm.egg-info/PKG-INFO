@@ -19,6 +19,7 @@ Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: dcm2niix>=1.0.20250506
 Requires-Dist: dupy>=1.2105.11
+Requires-Dist: imageio[ffmpeg]>=2.37.2
 Requires-Dist: ipykernel>=7.1.0
 Requires-Dist: mne
 Requires-Dist: mne-bids
