@@ -408,18 +408,18 @@ class TestTemporalGen:
 
 
 class TestEpochDecoding:
-    """Test run_subject_epoch_decoding."""
+    """Test run_subject_epoch_decoding (nested LOGO CV + GridSearchCV)."""
 
     def test_returns_expected_keys(self, binary_epochs, simple_contrast):
-        with patch("custom.run_decoding.cross_val_score") as mock_cv:
-            mock_cv.return_value = np.array([0.6, 0.7])
-            result = run_subject_epoch_decoding(
-                binary_epochs, simple_contrast, scoring="roc_auc"
-            )
-
+        """Result dict must contain the expected keys."""
+        result = run_subject_epoch_decoding(
+            binary_epochs, simple_contrast, scoring="roc_auc"
+        )
         assert result is not None
         assert "score" in result
         assert "cv_scores" in result
+        assert "best_C_per_fold" in result
+        assert "epoch_C_grid" in result
         assert isinstance(result["score"], (float, np.floating))
 
     def test_returns_none_for_empty(self, binary_epochs):
@@ -431,14 +431,24 @@ class TestEpochDecoding:
         assert result is None
 
     def test_cv_scores_array(self, binary_epochs, simple_contrast):
-        """cv_scores should be a 1-D array."""
-        with patch("custom.run_decoding.cross_val_score") as mock_cv:
-            mock_cv.return_value = np.array([0.5, 0.6, 0.7])
-            result = run_subject_epoch_decoding(
-                binary_epochs, simple_contrast
-            )
-
+        """cv_scores should be a 1-D array with one entry per outer fold."""
+        result = run_subject_epoch_decoding(binary_epochs, simple_contrast)
         assert result["cv_scores"].ndim == 1
+
+    def test_best_C_per_fold_length(self, binary_epochs, simple_contrast):
+        """best_C_per_fold should have one entry per outer fold."""
+        result = run_subject_epoch_decoding(binary_epochs, simple_contrast)
+        assert len(result["best_C_per_fold"]) == len(result["cv_scores"])
+
+    def test_best_C_values_in_grid(self, binary_epochs, simple_contrast):
+        """Every selected C must come from the searched grid."""
+        C_grid = [0.001, 0.01, 0.1, 1]
+        result = run_subject_epoch_decoding(
+            binary_epochs, simple_contrast, epoch_C_grid=C_grid
+        )
+        # When inner CV can't split (only 2 runs in fixture), default C=1 is used
+        for c in result["best_C_per_fold"]:
+            assert c in C_grid or c == 1.0
 
 
 class TestCrossDecoding:
@@ -578,7 +588,11 @@ class TestSaveFunctions:
 
     def test_save_epoch_results(self, tmp_path):
         bids_path = self._make_mock_bids_path(tmp_path)
-        result = {"score": 0.75}
+        result = {
+            "score": 0.75,
+            "cv_scores": np.array([0.7, 0.8]),
+            "best_C_per_fold": [0.1, 1.0],
+        }
         contrast = {"name": "task", "conditions": ["c1", "c2"]}
 
         with patch("custom.run_decoding.sanitize_cond_name",
@@ -706,6 +720,19 @@ class TestPlotFunctions:
         )
 
     def test_plot_epoch_bar_no_raise(self, tmp_path):
+        from custom.run_decoding import plot_subject_epoch_bar
+        epoch_results = {
+            "task": {
+                "cv_scores": np.array([0.6, 0.7, 0.8]),
+                "best_C_per_fold": [0.1, 0.1, 1.0],
+            },
+        }
+        plot_subject_epoch_bar(
+            epoch_results, "sub-007", tmp_path, ["png"], chance=0.5
+        )
+
+    def test_plot_epoch_bar_no_C_no_raise(self, tmp_path):
+        """Epoch bar plot without best_C_per_fold (no C subplot) should not raise."""
         from custom.run_decoding import plot_subject_epoch_bar
         epoch_results = {
             "task": {"cv_scores": np.array([0.6, 0.7, 0.8])},

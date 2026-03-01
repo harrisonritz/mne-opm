@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -34,8 +35,8 @@ from mne.decoding import (
     get_coef,
 )
 from mne_bids import BIDSPath
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import LeaveOneGroupOut, cross_val_score
+from sklearn.metrics import get_scorer, roc_auc_score
+from sklearn.model_selection import GridSearchCV, LeaveOneGroupOut, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.svm import LinearSVC
 
@@ -262,14 +263,29 @@ def run_subject_temporal_gen(epochs, contrast, scoring="roc_auc",
 
 def run_subject_epoch_decoding(epochs, contrast, scoring="roc_auc",
                                 group_column="run",
-                                epoch_n_components=0.99):
-    """Full-epoch decoding for one subject x contrast (LOGO cross-validation).
+                                epoch_n_components=0.99,
+                                epoch_C_grid=None):
+    """Full-epoch decoding for one subject x contrast (nested LOGO cross-validation).
+
+    Outer loop: LeaveOneGroupOut (leave one run out).
+    Inner loop: GridSearchCV over ``epoch_C_grid`` values of the SVM
+    regularisation parameter C, also using LeaveOneGroupOut.  When the
+    training fold contains fewer than two unique groups (e.g. only 2 runs
+    total), the inner CV cannot split and falls back to the default C = 1.
+
+    Parameters
+    ----------
+    epoch_C_grid : list of float or None
+        C values to search.  Defaults to [0.001, 0.01, 0.1, 1].
 
     Returns
     -------
-    dict with keys: score, cv_scores, n_cond1, n_cond2
-    or None if a condition has no epochs.
+    dict with keys: score, cv_scores, best_C_per_fold, epoch_C_grid,
+    n_cond1, n_cond2; or None if a condition has no epochs.
     """
+    if epoch_C_grid is None:
+        epoch_C_grid = [0.001, 0.01, 0.1, 1]
+
     prepped = _prep_contrast(epochs, contrast, group_column=group_column)
     if prepped is None:
         return None
@@ -279,21 +295,59 @@ def run_subject_epoch_decoding(epochs, contrast, scoring="roc_auc",
     n_comp = _resolve_n_components(epoch_n_components, rank)
     print(f"      PCA n_components (epoch): {epoch_n_components!r} -> {n_comp}")
 
-    clf = _make_epoch_clf(n_comp)
+    param_grid = {"linearsvc__C": epoch_C_grid}
+    scorer = get_scorer(scoring)
+    outer_cv = LeaveOneGroupOut()
 
-    print(f"      Running epoch decoding (LOGO CV): {contrast['name']} ...")
-    cv_scores = cross_val_score(
-        clf, X, y,
-        cv=LeaveOneGroupOut(), groups=groups,
-        scoring=scoring, n_jobs=1,
-    )
+    print(f"      Running epoch decoding (nested LOGO CV): {contrast['name']} ...")
+    cv_scores = []
+    best_C_per_fold = []
+
+    for fold_i, (train_idx, test_idx) in enumerate(outer_cv.split(X, y, groups)):
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        groups_train = groups[train_idx]
+
+        n_inner_groups = len(np.unique(groups_train))
+        if n_inner_groups < 2:
+            # Cannot run inner LOGO CV with fewer than 2 groups; use default C=1
+            print(
+                f"        fold {fold_i}: only {n_inner_groups} group(s) in training "
+                f"set — inner CV skipped, using default C=1"
+            )
+            clf = _make_epoch_clf(n_comp)
+            clf.fit(X_train, y_train)
+            fold_score = scorer(clf, X_test, y_test)
+            best_C = 1.0
+        else:
+            clf_gs = GridSearchCV(
+                _make_epoch_clf(n_comp), param_grid,
+                cv=LeaveOneGroupOut(), scoring=scoring,
+                refit=True, n_jobs=1,
+            )
+            clf_gs.fit(X_train, y_train, groups=groups_train)
+            fold_score = scorer(clf_gs, X_test, y_test)
+            best_C = clf_gs.best_params_["linearsvc__C"]
+            print(f"        fold {fold_i}: best C = {best_C:.4g}, "
+                  f"score = {fold_score:.3f}")
+
+        cv_scores.append(fold_score)
+        best_C_per_fold.append(best_C)
+
+    cv_scores = np.array(cv_scores)
     mean_score = cv_scores.mean()
 
+    modal_C = Counter(best_C_per_fold).most_common(1)[0][0]
     print(
         f"      {contrast['name']}: mean = {mean_score:.3f} "
-        f"+/- {cv_scores.std():.3f}"
+        f"+/- {cv_scores.std():.3f}  |  "
+        f"best C per fold: {best_C_per_fold}  (mode = {modal_C:.4g})"
     )
-    return dict(score=mean_score, cv_scores=cv_scores, n_cond1=n1, n_cond2=n2)
+    return dict(
+        score=mean_score, cv_scores=cv_scores,
+        best_C_per_fold=best_C_per_fold, epoch_C_grid=epoch_C_grid,
+        n_cond1=n1, n_cond2=n2,
+    )
 
 
 def run_subject_cross_decoding(epochs, cross_contrast, scoring="roc_auc",
@@ -417,7 +471,7 @@ def save_time_results(bids_path, contrast, result, scoring, out_dir):
 
 
 def save_epoch_results(bids_path, contrast, result, scoring, out_dir):
-    """Save full-epoch decoding results as TSV."""
+    """Save full-epoch decoding results as TSV (one row per outer CV fold)."""
     cond_san = sanitize_cond_name(contrast["name"])
     cond_1, cond_2 = contrast["conditions"]
 
@@ -427,11 +481,19 @@ def save_epoch_results(bids_path, contrast, result, scoring, out_dir):
         extension=".tsv",
     ).fpath.name
     tsv_save_path = out_dir / tsv_name
+
+    cv_scores = result["cv_scores"]
+    n_folds = len(cv_scores)
+    best_C = result.get("best_C_per_fold", [None] * n_folds)
+
     pd.DataFrame({
-        "cond_1": [cond_1],
-        "cond_2": [cond_2],
-        "mean_crossval_score": [result["score"]],
-        "metric": [scoring],
+        "cond_1": [cond_1] * n_folds,
+        "cond_2": [cond_2] * n_folds,
+        "fold": list(range(n_folds)),
+        "fold_score": cv_scores,
+        "best_C": best_C,
+        "mean_score": [result["score"]] * n_folds,
+        "metric": [scoring] * n_folds,
     }).to_csv(tsv_save_path, sep="\t", index=False)
     print(f"      Saved: {tsv_save_path}")
 
@@ -601,26 +663,42 @@ def plot_subject_time_ribbon(time_results, subject, out_dir, save_formats,
 
 def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
                             chance=0.5):
-    """Bar plot of full-epoch decoding for a single subject."""
+    """Bar plot of full-epoch decoding for a single subject.
+
+    Subplot 1 — accuracy: mean +/- 95 % CI bar + per-fold strip plot.
+    Subplot 2 — optimal C (when ``best_C_per_fold`` is present in results):
+        bar height = modal C across folds, dots = per-fold values.
+    """
     contrast_names = sorted(epoch_results.keys())
     if not contrast_names:
         return
 
+    has_C = any("best_C_per_fold" in res for res in epoch_results.values())
+    n_rows = 2 if has_C else 1
+    fig_w = max(6, len(contrast_names) * 1.2)
+
+    fig, axes_arr = plt.subplots(
+        n_rows, 1, figsize=(fig_w, 5 * n_rows), squeeze=False
+    )
+    ax = axes_arr[0, 0]
+
+    # ---- Subplot 1: decoding accuracy ----
     records = []
     for cname, res in epoch_results.items():
         for sc in res["cv_scores"]:
             records.append({"contrast": cname, "score": float(sc)})
     df = pd.DataFrame(records)
 
-    fig, ax = plt.subplots(figsize=(max(6, len(contrast_names) * 1.2), 5))
     sns.barplot(
         data=df, x="contrast", y="score",
         errorbar=("ci", 95), capsize=0.15,
         color="steelblue", edgecolor="black", ax=ax,
+        order=contrast_names,
     )
     sns.stripplot(
         data=df, x="contrast", y="score",
         color="black", alpha=0.6, size=5, jitter=True, ax=ax,
+        order=contrast_names,
     )
     ax.axhline(chance, color="red", linestyle="--", linewidth=1,
                label="chance (0.5)")
@@ -632,6 +710,55 @@ def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
     )
     ax.legend(fontsize=8)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
+
+    # ---- Subplot 2: optimal SVM C ----
+    if has_C:
+        ax2 = axes_arr[1, 0]
+
+        records_C = []
+        modal_C_per_contrast = {}
+        for cname, res in epoch_results.items():
+            if "best_C_per_fold" not in res:
+                continue
+            c_vals = res["best_C_per_fold"]
+            modal_C_per_contrast[cname] = Counter(c_vals).most_common(1)[0][0]
+            for c in c_vals:
+                records_C.append({"contrast": cname, "best_C": float(c)})
+        df_C = pd.DataFrame(records_C)
+
+        x_pos = np.arange(len(contrast_names))
+        modal_vals = [modal_C_per_contrast.get(n, np.nan) for n in contrast_names]
+        ax2.bar(
+            x_pos, modal_vals,
+            color="steelblue", edgecolor="black", alpha=0.7, label="mode",
+        )
+
+        rng_jitter = np.random.default_rng(42)
+        for xi, cname in enumerate(contrast_names):
+            c_fold = df_C.loc[df_C["contrast"] == cname, "best_C"].values
+            jitter = rng_jitter.uniform(-0.2, 0.2, len(c_fold))
+            ax2.scatter(
+                xi + jitter, c_fold,
+                color="black", alpha=0.7, s=40, zorder=3,
+            )
+
+        # Y-axis: log scale, ticks at the searched C values
+        all_c_vals = sorted(
+            set(c for res in epoch_results.values()
+                for c in res.get("best_C_per_fold", []))
+        )
+        if all_c_vals:
+            ax2.set_yscale("log")
+            ax2.set_yticks(all_c_vals)
+            ax2.set_yticklabels([str(c) for c in all_c_vals])
+        ax2.set_xticks(x_pos)
+        ax2.set_xticklabels(contrast_names, rotation=45, ha="right", fontsize=8)
+        ax2.set_ylabel("Optimal C (log scale)")
+        ax2.set_title(
+            "Optimal SVM regularisation C\n"
+            "(bar = mode across folds, dots = per fold)"
+        )
+
     fig.tight_layout()
     save_fig(fig, out_dir / f"{subject}__epoch_bar", save_formats)
     plt.close(fig)
@@ -971,6 +1098,7 @@ def process_subject(cfg):
     group_column = cfg._decoder_group_column
     time_n_components = getattr(cfg, "_decoder_time_n_components", "rank")
     epoch_n_components = getattr(cfg, "_decoder_epoch_n_components", 0.99)
+    epoch_C_grid = getattr(cfg, "_decoder_epoch_C_grid", [0.001, 0.01, 0.1, 1])
     pattern_times = getattr(cfg, "_decoder_pattern_times", None)
 
     # Output directory for all decoding results (data files + figures)
@@ -1023,6 +1151,7 @@ def process_subject(cfg):
             scoring=scoring,
             group_column=group_column,
             epoch_n_components=epoch_n_components,
+            epoch_C_grid=epoch_C_grid,
         )
         if e_res is not None:
             save_epoch_results(bids_path, contrast, e_res, scoring, decoding_dir)
