@@ -379,88 +379,93 @@ def run_subject_cross_decoding(epochs, cross_contrast, scoring="roc_auc",
 # BIDS save functions
 # ---------------------------------------------------------------------------
 
-def save_time_results(bids_path, contrast, result, scoring):
+def save_time_results(bids_path, contrast, result, scoring, out_dir):
     """Save time-by-time decoding results as TSV and patterns as NPZ."""
     cond_san = sanitize_cond_name(contrast["name"])
     cond_1, cond_2 = contrast["conditions"]
     times = result["times"]
 
-    tsv_path = bids_path.copy().update(
+    tsv_name = bids_path.copy().update(
         processing=cond_san,
         suffix=f"decode-time+{scoring}",
         extension=".tsv",
-    )
+    ).fpath.name
+    tsv_save_path = out_dir / tsv_name
     pd.DataFrame({
         "cond_1": [cond_1] * len(times),
         "cond_2": [cond_2] * len(times),
         "time": times,
         "mean_crossval_score": result["scores"],
         "metric": [scoring] * len(times),
-    }).to_csv(tsv_path.fpath, sep="\t", index=False)
-    print(f"      Saved: {tsv_path.fpath}")
+    }).to_csv(tsv_save_path, sep="\t", index=False)
+    print(f"      Saved: {tsv_save_path}")
 
-    npz_path = bids_path.copy().update(
+    npz_name = bids_path.copy().update(
         processing=cond_san,
         suffix="decode-patterns",
         extension=".npz",
-    )
+    ).fpath.name
+    npz_save_path = out_dir / npz_name
     np.savez(
-        npz_path.fpath,
+        npz_save_path,
         patterns=result["patterns"],
         filters=result["filters"],
         times=times,
         ch_names=result["info"]["ch_names"],
     )
-    print(f"      Saved: {npz_path.fpath}")
+    print(f"      Saved: {npz_save_path}")
 
 
-def save_epoch_results(bids_path, contrast, result, scoring):
+def save_epoch_results(bids_path, contrast, result, scoring, out_dir):
     """Save full-epoch decoding results as TSV."""
     cond_san = sanitize_cond_name(contrast["name"])
     cond_1, cond_2 = contrast["conditions"]
 
-    tsv_path = bids_path.copy().update(
+    tsv_name = bids_path.copy().update(
         processing=cond_san,
         suffix=f"decode-epoch+{scoring}",
         extension=".tsv",
-    )
+    ).fpath.name
+    tsv_save_path = out_dir / tsv_name
     pd.DataFrame({
         "cond_1": [cond_1],
         "cond_2": [cond_2],
         "mean_crossval_score": [result["score"]],
         "metric": [scoring],
-    }).to_csv(tsv_path.fpath, sep="\t", index=False)
-    print(f"      Saved: {tsv_path.fpath}")
+    }).to_csv(tsv_save_path, sep="\t", index=False)
+    print(f"      Saved: {tsv_save_path}")
 
 
-def save_tg_results(bids_path, contrast, result):
+def save_tg_results(bids_path, contrast, result, out_dir):
     """Save temporal generalization results as NPZ."""
     cond_san = sanitize_cond_name(contrast["name"])
 
-    npz_path = bids_path.copy().update(
+    npz_name = bids_path.copy().update(
         processing=cond_san,
         suffix="decode-tg",
         extension=".npz",
-    )
+    ).fpath.name
+    npz_save_path = out_dir / npz_name
     np.savez(
-        npz_path.fpath,
+        npz_save_path,
         cv_scores=result["cv_scores"],
         scores_mean=result["scores_mean"],
         times=result["times"],
     )
-    print(f"      Saved: {npz_path.fpath}")
+    print(f"      Saved: {npz_save_path}")
 
 
-def save_cross_time_results(bids_path, cross_contrast, result, scoring):
+def save_cross_time_results(bids_path, cross_contrast, result, scoring, out_dir):
     """Save cross-condition time decoding results."""
     cc_san = sanitize_cond_name(cross_contrast["name"])
     times = result["times"]
 
-    tsv_path = bids_path.copy().update(
+    tsv_name = bids_path.copy().update(
         processing=cc_san,
         suffix=f"decode-crosstime+{scoring}",
         extension=".tsv",
-    )
+    ).fpath.name
+    tsv_save_path = out_dir / tsv_name
     pd.DataFrame({
         "train_cond_1": [cross_contrast["train"]["conditions"][0]] * len(times),
         "train_cond_2": [cross_contrast["train"]["conditions"][1]] * len(times),
@@ -469,33 +474,35 @@ def save_cross_time_results(bids_path, cross_contrast, result, scoring):
         "time": times,
         "score": result["scores"],
         "metric": [scoring] * len(times),
-    }).to_csv(tsv_path.fpath, sep="\t", index=False)
-    print(f"      Saved: {tsv_path.fpath}")
+    }).to_csv(tsv_save_path, sep="\t", index=False)
+    print(f"      Saved: {tsv_save_path}")
 
-    npz_path = bids_path.copy().update(
+    npz_name = bids_path.copy().update(
         processing=cc_san,
         suffix="decode-crosspatterns",
         extension=".npz",
-    )
+    ).fpath.name
+    npz_save_path = out_dir / npz_name
     np.savez(
-        npz_path.fpath,
+        npz_save_path,
         patterns=result["patterns"],
         filters=result["filters"],
         times=times,
         ch_names=result["info"]["ch_names"],
     )
-    print(f"      Saved: {npz_path.fpath}")
+    print(f"      Saved: {npz_save_path}")
 
 
-def save_cross_epoch_results(bids_path, cross_contrast, result, scoring):
+def save_cross_epoch_results(bids_path, cross_contrast, result, scoring, out_dir):
     """Save cross-condition epoch decoding results."""
     cc_san = sanitize_cond_name(cross_contrast["name"])
 
-    tsv_path = bids_path.copy().update(
+    tsv_name = bids_path.copy().update(
         processing=cc_san,
         suffix=f"decode-crossepoch+{scoring}",
         extension=".tsv",
-    )
+    ).fpath.name
+    tsv_save_path = out_dir / tsv_name
     pd.DataFrame({
         "train_cond_1": [cross_contrast["train"]["conditions"][0]],
         "train_cond_2": [cross_contrast["train"]["conditions"][1]],
@@ -503,27 +510,28 @@ def save_cross_epoch_results(bids_path, cross_contrast, result, scoring):
         "test_cond_2": [cross_contrast["test"]["conditions"][1]],
         "score": [result["score"]],
         "metric": [scoring],
-    }).to_csv(tsv_path.fpath, sep="\t", index=False)
-    print(f"      Saved: {tsv_path.fpath}")
+    }).to_csv(tsv_save_path, sep="\t", index=False)
+    print(f"      Saved: {tsv_save_path}")
 
 
-def save_cross_tg_results(bids_path, cross_contrast, cc_res, result):
+def save_cross_tg_results(bids_path, cross_contrast, cc_res, result, out_dir):
     """Save cross-condition temporal generalization results."""
     cc_san = sanitize_cond_name(cross_contrast["name"])
 
-    npz_path = bids_path.copy().update(
+    npz_name = bids_path.copy().update(
         processing=cc_san,
         suffix="decode-crosstg",
         extension=".npz",
-    )
+    ).fpath.name
+    npz_save_path = out_dir / npz_name
     np.savez(
-        npz_path.fpath,
+        npz_save_path,
         scores_mean=result["scores_mean"],
         times=result["times"],
         train_name=cc_res["train_name"],
         test_name=cc_res["test_name"],
     )
-    print(f"      Saved: {npz_path.fpath}")
+    print(f"      Saved: {npz_save_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -854,6 +862,59 @@ def plot_subject_cross_tg_heatmap(cross_tg_results, subject, out_dir,
     plt.close(fig)
 
 
+def plot_subject_time_patterns(results, subject, out_dir, save_formats,
+                               pattern_times=None, file_prefix="time_patterns"):
+    """Plot decoder patterns as a topographic joint plot (EvokedArray.plot_joint).
+
+    One figure per contrast.  Patterns are mapped back to sensor space via
+    ``get_coef(..., inverse_transform=True)`` (already done upstream) so the
+    EvokedArray inherits the full channel info and montage.
+
+    Parameters
+    ----------
+    results : dict
+        Mapping contrast_name -> result dict containing at least
+        ``patterns`` (n_channels x n_times), ``info``, and ``times``.
+    subject : str
+        Subject label used in the figure title and filename.
+    out_dir : Path
+        Directory where figures are written.
+    save_formats : list of str
+        File format extensions (e.g. ["png", "pdf"]).
+    pattern_times : array-like or None
+        Time points (in seconds) shown as topomaps in plot_joint.
+        None / not set → MNE auto-selects representative times.
+    file_prefix : str
+        Filename prefix distinguishing within- vs cross-condition patterns.
+    """
+    times_arg = pattern_times if pattern_times is not None else "auto"
+    joint_kwargs = dict(ts_args=dict(time_unit="s"), topomap_args=dict(time_unit="s"))
+
+    for cname, res in results.items():
+        if "patterns" not in res or "info" not in res:
+            continue
+        patterns = res["patterns"]   # (n_channels, n_times)
+        info = res["info"]
+        times = res["times"]
+
+        evoked = mne.EvokedArray(patterns, info, tmin=times[0])
+        try:
+            fig = evoked.plot_joint(
+                times=times_arg,
+                title=f"Patterns: {cname} -- {subject}",
+                show=False,
+                **joint_kwargs,
+            )
+        except Exception as e:
+            print(f"      WARNING: pattern plot_joint failed for {cname}: {e}")
+            plt.close("all")
+            continue
+
+        cname_san = sanitize_cond_name(cname)
+        save_fig(fig, out_dir / f"{subject}__{file_prefix}_{cname_san}", save_formats)
+        plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # Per-subject orchestration
 # ---------------------------------------------------------------------------
@@ -910,10 +971,11 @@ def process_subject(cfg):
     group_column = cfg._decoder_group_column
     time_n_components = getattr(cfg, "_decoder_time_n_components", "rank")
     epoch_n_components = getattr(cfg, "_decoder_epoch_n_components", 0.99)
+    pattern_times = getattr(cfg, "_decoder_pattern_times", None)
 
-    # Output directory for figures (same dir as BIDS derivatives for this subject)
-    fig_dir = epochs_path.fpath.parent
-    fig_dir.mkdir(parents=True, exist_ok=True)
+    # Output directory for all decoding results (data files + figures)
+    decoding_dir = epochs_path.fpath.parent / "decoding"
+    decoding_dir.mkdir(parents=True, exist_ok=True)
 
     # Result accumulators (for plotting)
     time_results = {}
@@ -938,7 +1000,7 @@ def process_subject(cfg):
             time_n_components=time_n_components,
         )
         if t_res is not None:
-            save_time_results(bids_path, contrast, t_res, scoring)
+            save_time_results(bids_path, contrast, t_res, scoring, decoding_dir)
             time_results[cname] = t_res
 
         # Temporal generalization
@@ -951,7 +1013,7 @@ def process_subject(cfg):
                 time_n_components=time_n_components,
             )
             if tg_res is not None:
-                save_tg_results(bids_path, contrast, tg_res)
+                save_tg_results(bids_path, contrast, tg_res, decoding_dir)
                 tg_results[cname] = tg_res
 
         # Full-epoch decoding
@@ -963,7 +1025,7 @@ def process_subject(cfg):
             epoch_n_components=epoch_n_components,
         )
         if e_res is not None:
-            save_epoch_results(bids_path, contrast, e_res, scoring)
+            save_epoch_results(bids_path, contrast, e_res, scoring, decoding_dir)
             epoch_results[cname] = e_res
 
     # ---- Cross-condition contrasts ----
@@ -981,18 +1043,18 @@ def process_subject(cfg):
             continue
 
         if "time" in cc_res:
-            save_cross_time_results(bids_path, cc, cc_res["time"], scoring)
+            save_cross_time_results(bids_path, cc, cc_res["time"], scoring, decoding_dir)
             # Add metadata for plot labels
             cc_res["time"]["train_name"] = cc_res["train_name"]
             cc_res["time"]["test_name"] = cc_res["test_name"]
             cross_time_results[ccname] = cc_res["time"]
 
         if "epoch" in cc_res:
-            save_cross_epoch_results(bids_path, cc, cc_res["epoch"], scoring)
+            save_cross_epoch_results(bids_path, cc, cc_res["epoch"], scoring, decoding_dir)
             cross_epoch_results[ccname] = cc_res["epoch"]
 
         if "tg" in cc_res:
-            save_cross_tg_results(bids_path, cc, cc_res, cc_res["tg"])
+            save_cross_tg_results(bids_path, cc, cc_res, cc_res["tg"], decoding_dir)
             # Add metadata for plot labels
             cc_res["tg"]["train_name"] = cc_res["train_name"]
             cc_res["tg"]["test_name"] = cc_res["test_name"]
@@ -1001,21 +1063,26 @@ def process_subject(cfg):
     # ---- Per-subject plots ----
     print(f"\n  Plotting individual results for {subject} ...")
     if time_results:
-        plot_subject_time_ribbon(time_results, subject, fig_dir,
+        plot_subject_time_ribbon(time_results, subject, decoding_dir,
                                   save_formats, chance)
+        plot_subject_time_patterns(time_results, subject, decoding_dir,
+                                   save_formats, pattern_times)
     if epoch_results:
-        plot_subject_epoch_bar(epoch_results, subject, fig_dir,
+        plot_subject_epoch_bar(epoch_results, subject, decoding_dir,
                                 save_formats, chance)
     if tg_results:
-        plot_subject_tg_heatmap(tg_results, subject, fig_dir, save_formats)
+        plot_subject_tg_heatmap(tg_results, subject, decoding_dir, save_formats)
     if cross_time_results:
-        plot_subject_cross_ribbon(cross_time_results, subject, fig_dir,
+        plot_subject_cross_ribbon(cross_time_results, subject, decoding_dir,
                                    save_formats, chance)
+        plot_subject_time_patterns(cross_time_results, subject, decoding_dir,
+                                   save_formats, pattern_times,
+                                   file_prefix="cross_time_patterns")
     if cross_epoch_results:
-        plot_subject_cross_epoch_bar(cross_epoch_results, subject, fig_dir,
+        plot_subject_cross_epoch_bar(cross_epoch_results, subject, decoding_dir,
                                       save_formats, chance)
     if cross_tg_results:
-        plot_subject_cross_tg_heatmap(cross_tg_results, subject, fig_dir,
+        plot_subject_cross_tg_heatmap(cross_tg_results, subject, decoding_dir,
                                         save_formats)
 
     del epochs

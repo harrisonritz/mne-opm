@@ -33,6 +33,7 @@ from custom.run_decoding import (
     save_cross_epoch_results,
     save_cross_tg_results,
     save_fig,
+    plot_subject_time_patterns,
     process_subject,
     main,
 )
@@ -570,7 +571,7 @@ class TestSaveFunctions:
 
         with patch("custom.run_decoding.sanitize_cond_name",
                     return_value="task"):
-            save_time_results(bids_path, contrast, result, "roc_auc")
+            save_time_results(bids_path, contrast, result, "roc_auc", tmp_path)
 
         # Should call copy() twice: once for TSV, once for NPZ
         assert bids_path.copy.call_count == 2
@@ -582,7 +583,7 @@ class TestSaveFunctions:
 
         with patch("custom.run_decoding.sanitize_cond_name",
                     return_value="task"):
-            save_epoch_results(bids_path, contrast, result, "roc_auc")
+            save_epoch_results(bids_path, contrast, result, "roc_auc", tmp_path)
 
         assert bids_path.copy.call_count == 1
 
@@ -597,7 +598,7 @@ class TestSaveFunctions:
 
         with patch("custom.run_decoding.sanitize_cond_name",
                     return_value="task"):
-            save_tg_results(bids_path, contrast, result)
+            save_tg_results(bids_path, contrast, result, tmp_path)
 
         assert bids_path.copy.call_count == 1
 
@@ -621,7 +622,7 @@ class TestSaveFunctions:
         with patch("custom.run_decoding.sanitize_cond_name",
                     return_value="crosstest"):
             save_cross_time_results(
-                bids_path, cross_contrast, result, "roc_auc"
+                bids_path, cross_contrast, result, "roc_auc", tmp_path
             )
 
         # TSV + NPZ = 2 calls
@@ -639,7 +640,7 @@ class TestSaveFunctions:
         with patch("custom.run_decoding.sanitize_cond_name",
                     return_value="crosstest"):
             save_cross_epoch_results(
-                bids_path, cross_contrast, result, "roc_auc"
+                bids_path, cross_contrast, result, "roc_auc", tmp_path
             )
 
         assert bids_path.copy.call_count == 1
@@ -656,7 +657,7 @@ class TestSaveFunctions:
         with patch("custom.run_decoding.sanitize_cond_name",
                     return_value="crosstest"):
             save_cross_tg_results(
-                bids_path, cross_contrast, cc_res, result
+                bids_path, cross_contrast, cc_res, result, tmp_path
             )
 
         assert bids_path.copy.call_count == 1
@@ -761,6 +762,38 @@ class TestPlotFunctions:
         plot_subject_cross_tg_heatmap(
             cross_results, "sub-007", tmp_path, ["png"]
         )
+
+    def test_plot_time_patterns_no_raise(self, tmp_path, capsys):
+        """Smoke test: function should not raise even when plot_joint fails.
+
+        Synthetic info objects have no channel positions, so plot_joint will
+        fail gracefully (caught exception + WARNING printed).  The important
+        thing is that the function does not propagate the exception.
+        """
+        n_channels = 8
+        n_times = 20
+        sfreq = 100.0
+        info = mne.create_info(
+            ch_names=[f"MEG{i:03d}" for i in range(n_channels)],
+            sfreq=sfreq,
+            ch_types=["mag"] * n_channels,
+        )
+        results = {
+            "task": {
+                "patterns": np.random.rand(n_channels, n_times) * 1e-13,
+                "info": info,
+                "times": np.linspace(-0.1, 0.1, n_times),
+            },
+        }
+        # Must not raise regardless of whether plot_joint succeeds
+        plot_subject_time_patterns(
+            results, "sub-007", tmp_path, ["png"], pattern_times=None
+        )
+
+    def test_plot_time_patterns_missing_keys_no_raise(self, tmp_path):
+        """Results without patterns/info keys should be silently skipped."""
+        results = {"task": {"times": np.linspace(-0.1, 0.1, 20)}}
+        plot_subject_time_patterns(results, "sub-007", tmp_path, ["png"])
 
     def test_empty_results_no_raise(self, tmp_path):
         """Empty result dicts should not raise."""
