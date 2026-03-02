@@ -257,7 +257,7 @@ def mark_bad_channels_bids(
     if not bad_channels:
         return
 
-    bids_path = _get_bids_path(cfg, task=task, from_derivatives=False)
+    bids_path = get_bids_path_for_task(cfg, task=task, from_derivatives=False)
 
     mne_bids.mark_channels(
         bids_path=bids_path,
@@ -285,4 +285,4 @@ def get_empty_room_bids_path(cfg: SimpleNamespace) -> BIDSPath:
     bids_path : BIDSPath
         BIDSPath for the empty room recording.
     """
-    return _get_bids_path(cfg, task="noise", from_derivatives=False)
+    return get_bids_path_for_task(cfg, task="noise", from_derivatives=False)
