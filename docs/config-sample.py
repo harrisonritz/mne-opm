@@ -72,9 +72,9 @@ conditions = [
 ]
 
 # Contrasts computed at the sensor and source level
-# Format: ('name', 'condition_A', 'condition_B')  →  A minus B
+# Format: {'name': str, 'conditions': [condition_A, condition_B], 'weights': [1.0, -1.0]}  →  A minus B
 contrasts = [
-    ('MMN', 'deviant_onset', 'standard_onset'),
+    {'name': 'MMN', 'conditions': ['deviant_onset', 'standard_onset'], 'weights': [1.0, -1.0]}
 ]
 
 # Epoch window (seconds relative to trigger)
