@@ -191,6 +191,29 @@ epochs_decim = 3
 event_repeated = 'drop'         # if two triggers land on same sample, drop one
 reject = dict(mag=5e-12)        # peak-to-peak amplitude rejection threshold (T)
 
+
+# --- SSP, ICA, and artifact regression ---
+# TODO: artifact rejection doesn't work yet (eg regressing out ref channels)
+# regress_artifact = {"picks": "mag", "picks_artifact":'ref_meg'}
+
+# TODO: ICA autoreject doesn't work yet
+# ica_reject = 'autoreject_local'
+spatial_filter = 'ica'
+ica_algorithm = 'picard'
+ica_l_freq = 1.0
+ica_max_iterations = 1024
+ica_n_components = 64
+ica_decim = epochs_decim
+ica_reject = dict(mag=5e-12)
+ica_ecg_threshold = 0.10
+ica_eog_threshold = 3.0
+
+# TODO: autoreject doesn't work yet
+# Amplitude-based artifact rejection
+# reject = "autoreject_local"
+# autoreject_n_interpolate = [2, 4, 8]
+
+
 # --- Reference channel regression ---
 # Regresses out interference captured by OPM reference channels.
 # Applied as a custom step in custom_preproc.py.
