@@ -96,6 +96,7 @@ class AutoICAAnalysis(BaseAnalysis):
     ANALYSIS_KEY = "autoica"
     ANALYSIS_NAME = "auto_ica"
 
+    
     def is_enabled(self) -> bool:
         """Check if automatic ICA is enabled.
 
@@ -109,6 +110,7 @@ class AutoICAAnalysis(BaseAnalysis):
         auto_enabled = getattr(self.cfg, "_auto_ica", False)
         ica_enabled = getattr(self.cfg, "spatial_filter", None) == "ica"
         return auto_enabled and ica_enabled
+
 
     def load_data(self) -> Dict[str, Any]:
         """Load raw data and ICA solution.
@@ -132,7 +134,7 @@ class AutoICAAnalysis(BaseAnalysis):
             subjects=subject,
             sessions=session,
             tasks=self.cfg.task,
-            processings="clean",
+            processings=getattr(self.cfg, "_ica_input_processing", "filt"),  #can be overridden in config now if "clean" is desired.
             suffixes="raw",
             extensions=".fif",
             datatypes="meg",

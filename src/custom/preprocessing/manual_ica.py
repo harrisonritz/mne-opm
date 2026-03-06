@@ -89,6 +89,7 @@ class ManualICAAnalysis(BaseAnalysis):
     ANALYSIS_KEY = "manualica"
     ANALYSIS_NAME = "manual_ica"
 
+
     def is_enabled(self) -> bool:
         """Check if manual ICA review is enabled.
 
@@ -125,7 +126,7 @@ class ManualICAAnalysis(BaseAnalysis):
             subjects=subject,
             sessions=session,
             tasks=self.cfg.task,
-            processings="clean",
+            processings=getattr(self.cfg, "_ica_input_processing", "filt"),  #can be overridden in config now if "clean" is desired.
             suffixes="raw",
             extensions=".fif",
             datatypes="meg",
