@@ -17,6 +17,7 @@ import pandas as pd
 import numpy as np
 
 
+
 # %% ============================================================
 # SECTION 1: ENVIRONMENT — used by ALL pipeline stages
 # Source: run_all.sh / run_anat.sh / run_func.sh / run_preproc.sh etc.
@@ -155,7 +156,7 @@ mf_ctc_missing = "warn"
 
 # --- Bad channel / segment detection ---
 # Automated flat/noisy channel detection via Maxwell-style algorithm.
-# Set to True only if using Maxwell filter (it relies on SSS geometry).
+# Is is automatically set to True only if using Maxwell filter (it relies on SSS geometry).
 find_flat_channels_meg  = use_maxwell_filter
 find_noisy_channels_meg = use_maxwell_filter
 find_bad_channels_extra_kws = {'ignore_ref': True}
