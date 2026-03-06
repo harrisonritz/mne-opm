@@ -109,6 +109,22 @@ python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_epochs --config=$C
 echo ""
 echo "======================= MNE: prep source space =============================================="
 echo ""
+
+## workaround: copy empty-room proc-filt to proc-clean ----------------
+# mne_bids_pipeline does not appear to auto-create a proc-clean empty-room file after
+# filtering (ICA is not applied to empty-room data), but make_cov requires it.
+echo ""
+echo "======================= Copying empty-room proc-filt → proc-clean =============================================="
+echo ""
+NOISE_FILT=$(find "$BIDS_DIR/derivatives" -name "sub-${SUBJECT}_ses-*_task-noise_proc-filt_raw.fif")
+NOISE_CLEAN="${NOISE_FILT/proc-filt/proc-clean}"
+if [ -f "$NOISE_FILT" ] && [ ! -f "$NOISE_CLEAN" ]; then
+    echo "Creating proc-clean empty-room: $NOISE_CLEAN"
+    cp "$NOISE_FILT" "$NOISE_CLEAN"
+else
+    echo "proc-clean empty-room already exists, skipping."
+fi
+
 mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
 
 
