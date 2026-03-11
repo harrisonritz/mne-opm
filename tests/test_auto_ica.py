@@ -363,10 +363,10 @@ class TestLabelByCorrmap:
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
 
-    def test_skips_when_reference_channels_missing(
+    def test_skips_when_channel_names_missing(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """Returns ICA unchanged when reference_channels.npy is absent."""
+        """Returns ICA unchanged when {type}_channel_names.npy is absent."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)  # dir exists but no .npy
@@ -374,13 +374,13 @@ class TestLabelByCorrmap:
         result = analysis._label_by_corrmap(ica, raw)
         assert result.exclude == []
 
-    def test_skips_when_no_template_files_match(
+    def test_skips_when_no_templates_file(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """Skips gracefully when no eog_*.npy / ecg_*.npy files are found."""
+        """Skips gracefully when {type}_templates.npy is absent."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
+        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 3
         ica_cfg._n_ecg_templates = 0
@@ -394,7 +394,6 @@ class TestLabelByCorrmap:
         """Returns ICA unchanged when _n_eog_templates and _n_ecg_templates are both 0."""
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 0
         ica_cfg._n_ecg_templates = 0
@@ -413,8 +412,8 @@ class TestLabelByCorrmap:
         target_idx = 0
         target_topo = components[:, target_idx]
 
-        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
-        np.save(str(tmp_path / "eog_01.npy"), target_topo)
+        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
+        np.save(str(tmp_path / "eog_templates.npy"), target_topo[:, np.newaxis])
 
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
@@ -439,8 +438,8 @@ class TestLabelByCorrmap:
         target_idx = 1
         target_topo = components[:, target_idx]
 
-        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
-        np.save(str(tmp_path / "ecg_01.npy"), target_topo)
+        np.save(str(tmp_path / "ecg_channel_names.npy"), np.array(ica.ch_names))
+        np.save(str(tmp_path / "ecg_templates.npy"), target_topo[:, np.newaxis])
 
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
@@ -460,8 +459,8 @@ class TestLabelByCorrmap:
         """Every component in ica.labels_['eog'] must also appear in ica.exclude."""
         ica, raw = synthetic_ica_and_raw
         components = ica.get_components()
-        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
-        np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
+        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
+        np.save(str(tmp_path / "eog_templates.npy"), components[:, 0:1])
 
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
@@ -481,10 +480,12 @@ class TestLabelByCorrmap:
         """Matches from multiple templates of the same type are unioned, not overwritten."""
         ica, raw = synthetic_ica_and_raw
         components = ica.get_components()
-        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
-        # Two templates targeting different components
-        np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
-        np.save(str(tmp_path / "eog_02.npy"), components[:, 1])
+        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
+        # Two template columns targeting different components
+        np.save(
+            str(tmp_path / "eog_templates.npy"),
+            np.column_stack([components[:, 0], components[:, 1]]),
+        )
 
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
@@ -518,8 +519,8 @@ class TestLabelByCorrmap:
         rng = np.random.RandomState(42)
         full_template = np.concatenate([target_topo, rng.randn(5) * 0.01])
 
-        np.save(str(tmp_path / "reference_channels.npy"), ref_channels)
-        np.save(str(tmp_path / "eog_01.npy"), full_template)
+        np.save(str(tmp_path / "eog_channel_names.npy"), ref_channels)
+        np.save(str(tmp_path / "eog_templates.npy"), full_template[:, np.newaxis])
 
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
@@ -534,29 +535,31 @@ class TestLabelByCorrmap:
         assert isinstance(result, mne.preprocessing.ICA)
         assert 0 in result.exclude
 
-    def test_n_templates_limits_files_used(
+    def test_n_templates_limits_columns_used(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """_n_eog_templates=1 should only use the first template file."""
+        """_n_eog_templates=1 should only use the first template column."""
         ica, raw = synthetic_ica_and_raw
         components = ica.get_components()
-        np.save(str(tmp_path / "reference_channels.npy"), np.array(ica.ch_names))
-        # Template 1 targets component 0 (will be used)
-        np.save(str(tmp_path / "eog_01.npy"), components[:, 0])
-        # Template 2 targets component 1 (should be ignored when _n_eog_templates=1)
-        np.save(str(tmp_path / "eog_02.npy"), components[:, 1])
+        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
+        # Column 0 targets component 0 (will be used)
+        # Column 1 targets component 1 (should be ignored when _n_eog_templates=1)
+        np.save(
+            str(tmp_path / "eog_templates.npy"),
+            np.column_stack([components[:, 0], components[:, 1]]),
+        )
 
         ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._n_eog_templates = 1  # only use first
+        ica_cfg._n_eog_templates = 1  # only use first column
         ica_cfg._n_ecg_templates = 0
         ica_cfg._corrmap_threshold = 0.9
 
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._label_by_corrmap(ica, raw)
 
-        assert 0 in result.exclude        # component from template 1
-        assert 1 not in result.exclude    # component from template 2 (ignored)
+        assert 0 in result.exclude        # component from column 0
+        assert 1 not in result.exclude    # component from column 1 (ignored)
 
     # ---- integration --------------------------------------------------------
 
