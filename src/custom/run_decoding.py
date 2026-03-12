@@ -53,7 +53,7 @@ from mne_bids_pipeline._config_utils import sanitize_cond_name
 # Helpers
 # ---------------------------------------------------------------------------
 
-def save_fig(fig, path_stem, formats, dpi=150):
+def save_fig(fig, path_stem, formats, dpi=300):
     """Save a figure in each requested format."""
     for fmt in formats:
         p = Path(f"{path_stem}.{fmt}")

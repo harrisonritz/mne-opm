@@ -39,7 +39,7 @@ from typing import Optional
 import mne
 import mne_bids
 from mne_bids import BIDSPath
-from filelock import FileLock, Timeout
+from filelock import SoftFileLock, Timeout
 import pandas as pd
 
 
@@ -77,12 +77,14 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
     """
     bp: BIDSPath = write_kwargs["bids_path"]
 
+    TIMEOUT = 600
+
     # Exclusive lock on participants.tsv to serialise concurrent SLURM jobs.
     # The .lock file is created next to participants.tsv in the BIDS root.
     assert bp.root is not None, "bids_path must have a root set"
-    participants_lock = FileLock(
+    participants_lock = SoftFileLock(
         Path(bp.root) / "participants.tsv.lock",
-        timeout=120,  # seconds; long enough for slow writes, prevents deadlock
+        timeout=TIMEOUT,  # seconds; long enough for slow writes, prevents deadlock
     )
 
     # Derive the events sidecar paths from the raw BIDSPath
@@ -111,8 +113,8 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
                 break  # success — exit retry loop
             except Timeout:
                 raise RuntimeError(
-                    "write_raw_bids_preserve_events: could not acquire "
-                    "participants.tsv lock after 120 s. Another job may be "
+                    f"write_raw_bids_preserve_events: could not acquire "
+                    f"participants.tsv lock after {TIMEOUT} s. Another job may be "
                     "stuck. Delete participants.tsv.lock to recover."
                 )
             except IndexError:
