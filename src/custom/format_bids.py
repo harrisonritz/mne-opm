@@ -44,6 +44,9 @@ _DEFAULT_SCREEN_RESOLUTION = (1920, 1080)
 _DEFAULT_SCREEN_SIZE = (0.606, 0.341)  # metres
 _DEFAULT_SCREEN_DISTANCE = 0.895  # metres
 
+# Head position channel names recorded by the eye-tracker
+_HEAD_POS_CHANNELS = ("head_x", "head_y", "depth")
+
 
 def set_bids_params(config_path: str = "") -> SimpleNamespace:
     """Load BIDS conversion configuration.
@@ -445,7 +448,16 @@ def _load_eyetracking(
     return eye, cal
 
 
-def _interpolate_nans(eye: mne.io.Raw, buffer_sec: float = 0.1) -> np.ndarray:
+def _get_head_pos_channels(eye: mne.io.Raw) -> list[str]:
+    """Return the subset of head position channel names present in *eye*."""
+    return [ch for ch in _HEAD_POS_CHANNELS if ch in eye.ch_names]
+
+
+def _interpolate_nans(
+    eye: mne.io.Raw,
+    buffer_sec: float = 0.1,
+    exclude_from_mask: list[str] | None = None,
+) -> np.ndarray:
     """Interpolate NaN values in eye-tracking data with a buffer region.
 
     Marks samples within ``buffer_sec`` of any NaN as also needing
@@ -457,18 +469,44 @@ def _interpolate_nans(eye: mne.io.Raw, buffer_sec: float = 0.1) -> np.ndarray:
         Eye-tracking data (modified in-place).
     buffer_sec : float
         Buffer in seconds around NaN regions.
+    exclude_from_mask : list of str or None
+        Channel names to exclude from the returned ``orig_nan_mask``
+        (they are still interpolated).  Useful for head-position channels
+        whose NaN pattern should not feed into downstream feature
+        extraction (e.g. NMF decomposition).
 
     Returns
     -------
     orig_nan_mask : np.ndarray
         Boolean mask of shape ``(n_times,)`` indicating original NaN
-        positions (before interpolation), collapsed across channels.
+        positions (before interpolation), collapsed across non-excluded
+        channels.
     """
     buffer_samp = int(buffer_sec * eye.info["sfreq"])
     print(f"\nInterpolating remaining NaNs (buffer = {buffer_sec} sec)...")
 
-    orig_nan_mask = np.isnan(eye.get_data()).any(axis=0)
     data = eye.get_data()
+
+    # Compute NaN mask only from channels that are *not* excluded
+    if exclude_from_mask:
+        mask_picks = [
+            i for i, ch in enumerate(eye.ch_names) if ch not in exclude_from_mask
+        ]
+    else:
+        mask_picks = list(range(len(eye.ch_names)))
+    orig_nan_mask = np.isnan(data[mask_picks]).any(axis=0)
+
+    # Report NaN statistics for excluded (head-position) channels
+    if exclude_from_mask:
+        for ch_name in exclude_from_mask:
+            if ch_name in eye.ch_names:
+                ch_idx = eye.ch_names.index(ch_name)
+                n_nan = np.isnan(data[ch_idx]).sum()
+                pct = n_nan / data.shape[1] * 100
+                print(
+                    f"  Head position channel '{ch_name}': "
+                    f"{n_nan} NaN samples ({pct:.1f}%)"
+                )
 
     for ch_idx, ch_name in enumerate(eye.ch_names):
         ch_data = data[ch_idx, :]
@@ -810,6 +848,11 @@ def _set_eyetrack_channel_types(raw: mne.io.Raw) -> None:
         if first_ch in raw.ch_names:
             mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, mapping)
 
+    # Head position channels → misc
+    for ch_name in _HEAD_POS_CHANNELS:
+        if ch_name in raw.ch_names:
+            raw.set_channel_types({ch_name: "misc"})
+
 
 def process_eyetracking(raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace) -> mne.io.Raw:
     """Full eye-tracking processing pipeline.
@@ -836,8 +879,15 @@ def process_eyetracking(raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace) ->
     # 1. Load & calibrate
     eye, cal = _load_eyetracking(eye_path, cfg)
 
-    # 2. Interpolate NaNs
-    orig_nan_mask = _interpolate_nans(eye)
+    # 1b. Detect head position channels
+    head_pos_chs = _get_head_pos_channels(eye)
+    if head_pos_chs:
+        print(f"  Head position channels found: {head_pos_chs}")
+    else:
+        print("  No head position channels found in eye data.")
+
+    # 2. Interpolate NaNs (exclude head-pos from the NaN mask used by NMF)
+    orig_nan_mask = _interpolate_nans(eye, exclude_from_mask=head_pos_chs)
 
     # 3. Create feature channels (NMF/SVD of blink, saccade, NaN)
     _create_eye_feature_channels(eye, orig_nan_mask)
@@ -858,6 +908,9 @@ def process_eyetracking(raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace) ->
     # 8. Merge eye channels into raw
     raw.add_channels([eye], force_update_info=True)
     _set_eyetrack_channel_types(raw)
+
+    if head_pos_chs:
+        print(f"\nHead position channels added: {head_pos_chs} (type=misc)")
 
     print(
         "\nupdated raw ----------------------\n",

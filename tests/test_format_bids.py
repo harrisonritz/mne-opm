@@ -14,7 +14,9 @@ from custom.format_bids import (
     _DEFAULT_SCREEN_DISTANCE,
     _DEFAULT_SCREEN_RESOLUTION,
     _DEFAULT_SCREEN_SIZE,
+    _HEAD_POS_CHANNELS,
     _build_file_tree,
+    _get_head_pos_channels,
     _interpolate_nans,
     _annotation_to_timeseries,
     _match_lengths,
@@ -259,6 +261,51 @@ class TestInterpolateNans:
         mask = _interpolate_nans(raw, buffer_sec=0.05)
         assert mask.any()
         assert not np.isnan(raw.get_data()).any()
+
+    def test_exclude_from_mask_isolates_channels(self):
+        """Head position NaNs should not appear in the returned mask."""
+        info = mne.create_info(["ch1", "head_x"], 100.0, ["eog", "misc"])
+        data = np.ones((2, 500))
+        data[1, 200:300] = np.nan  # NaN only in head_x
+        raw = mne.io.RawArray(data, info)
+        mask = _interpolate_nans(raw, buffer_sec=0.1, exclude_from_mask=["head_x"])
+        # mask should be all-False since ch1 has no NaN
+        np.testing.assert_array_equal(mask, False)
+        # head_x should still be interpolated
+        assert not np.isnan(raw.get_data()).any()
+
+    def test_exclude_from_mask_none_is_default(self):
+        """Default behavior (no exclusion) should be unchanged."""
+        info = mne.create_info(["ch1", "ch2"], 100.0, ["eog", "eog"])
+        data = np.ones((2, 500))
+        data[1, 200:300] = np.nan
+        raw = mne.io.RawArray(data, info)
+        mask = _interpolate_nans(raw, buffer_sec=0.1)
+        # mask should reflect NaN in ch2
+        assert mask[200:300].all()
+
+
+# ---------------------------------------------------------------------------
+# _get_head_pos_channels
+# ---------------------------------------------------------------------------
+
+class TestGetHeadPosChannels:
+    def test_all_present(self):
+        info = mne.create_info(
+            ["head_x", "head_y", "depth", "ch1"], 100.0, 4 * ["misc"]
+        )
+        raw = mne.io.RawArray(np.zeros((4, 100)), info)
+        assert _get_head_pos_channels(raw) == ["head_x", "head_y", "depth"]
+
+    def test_none_present(self):
+        info = mne.create_info(["ch1", "ch2"], 100.0, ["eog", "eog"])
+        raw = mne.io.RawArray(np.zeros((2, 100)), info)
+        assert _get_head_pos_channels(raw) == []
+
+    def test_partial(self):
+        info = mne.create_info(["head_x", "ch1"], 100.0, ["misc", "eog"])
+        raw = mne.io.RawArray(np.zeros((2, 100)), info)
+        assert _get_head_pos_channels(raw) == ["head_x"]
 
 
 # ---------------------------------------------------------------------------
