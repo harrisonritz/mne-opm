@@ -45,7 +45,7 @@ _DEFAULT_SCREEN_SIZE = (0.606, 0.341)  # metres
 _DEFAULT_SCREEN_DISTANCE = 0.895  # metres
 
 # Head position channel names recorded by the eye-tracker
-_HEAD_POS_CHANNELS = ("head_x", "head_y", "depth")
+_HEAD_POS_CHANNELS = ("x_head", "y_head", "distance")
 
 
 def set_bids_params(config_path: str = "") -> SimpleNamespace:
@@ -445,6 +445,10 @@ def _load_eyetracking(
     print("calibration:", cal)
 
     mne.preprocessing.eyetracking.convert_units(eye, calibration=cal, to="radians")
+
+    # print the channel names for eye
+    print("Eye-tracking channels:", eye.ch_names)
+
     return eye, cal
 
 

@@ -46,6 +46,11 @@ Optional:
     _regress_freqs : list of tuple
         Frequency bands for filtering predictor channels.
         Example: [(None, 5.0), (5.0, 15.0)]. Default: None (use raw + squared).
+    _regress_lags : int
+        Number of past time-lags for delay-embedded regression. When > 0,
+        time-shifted copies of each predictor channel (lag-1 … lag-N samples)
+        are added as extra regressors and ridge regression is used instead of
+        EOGRegression. Default: 0 (no delay embedding).
     _regress_plot : bool
         Show PSD comparison plots before/after. Default: False.
     process_empty_room : bool
@@ -58,6 +63,7 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -253,6 +259,18 @@ class RegressAnalysis(BaseAnalysis):
         """
         self.log(f"Regressing out channels: {self.cfg._regress_preds}")
 
+        # Check whether predictor channels exist in this recording
+        try:
+            _picks_to_idx(raw.info, self.cfg._regress_preds)
+        except (ValueError, KeyError):
+            if is_noise:
+                warnings.warn(
+                    f"Predictor channels {self.cfg._regress_preds} not found "
+                    f"in noise recording — skipping regression."
+                )
+                return raw
+            raise
+
         # Annotate breaks if configured (not for noise recordings)
         if getattr(self.cfg, "find_breaks", False) and not is_noise:
             mne.preprocessing.annotate_break(
@@ -278,8 +296,8 @@ class RegressAnalysis(BaseAnalysis):
     def _regress_standard(self, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
         """Standard (time-invariant) regression.
 
-        Uses MNE's EOGRegression to compute a single set of regression
-        weights over the entire recording.
+        Uses MNE's EOGRegression when no lags are requested, or a custom
+        ridge regression with delay-embedded predictors when ``_regress_lags > 0``.
 
         Parameters
         ----------
@@ -291,16 +309,96 @@ class RegressAnalysis(BaseAnalysis):
         raw_clean : mne.io.BaseRaw
             Cleaned raw data.
         """
-        self.log("Using standard (time-invariant) regression")
+        n_lags = getattr(self.cfg, "_regress_lags", 0)
 
-        weights = mne.preprocessing.EOGRegression(
-            picks=self.cfg.ch_types[0],
-            picks_artifact=self.cfg._regress_preds,
-            proj=True,
-        ).fit(raw)
+        if n_lags <= 0:
+            self.log("Using standard (time-invariant) regression")
 
-        raw_clean = weights.apply(raw, copy=True)
-        del weights
+            weights = mne.preprocessing.EOGRegression(
+                picks=self.cfg.ch_types[0],
+                picks_artifact=self.cfg._regress_preds,
+                proj=True,
+            ).fit(raw)
+
+            raw_clean = weights.apply(raw, copy=True)
+            del weights
+
+        else:
+            self.log(
+                f"Using delay-embedded ridge regression ({n_lags} lags, "
+                f"{n_lags / raw.info['sfreq'] * 1000:.1f} ms)"
+            )
+            
+            # print channel names for debugging
+            self.log(f"  Target channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg.ch_types[0])]}")
+            # print all channel names
+            self.log(f"  Info: {raw.info}")
+            self.log(f"  All channels: {raw.ch_names}")
+            self.log(f"  Predictor channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg._regress_preds)]}")
+            raw_clean = self._regress_delay_embedded(raw, n_lags)
+
+        return raw_clean
+
+    def _regress_delay_embedded(
+        self, raw: mne.io.BaseRaw, n_lags: int
+    ) -> mne.io.BaseRaw:
+        """Ridge regression with delay-embedded artifact predictors.
+
+        Builds a design matrix from the artifact channels and their
+        time-shifted (lagged) copies, then solves a ridge regression
+        to remove the artifact subspace from the target channels.
+
+        Parameters
+        ----------
+        raw : mne.io.BaseRaw
+            Raw data to process.
+        n_lags : int
+            Number of past lags to include (lag-1 … lag-n_lags).
+
+        Returns
+        -------
+        raw_clean : mne.io.BaseRaw
+            Cleaned raw data.
+        """
+        # --- resolve channel indices ---
+        mag_idx = _picks_to_idx(raw.info, self.cfg.ch_types[0])
+        pred_idx = _picks_to_idx(raw.info, self.cfg._regress_preds)
+
+        # --- build delay-embedded design matrix ---
+        pred_data = raw.get_data(picks=pred_idx)  # (n_pred, n_times)
+        n_pred, n_times = pred_data.shape
+
+        embedded = [pred_data]  # lag-0
+        for lag in range(1, n_lags + 1):
+            shifted = np.zeros_like(pred_data)
+            shifted[:, lag:] = pred_data[:, :-lag]
+            embedded.append(shifted)
+
+        X = np.vstack(embedded)  # (n_pred * (n_lags + 1), n_times)
+        del embedded, pred_data
+
+        # mean-center each predictor row
+        X -= X.mean(axis=1, keepdims=True)
+
+        n_features = X.shape[0]
+        self.log(f"  Design matrix: {n_features} features x {n_times} samples")
+
+        # --- ridge regression ---
+        cov_xx = X @ X.T  # (n_features, n_features)
+        alpha = 1e-6 * np.trace(cov_xx) / n_features
+        cov_xx[np.diag_indices_from(cov_xx)] += alpha
+
+        raw_data = raw.get_data().copy()
+        target = raw_data[mag_idx, :]  # (n_target, n_times)
+
+        cov_xy = X @ target.T  # (n_features, n_target)
+        beta = np.linalg.solve(cov_xx, cov_xy)  # (n_features, n_target)
+
+        # subtract predicted artifact
+        raw_data[mag_idx, :] -= beta.T @ X
+
+        raw_clean = mne.io.RawArray(raw_data, raw.info)
+        del raw_data, X, beta
 
         return raw_clean
 
