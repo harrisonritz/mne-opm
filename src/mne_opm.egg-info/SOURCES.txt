@@ -20,7 +20,7 @@ src/custom/preprocessing/bad_segments.py
 src/custom/preprocessing/coreg.py
 src/custom/preprocessing/manual_channel.py
 src/custom/preprocessing/manual_ica.py
-src/custom/preprocessing/regress_ref.py
+src/custom/preprocessing/regress.py
 src/custom/preprocessing/zca_filter.py
 src/dev/cMEG_mne.py
 src/dev/do_iterative.py
@@ -57,4 +57,4 @@ tests/test_format_bids_extended.py
 tests/test_io_and_bids_utils.py
 tests/test_io_save_ica.py
 tests/test_preprocessing_analyses.py
-tests/test_regress_ref_full.py
+tests/test_regress_full.py

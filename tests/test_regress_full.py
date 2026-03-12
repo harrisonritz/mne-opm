@@ -1,4 +1,4 @@
-"""Tests for regress_ref.py — reference channel regression.
+"""Tests for regress.py — general sensor regression.
 
 Extends the existing tests in test_preprocessing_analyses.py by covering:
 - load_data / save_results with mocked BIDS I/O
@@ -16,7 +16,7 @@ import mne
 import numpy as np
 import pytest
 
-from custom.preprocessing.regress_ref import RegressReferenceAnalysis, run
+from custom.preprocessing.regress import RegressAnalysis, run
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ from custom.preprocessing.regress_ref import RegressReferenceAnalysis, run
 
 @pytest.fixture()
 def regress_cfg(tmp_path):
-    """Config for reference regression."""
+    """Config for regression."""
     return SimpleNamespace(
         bids_root=str(tmp_path / "bids"),
         deriv_root=str(tmp_path / "derivatives"),
@@ -33,11 +33,12 @@ def regress_cfg(tmp_path):
         sessions=["01"],
         task="restingstate",
         ch_types=["mag"],
-        _regress_ref=True,
-        _regress_ref_timevarying=False,
-        _regress_ref_window=3.0,
-        _regress_ref_freqs=None,
-        _regress_ref_plot=False,
+        _regress=True,
+        _regress_preds=["ref_meg"],
+        _regress_timevarying=False,
+        _regress_window=3.0,
+        _regress_freqs=None,
+        _regress_plot=False,
         process_empty_room=False,
         find_breaks=False,
         n_jobs=1,
@@ -45,21 +46,21 @@ def regress_cfg(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _regress_reference — standard mode
+# _regress — standard mode
 # ---------------------------------------------------------------------------
 
 class TestRegressStandard:
-    """Test standard (EOGRegression) reference regression."""
+    """Test standard (EOGRegression) regression."""
 
     def test_standard_reduces_contamination(
         self, raw_with_ref_contamination, regress_cfg
     ):
         """Standard regression should remove ref contamination from MEG."""
         raw, brain = raw_with_ref_contamination
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
 
         var_before = np.var(raw.get_data(picks="mag"))
-        raw_clean = analysis._regress_reference(raw.copy())
+        raw_clean = analysis._regress(raw.copy())
         var_after = np.var(raw_clean.get_data(picks="mag"))
 
         assert var_after < var_before, (
@@ -71,13 +72,13 @@ class TestRegressStandard:
         self, raw_with_ref_contamination, regress_cfg
     ):
         raw, _ = raw_with_ref_contamination
-        analysis = RegressReferenceAnalysis(regress_cfg)
-        result = analysis._regress_reference(raw.copy())
+        analysis = RegressAnalysis(regress_cfg)
+        result = analysis._regress(raw.copy())
         assert isinstance(result, mne.io.BaseRaw)
 
 
 # ---------------------------------------------------------------------------
-# _regress_reference — time-varying mode
+# _regress — time-varying mode
 # ---------------------------------------------------------------------------
 
 class TestRegressTimeVarying:
@@ -88,11 +89,11 @@ class TestRegressTimeVarying:
     ):
         """Time-varying regression should remove ref contamination."""
         raw, _ = raw_with_ref_contamination
-        regress_cfg._regress_ref_timevarying = True
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        regress_cfg._regress_timevarying = True
+        analysis = RegressAnalysis(regress_cfg)
 
         var_before = np.var(raw.get_data(picks="mag"))
-        raw_clean = analysis._regress_reference(raw.copy())
+        raw_clean = analysis._regress(raw.copy())
         var_after = np.var(raw_clean.get_data(picks="mag"))
 
         assert var_after < var_before
@@ -102,12 +103,12 @@ class TestRegressTimeVarying:
     ):
         """Time-varying regression with frequency bands should work."""
         raw, _ = raw_with_ref_contamination
-        regress_cfg._regress_ref_timevarying = True
-        regress_cfg._regress_ref_freqs = [(None, 10.0), (10.0, 50.0)]
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        regress_cfg._regress_timevarying = True
+        regress_cfg._regress_freqs = [(None, 10.0), (10.0, 50.0)]
+        analysis = RegressAnalysis(regress_cfg)
 
         var_before = np.var(raw.get_data(picks="mag"))
-        raw_clean = analysis._regress_reference(raw.copy())
+        raw_clean = analysis._regress(raw.copy())
         var_after = np.var(raw_clean.get_data(picks="mag"))
 
         assert var_after < var_before
@@ -117,10 +118,10 @@ class TestRegressTimeVarying:
     ):
         """Output should have same number of channels and samples."""
         raw, _ = raw_with_ref_contamination
-        regress_cfg._regress_ref_timevarying = True
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        regress_cfg._regress_timevarying = True
+        analysis = RegressAnalysis(regress_cfg)
 
-        raw_clean = analysis._regress_reference(raw.copy())
+        raw_clean = analysis._regress(raw.copy())
         assert raw_clean.get_data().shape == raw.get_data().shape
 
 
@@ -133,7 +134,7 @@ class TestRegressRun:
         self, raw_with_ref_contamination, regress_cfg
     ):
         raw, _ = raw_with_ref_contamination
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         data = {regress_cfg.task: raw}
         results = analysis.run(data)
 
@@ -145,7 +146,7 @@ class TestRegressRun:
     ):
         raw, _ = raw_with_ref_contamination
         raw_noise = raw.copy()
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         data = {"noise": raw_noise, regress_cfg.task: raw}
         results = analysis.run(data)
 
@@ -158,35 +159,35 @@ class TestRegressRun:
 # ---------------------------------------------------------------------------
 
 class TestRegressLoadData:
-    @patch("custom.preprocessing.regress_ref.mne_bids")
+    @patch("custom.preprocessing.regress.mne_bids")
     def test_load_single_task(self, mock_bids, raw_meg, regress_cfg):
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
         mock_bids.read_raw_bids.return_value = raw_meg
 
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         data = analysis.load_data()
 
         assert regress_cfg.task in data
         mock_bids.read_raw_bids.assert_called_once()
 
-    @patch("custom.preprocessing.regress_ref.mne_bids")
+    @patch("custom.preprocessing.regress.mne_bids")
     def test_load_with_empty_room(self, mock_bids, raw_meg, regress_cfg):
         regress_cfg.process_empty_room = True
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
         mock_bids.read_raw_bids.return_value = raw_meg
 
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         data = analysis.load_data()
 
         assert "noise" in data
         assert regress_cfg.task in data
 
-    @patch("custom.preprocessing.regress_ref.mne_bids")
+    @patch("custom.preprocessing.regress.mne_bids")
     def test_load_no_files_raises(self, mock_bids, regress_cfg):
         mock_bids.find_matching_paths.return_value = []
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         with pytest.raises(FileNotFoundError):
             analysis.load_data()
 
@@ -196,29 +197,29 @@ class TestRegressLoadData:
 # ---------------------------------------------------------------------------
 
 class TestRegressSaveResults:
-    @patch("custom.preprocessing.regress_ref.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.regress_ref.mne_bids")
+    @patch("custom.preprocessing.regress.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.regress.mne_bids")
     def test_save_writes_data(self, mock_bids, mock_write, raw_meg, regress_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
 
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         results = {regress_cfg.task: raw_meg, "bads": []}
         analysis.save_results(results)
 
         mock_write.assert_called_once()
 
-    @patch("custom.preprocessing.regress_ref.mne_bids")
+    @patch("custom.preprocessing.regress.mne_bids")
     def test_save_no_paths_raises(self, mock_bids, raw_meg, regress_cfg):
         mock_bids.find_matching_paths.return_value = []
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         results = {regress_cfg.task: raw_meg, "bads": []}
         with pytest.raises(FileNotFoundError):
             analysis.save_results(results)
 
-    @patch("custom.preprocessing.regress_ref.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.regress_ref.mne_bids")
+    @patch("custom.preprocessing.regress.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.regress.mne_bids")
     def test_save_with_empty_room_association(
         self, mock_bids, mock_write, raw_meg, regress_cfg
     ):
@@ -226,7 +227,7 @@ class TestRegressSaveResults:
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
 
-        analysis = RegressReferenceAnalysis(regress_cfg)
+        analysis = RegressAnalysis(regress_cfg)
         results = {"noise": raw_meg, regress_cfg.task: raw_meg, "bads": []}
         analysis.save_results(results)
 
@@ -241,13 +242,13 @@ class TestRegressSaveResults:
 
 class TestRegressModuleRun:
     def test_disabled_exits_early(self, capsys):
-        cfg = SimpleNamespace(_regress_ref=False)
+        cfg = SimpleNamespace(_regress=False)
         run(cfg)
         captured = capsys.readouterr()
         assert "Disabled" in captured.out
 
-    @patch("custom.preprocessing.regress_ref.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.regress_ref.mne_bids")
+    @patch("custom.preprocessing.regress.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.regress.mne_bids")
     def test_run_end_to_end(
         self, mock_bids, mock_write, raw_with_ref_contamination, regress_cfg
     ):

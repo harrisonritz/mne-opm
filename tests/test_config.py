@@ -27,7 +27,7 @@ class TestNormalizeAnalysisKey:
         "raw, expected",
         [
             ("bad_segments", "badsegments"),
-            ("regress_ref", "regressref"),
+            ("regress", "regress"),
             ("manual_channel", "manualchannel"),
             ("auto_ica", "autoica"),
             ("apply_hfc", "applyhfc"),
@@ -58,7 +58,7 @@ class TestGetAnalysisConfigFlag:
     """Tests for mapping analysis keys to config flags."""
 
     def test_known_keys_return_flags(self):
-        assert get_analysis_config_flag("regressref") == "_regress_ref"
+        assert get_analysis_config_flag("regress") == "_regress"
         assert get_analysis_config_flag("applyhfc") == "_do_HFC"
         assert get_analysis_config_flag("zcafilter") == "_do_ZCA"
         assert get_analysis_config_flag("autoica") == "_auto_ica"
@@ -98,16 +98,16 @@ class TestCheckAnalysisEnabled:
         assert check_analysis_enabled(cfg, "coreg") is True
 
     def test_flag_gated_enabled(self):
-        cfg = SimpleNamespace(_regress_ref=True)
-        assert check_analysis_enabled(cfg, "regressref") is True
+        cfg = SimpleNamespace(_regress=True)
+        assert check_analysis_enabled(cfg, "regress") is True
 
     def test_flag_gated_disabled(self):
-        cfg = SimpleNamespace(_regress_ref=False)
-        assert check_analysis_enabled(cfg, "regressref") is False
+        cfg = SimpleNamespace(_regress=False)
+        assert check_analysis_enabled(cfg, "regress") is False
 
     def test_flag_gated_missing_defaults_false(self):
         cfg = SimpleNamespace()
-        assert check_analysis_enabled(cfg, "regressref") is False
+        assert check_analysis_enabled(cfg, "regress") is False
 
     def test_ica_requires_spatial_filter(self):
         cfg = SimpleNamespace(_auto_ica=True, spatial_filter="ica")
@@ -180,4 +180,4 @@ class TestICAAnalyses:
 
     def test_ica_analyses_does_not_contain_others(self):
         assert "badsegments" not in ICA_ANALYSES
-        assert "regressref" not in ICA_ANALYSES
+        assert "regress" not in ICA_ANALYSES
