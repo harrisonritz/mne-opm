@@ -39,7 +39,7 @@ from typing import Optional
 import mne
 import mne_bids
 from mne_bids import BIDSPath
-from filelock import SoftFileLock, Timeout
+# from filelock import SoftFileLock, Timeout
 import pandas as pd
 
 
@@ -82,10 +82,10 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
     # Exclusive lock on participants.tsv to serialise concurrent SLURM jobs.
     # The .lock file is created next to participants.tsv in the BIDS root.
     assert bp.root is not None, "bids_path must have a root set"
-    participants_lock = SoftFileLock(
-        Path(bp.root) / "participants.tsv.lock",
-        timeout=TIMEOUT,  # seconds; long enough for slow writes, prevents deadlock
-    )
+    # participants_lock = SoftFileLock(
+    #     Path(bp.root) / "participants.tsv.lock",
+    #     timeout=TIMEOUT,  # seconds; long enough for slow writes, prevents deadlock
+    # )
 
     # Derive the events sidecar paths from the raw BIDSPath
     events_tsv: Path = bp.copy().update(
@@ -105,23 +105,16 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
         shutil.copy2(events_json, json_backup)
 
     try:
-        _max_retries = 3
+        _max_retries = 10
         for _attempt in range(_max_retries):
             try:
-                with participants_lock:
-                    mne_bids.write_raw_bids(**write_kwargs)
-                break  # success — exit retry loop
-            except Timeout:
-                raise RuntimeError(
-                    f"write_raw_bids_preserve_events: could not acquire "
-                    f"participants.tsv lock after {TIMEOUT} s. Another job may be "
-                    "stuck. Delete participants.tsv.lock to recover."
-                )
+                mne_bids.write_raw_bids(**write_kwargs)
+                break
             except IndexError:
                 # Transient empty-file read — can still occur on NFS even with
                 # advisory locking.  Retry with exponential back-off.
                 if _attempt < _max_retries - 1:
-                    _delay = (2 ** _attempt) + random.uniform(0, 1)
+                    _delay = (2 ** _attempt) + random.uniform(0, 2)
                     print(
                         f"[write_raw_bids_preserve_events] Transient "
                         f"participants.tsv read error "

@@ -263,13 +263,11 @@ class RegressAnalysis(BaseAnalysis):
         try:
             _picks_to_idx(raw.info, self.cfg._regress_preds)
         except (ValueError, KeyError):
-            if is_noise:
-                warnings.warn(
-                    f"Predictor channels {self.cfg._regress_preds} not found "
-                    f"in noise recording — skipping regression."
-                )
-                return raw
-            raise
+            warnings.warn(
+                f"Predictor channels {self.cfg._regress_preds} not found "
+                f"in noise recording — skipping regression."
+            )
+            return raw
 
         # Annotate breaks if configured (not for noise recordings)
         if getattr(self.cfg, "find_breaks", False) and not is_noise:
@@ -329,12 +327,13 @@ class RegressAnalysis(BaseAnalysis):
                 f"{n_lags / raw.info['sfreq'] * 1000:.1f} ms)"
             )
             
-            # print channel names for debugging
-            self.log(f"  Target channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg.ch_types[0])]}")
-            # print all channel names
-            self.log(f"  Info: {raw.info}")
-            self.log(f"  All channels: {raw.ch_names}")
-            self.log(f"  Predictor channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg._regress_preds)]}")
+            # # print channel names for debugging
+            # self.log(f"  Target channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg.ch_types[0])]}")
+            # # print all channel names
+            # self.log(f"  Info: {raw.info}")
+            # self.log(f"  All channels: {raw.ch_names}")
+            # self.log(f"  Predictor channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg._regress_preds)]}")
+            
             raw_clean = self._regress_delay_embedded(raw, n_lags)
 
         return raw_clean
