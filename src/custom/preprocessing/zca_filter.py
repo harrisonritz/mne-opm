@@ -36,31 +36,54 @@ Required:
 
 Optional:
     _do_ZCA : bool
-        Enable/disable ZCA filtering. Default: False.
+        Enable/disable ZCA/GEDAI filtering. Default: False.
+    _zca_method : str
+        Algorithm to use: 'zca' (default) or 'gedai'.
+        - 'zca': Geometric approach — GED between the forward model signal
+          subspace and the external SSS noise subspace. Purely geometry-based,
+          does not use the actual data statistics in the decomposition.
+        - 'gedai': Data-adaptive approach (Generalized Eigenvalue Decomposition
+          for Artifact Identification). refCOV = L @ L^T where L is the raw
+          leadfield matrix (de Munck et al., 1988, 1992). GED between the task
+          data covariance (dataCOV) and refCOV identifies components whose
+          variance maximally exceeds brain-predicted covariance as artifacts.
     _zca_ext_order : int
-        Order of external SSS basis (1-3). Higher orders capture more
-        complex external interference patterns. Default: 3.
+        Order of external SSS basis (1-3). Used by ZCA method only. Higher
+        orders capture more complex external interference patterns. Default: 3.
     _zca_threshold : float
-        GED eigenvalue threshold for signal/noise separation.
+        GED eigenvalue threshold for ZCA signal/noise separation.
         Values closer to 1.0 retain more signal components. Default: 0.99.
+    _gedai_threshold : float
+        Absolute eigenvalue threshold for GEDAI artifact identification.
+        Components with eigenvalue above this value are considered artifacts
+        (data variance >> brain reference variance). Default: 10.0.
     process_empty_room : bool
         Apply same projections to noise recording. Default: False.
 
 Notes
 -----
-ZCA requires:
+Both ZCA and GEDAI require:
 - BEM solution (*bem-sol.fif) in FreeSurfer subject's bem/ folder
 - Source space (*-src.fif) in FreeSurfer subject's bem/ folder
 - Head-MRI transform (computed via mne_bids.get_head_mri_trans)
-- Noise recording (task="noise") for computing noise covariance
+- Noise recording (task="noise") for noise covariance estimation
 
-The algorithm:
+ZCA algorithm:
 1. Computes forward model and inverse operator
 2. Builds signal transform from forward model eigendecomposition
 3. Builds noise transform from external SSS basis
-4. Performs GED to separate signal and noise subspaces
+4. Performs GED (noise vs signal+noise) to separate subspaces
 5. Creates SSP projectors from noise subspace
 6. Applies projectors to data
+
+GEDAI algorithm:
+1. Computes task data covariance (dataCOV) and noise covariance
+2. Computes forward solution (leadfield matrix L)
+3. Builds brain reference covariance: refCOV = L @ L^T (no inverse operator)
+4. Regularizes refCOV via Tikhonov (Cohen 2022 style)
+5. Performs GED: eigh(dataCOV, refCOV) — high eigenvalue = artifact
+6. Creates SSP projectors from artifact subspace
+7. Applies projectors to data
 
 Author: Harrison Ritz, 2025
 """
@@ -212,8 +235,12 @@ class ZCAFilterAnalysis(BaseAnalysis):
         src = data["src"]
         trans = data["trans"]
 
-        # Compute and apply ZCA projectors
-        raw, noise, projs = self._apply_zca(raw, noise, bem, src, trans)
+        # Dispatch to ZCA or GEDAI based on config
+        method = getattr(self.cfg, "_zca_method", "zca").lower()
+        if method == "gedai":
+            raw, noise, projs = self._apply_gedai(raw, noise, bem, src, trans)
+        else:
+            raw, noise, projs = self._apply_zca(raw, noise, bem, src, trans)
 
         results[self.cfg.task] = raw
         results["noise"] = noise
@@ -572,6 +599,195 @@ class ZCAFilterAnalysis(BaseAnalysis):
         noise.add_proj(projs=projs).apply_proj()
 
         self.log("ZCA filtering complete!")
+
+        return raw, noise, projs
+
+    def _apply_gedai(
+        self,
+        raw: mne.io.BaseRaw,
+        noise: mne.io.BaseRaw,
+        bem: mne.bem.ConductorModel,
+        src: mne.SourceSpaces,
+        trans: mne.transforms.Transform,
+    ) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw, list]:
+        """Compute and apply GEDAI projections.
+
+        GEDAI (Generalized Eigenvalue Decomposition for Artifact
+        Identification) directly uses the raw leadfield matrix L to build
+        the brain reference covariance:
+
+            refCOV = L @ L^T
+
+        This follows de Munck et al. (1988, 1992): electrode potential is a
+        weighted sum of dipolar sources, each source independent, so sensor
+        covariance is a linear sum of individual source covariances → refCOV
+        encodes the expected spatial covariance structure of pure brain signal.
+
+        The task data covariance (dataCOV) is then decomposed relative to this
+        reference via GEVD:
+
+            eigh(dataCOV, refCOV_reg)
+
+        Components with high generalized eigenvalue have variance that
+        maximally exceeds the brain reference and are treated as artifacts.
+        Regularization follows Cohen (2022): Tikhonov regularization scaled
+        by the trace of refCOV.
+
+        Parameters
+        ----------
+        raw : mne.io.BaseRaw
+            Task MEG data (source of dataCOV).
+        noise : mne.io.BaseRaw
+            Noise recording (used for refCOV Tikhonov regularization scale).
+        bem : mne.bem.ConductorModel
+            BEM solution.
+        src : mne.SourceSpaces
+            Source space.
+        trans : mne.transforms.Transform
+            Head-MRI transform.
+
+        Returns
+        -------
+        raw : mne.io.BaseRaw
+            Raw data with GEDAI projections applied.
+        noise : mne.io.BaseRaw
+            Noise data with GEDAI projections applied.
+        projs : list
+            List of GEDAI projectors.
+        """
+        threshold = getattr(self.cfg, "_gedai_threshold", 10.0)
+        cov_reg = 1e-8  # Tikhonov regularization (Cohen 2022 style)
+
+        self.log(f"Computing GEDAI filter (threshold={threshold})")
+
+        info = raw.info
+
+        # Step 1: Compute task data covariance (dataCOV)
+        self.log("Computing task data covariance (dataCOV)...")
+        data_cov = mne.compute_raw_covariance(
+            raw, method="shrunk", rank="info", n_jobs=self.cfg.n_jobs
+        )
+
+        # Step 2: Compute noise covariance (used to scale refCOV regularization)
+        self.log("Computing noise covariance...")
+        noise_cov = mne.compute_raw_covariance(
+            noise, method="shrunk", rank="info", n_jobs=self.cfg.n_jobs
+        )
+
+        # Step 3: Compute forward solution (leadfield matrix)
+        self.log("Computing forward solution...")
+        fwd = mne.make_forward_solution(
+            info=info,
+            trans=trans,
+            src=src,
+            bem=bem,
+            meg=True,
+            eeg=False,
+            mindist=5.0,
+            n_jobs=self.cfg.n_jobs,
+        )
+
+        # Step 4: Build refCOV = L @ L^T directly from the raw leadfield
+        # L has shape [n_ch × n_sources]; refCOV encodes the sensor-space
+        # covariance expected from purely neural (brain) sources.
+        L = fwd["sol"]["data"]                  # [n_ch × n_sources]
+        fwd_ch_names = fwd["sol"]["row_names"]  # MEG channel names in L
+
+        self.log(f"Building refCOV from leadfield [shape={L.shape}]...")
+        refCOV = L @ L.T  # [n_ch × n_ch]
+
+        # Step 5: Extract MEG-channel submatrix of dataCOV aligned to refCOV
+        cov_ch_names = list(data_cov["names"])
+        shared_ch_names = [ch for ch in fwd_ch_names if ch in cov_ch_names]
+        cov_idx = [cov_ch_names.index(ch) for ch in shared_ch_names]
+        dataCOV = data_cov["data"][np.ix_(cov_idx, cov_idx)]  # [n_ch × n_ch]
+
+        # Trim refCOV rows/cols to the shared channel set if necessary
+        if len(shared_ch_names) < len(fwd_ch_names):
+            fwd_idx = [list(fwd_ch_names).index(ch) for ch in shared_ch_names]
+            refCOV = refCOV[np.ix_(fwd_idx, fwd_idx)]
+            self.log(
+                f"Channel mismatch: using {len(shared_ch_names)}/{len(fwd_ch_names)} "
+                "channels shared between refCOV and dataCOV"
+            )
+
+        # Step 6: Regularize refCOV (Tikhonov, Cohen 2022 style)
+        # refCOV_reg = (1-gamma) * refCOV + gamma * mean_eigenvalue * I
+        # gamma is very small (1e-8) to improve numerical stability only.
+        refCOV = (refCOV + refCOV.T) / 2
+        refCOV_reg = (
+            (1 - cov_reg) * refCOV
+            + cov_reg * (np.trace(refCOV) / refCOV.shape[0]) * np.eye(refCOV.shape[0])
+        )
+
+        dataCOV = (dataCOV + dataCOV.T) / 2
+        dataCOV_reg = (
+            (1 - cov_reg) * dataCOV
+            + cov_reg * (np.trace(dataCOV) / dataCOV.shape[0]) * np.eye(dataCOV.shape[0])
+        )
+
+        # Step 7: GEDAI generalized eigendecomposition
+        # eigh(dataCOV, refCOV): eigenvalue >> 1 means data variance far exceeds
+        # what the brain reference predicts → artifact
+        self.log("Computing GEDAI generalized eigendecomposition...")
+        eigenvalues, eigenvectors = eigh(dataCOV_reg, refCOV_reg)
+
+        n_above = int(np.sum(eigenvalues > threshold))
+        self.log(
+            f"Eigenvalue range: [{eigenvalues.min():.2f}, {eigenvalues.max():.2f}], "
+            f"{n_above} components above threshold={threshold}"
+        )
+
+        # Step 8: Select artifact components (high eigenvalue = artifact)
+        artifact_mask = eigenvalues > threshold
+        U_artifact = eigenvectors[:, artifact_mask]  # [n_ch × n_artifacts]
+        n_artifacts = U_artifact.shape[1]
+        n_signal = eigenvectors.shape[1] - n_artifacts
+
+        self.log(f"Signal components: {n_signal}")
+        self.log(f"Artifact components: {n_artifacts}")
+
+        if n_artifacts <= 0:
+            self.log("WARNING: No artifact components found. Skipping GEDAI.")
+            return raw, noise, []
+
+        # Step 9: Create SSP projectors from artifact eigenvectors
+        desc_prefix = f"GEDAI_thresh{threshold:.1f}"
+
+        projs = []
+        for k in range(n_artifacts):
+            proj_data = np.zeros(len(raw.ch_names))
+            for i, ch_name in enumerate(shared_ch_names):
+                if ch_name in raw.ch_names:
+                    idx = raw.ch_names.index(ch_name)
+                    proj_data[idx] = U_artifact[i, k]
+
+            norm = np.linalg.norm(proj_data)
+            if norm > 0:
+                proj_data /= norm
+
+            proj = mne.Projection(
+                data=dict(
+                    data=proj_data.reshape(1, -1),
+                    col_names=raw.ch_names,
+                    row_names=None,
+                    nrow=1,
+                    ncol=len(raw.ch_names),
+                ),
+                desc=f"{desc_prefix}_{k + 1:02d}",
+                kind=1,  # MEG projection
+                active=False,
+            )
+            projs.append(proj)
+
+        # Step 10: Apply projectors to task and noise data
+        self.log(f"Applying {len(projs)} GEDAI projections to task data...")
+        raw.add_proj(projs=projs).apply_proj()
+
+        self.log("Applying GEDAI projections to noise data...")
+        noise.add_proj(projs=projs).apply_proj()
+
+        self.log("GEDAI filtering complete!")
 
         return raw, noise, projs
 
