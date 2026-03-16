@@ -43,10 +43,11 @@ Optional:
           subspace and the external SSS noise subspace. Purely geometry-based,
           does not use the actual data statistics in the decomposition.
         - 'gedai': Data-adaptive approach (Generalized Eigenvalue Decomposition
-          for Artifact Identification). refCOV = L @ L^T where L is the raw
-          leadfield matrix (de Munck et al., 1988, 1992). GED between the task
-          data covariance (dataCOV) and refCOV identifies components whose
-          variance maximally exceeds brain-predicted covariance as artifacts.
+          for Artifact Identification). refCOV = U S² Uᵀ where U, S come from
+          the noise-whitened, depth-weighted inverse operator. GED between the
+          task data covariance (dataCOV) and refCOV + dataCOV identifies
+          components whose variance maximally exceeds brain-predicted
+          covariance as artifacts.
     _zca_ext_order : int
         Order of external SSS basis (1-3). Used by ZCA method only. Higher
         orders capture more complex external interference patterns. Default: 3.
@@ -54,9 +55,11 @@ Optional:
         GED eigenvalue threshold for ZCA signal/noise separation.
         Values closer to 1.0 retain more signal components. Default: 0.99.
     _gedai_threshold : float
-        Absolute eigenvalue threshold for GEDAI artifact identification.
-        Components with eigenvalue above this value are considered artifacts
-        (data variance >> brain reference variance). Default: 10.0.
+        GED eigenvalue threshold for GEDAI artifact identification.
+        If <= 1.0, interpreted as a fraction: components with eigenvalue
+        above this value (data fraction of total) are artifacts.
+        If > 1, interpreted as number of signal dimensions to keep.
+        Default: 0.50.
     process_empty_room : bool
         Apply same projections to noise recording. Default: False.
 
@@ -78,10 +81,10 @@ ZCA algorithm:
 
 GEDAI algorithm:
 1. Computes task data covariance (dataCOV) and noise covariance
-2. Computes forward solution (leadfield matrix L)
-3. Builds brain reference covariance: refCOV = L @ L^T (no inverse operator)
-4. Regularizes refCOV via Tikhonov (Cohen 2022 style)
-5. Performs GED: eigh(dataCOV, refCOV) — high eigenvalue = artifact
+2. Computes forward solution and inverse operator (depth-weighted, noise-whitened)
+3. Builds brain reference covariance: refCOV = U S² Uᵀ from inverse operator
+4. Regularizes both via Tikhonov (Cohen 2022 style)
+5. Performs GED: eigh(dataCOV, refCOV + dataCOV) — high eigenvalue = artifact
 6. Creates SSP projectors from artifact subspace
 7. Applies projectors to data
 
@@ -439,7 +442,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
             List of ZCA projectors.
         """
         ext_order = getattr(self.cfg, "_zca_ext_order", 3)
-        threshold = getattr(self.cfg, "_zca_threshold", 0.99)
+        threshold = getattr(self.cfg, "_zca_threshold", 0.50)
         cov_reg = 1e-8  # Regularization for numerical stability
 
         self.log(f"Computing ZCA filter (ext_order={ext_order}, threshold={threshold})")
@@ -499,16 +502,18 @@ class ZCAFilterAnalysis(BaseAnalysis):
 
         # Step 5: Build signal and noise transforms
         self.log("Building signal and noise transforms...")
+
         signal_trans = fwd_field @ np.diag(fwd_sing**2) @ fwd_field.T
+        signal_cov_mat = signal_trans @ data_cov["data"] @ signal_trans.T
         noise_trans = ext_basis @ ext_basis.T
+        noise_cov_mat = noise_trans @ data_cov["data"] @ noise_trans.T
+
+        # signal_cov_mat = fwd_field @ np.diag(fwd_sing**2) @ fwd_field.T
+        # noise_cov_mat = ext_basis @ ext_basis.T
 
         # Step 6: Compute GED
         self.log("Computing generalized eigendecomposition...")
-        # signal_cov_mat = signal_trans @ data_cov["data"] @ signal_trans.T
-        # noise_cov_mat = noise_trans @ data_cov["data"] @ noise_trans.T
-
-        signal_cov_mat = signal_trans @ signal_trans.T
-        noise_cov_mat = noise_trans  @ noise_trans.T
+        
 
         # Symmetrize for numerical stability
         signal_cov_mat = (signal_cov_mat + signal_cov_mat.T) / 2
@@ -533,7 +538,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
         # Select noise components (high eigenvalues = most noise-like)
         if threshold <= 1.0:
             # threshold on signal → noise eigenvalue cutoff is (1 - threshold)
-            noise_mask = eigenvalues_noise > (1.0 - threshold)
+            noise_mask = eigenvalues_noise > threshold
             U_noise = eigenvectors_noise[:, noise_mask]
             U_signal = eigenvectors_noise[:, ~noise_mask]
         else:
@@ -613,25 +618,27 @@ class ZCAFilterAnalysis(BaseAnalysis):
         """Compute and apply GEDAI projections.
 
         GEDAI (Generalized Eigenvalue Decomposition for Artifact
-        Identification) directly uses the raw leadfield matrix L to build
-        the brain reference covariance:
+        Identification) builds a brain reference covariance (refCOV) from
+        the noise-whitened, depth-weighted forward model via the inverse
+        operator:
 
-            refCOV = L @ L^T
+            G_wd = C_n^{-1/2} G D   (whitened + depth-weighted gain)
+            G_wd = U S V^T           (SVD)
+            refCOV = U S^2 U^T       (sensor-space Gramian)
 
-        This follows de Munck et al. (1988, 1992): electrode potential is a
-        weighted sum of dipolar sources, each source independent, so sensor
-        covariance is a linear sum of individual source covariances → refCOV
-        encodes the expected spatial covariance structure of pure brain signal.
+        Depth weighting (default 0.8) corrects the leadfield's bias toward
+        superficial cortex; noise whitening normalizes sensor noise patterns.
 
-        The task data covariance (dataCOV) is then decomposed relative to this
-        reference via GEVD:
+        The task data covariance (dataCOV) is then decomposed relative to the
+        sum (refCOV + dataCOV) via GEVD:
 
-            eigh(dataCOV, refCOV_reg)
+            eigh(dataCOV, refCOV_reg + dataCOV_reg)
 
-        Components with high generalized eigenvalue have variance that
-        maximally exceeds the brain reference and are treated as artifacts.
-        Regularization follows Cohen (2022): Tikhonov regularization scaled
-        by the trace of refCOV.
+        Eigenvalues are in [0, 1] and represent the fraction of total energy
+        attributable to observed data variance. Components with eigenvalue
+        above the threshold (default 0.5, i.e., data exceeds brain reference)
+        are treated as artifacts. Regularization follows Cohen (2022):
+        Tikhonov regularization scaled by the trace of each matrix.
 
         Parameters
         ----------
@@ -655,7 +662,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
         projs : list
             List of GEDAI projectors.
         """
-        threshold = getattr(self.cfg, "_gedai_threshold", 10.0)
+        threshold = getattr(self.cfg, "_gedai_threshold", 0.50)
         cov_reg = 1e-8  # Tikhonov regularization (Cohen 2022 style)
 
         self.log(f"Computing GEDAI filter (threshold={threshold})")
@@ -674,7 +681,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
             noise, method="shrunk", rank="info", n_jobs=self.cfg.n_jobs
         )
 
-        # Step 3: Compute forward solution (leadfield matrix)
+        # Step 3: Compute forward solution
         self.log("Computing forward solution...")
         fwd = mne.make_forward_solution(
             info=info,
@@ -687,33 +694,56 @@ class ZCAFilterAnalysis(BaseAnalysis):
             n_jobs=self.cfg.n_jobs,
         )
 
-        # Step 4: Build refCOV = L @ L^T directly from the raw leadfield
-        # L has shape [n_ch × n_sources]; refCOV encodes the sensor-space
-        # covariance expected from purely neural (brain) sources.
-        L = fwd["sol"]["data"]                  # [n_ch × n_sources]
-        fwd_ch_names = fwd["sol"]["row_names"]  # MEG channel names in L
+        # Step 4: Compute inverse operator (for whitened, depth-weighted Gramian)
+        self.log("Computing inverse operator...")
+        inv = mne.minimum_norm.make_inverse_operator(
+            info,
+            fwd,
+            noise_cov,
+            loose="auto",
+            depth=0.8,
+            fixed="auto",
+            rank="info",
+            use_cps=True,
+        )
 
-        self.log(f"Building refCOV from leadfield [shape={L.shape}]...")
-        refCOV = L @ L.T  # [n_ch × n_ch]
+        
 
-        # Step 5: Extract MEG-channel submatrix of dataCOV aligned to refCOV
+
+
+        # Step 5: Build refCOV = U S² Uᵀ (whitened + depth-weighted Gramian)
+        # This is G_wd @ G_wd.T where G_wd is the noise-whitened,
+        # depth-weighted gain matrix from the inverse operator.
+        self.log("Building refCOV from whitened/depth-weighted Gramian...")
+
+        fwd_field = inv["eigen_fields"]["data"]
+        fwd_sing = inv["sing"]
+        refCOV = fwd_field @ np.diag(fwd_sing**2) @ fwd_field.T
+        refCOV = refCOV @ data_cov["data"] @ refCOV.T
+
+        # L = fwd["sol"]["data"]                  # [n_ch × n_sources]
+        # refCOV = L @ L.T
+
+        # Get MEG channel names aligned to eigenvectors
+        meg_picks = mne.pick_types(info, meg=True, eeg=False, exclude="bads")
+        meg_ch_names = [info["ch_names"][p] for p in meg_picks]
+
+        # Step 6: Extract MEG-channel submatrix of dataCOV aligned to refCOV
         cov_ch_names = list(data_cov["names"])
-        shared_ch_names = [ch for ch in fwd_ch_names if ch in cov_ch_names]
+        shared_ch_names = [ch for ch in meg_ch_names if ch in cov_ch_names]
         cov_idx = [cov_ch_names.index(ch) for ch in shared_ch_names]
-        dataCOV = data_cov["data"][np.ix_(cov_idx, cov_idx)]  # [n_ch × n_ch]
+        dataCOV = data_cov["data"][np.ix_(cov_idx, cov_idx)]
 
         # Trim refCOV rows/cols to the shared channel set if necessary
-        if len(shared_ch_names) < len(fwd_ch_names):
-            fwd_idx = [list(fwd_ch_names).index(ch) for ch in shared_ch_names]
-            refCOV = refCOV[np.ix_(fwd_idx, fwd_idx)]
+        if len(shared_ch_names) < len(meg_ch_names):
+            meg_idx = [meg_ch_names.index(ch) for ch in shared_ch_names]
+            refCOV = refCOV[np.ix_(meg_idx, meg_idx)]
             self.log(
-                f"Channel mismatch: using {len(shared_ch_names)}/{len(fwd_ch_names)} "
+                f"Channel mismatch: using {len(shared_ch_names)}/{len(meg_ch_names)} "
                 "channels shared between refCOV and dataCOV"
             )
 
-        # Step 6: Regularize refCOV (Tikhonov, Cohen 2022 style)
-        # refCOV_reg = (1-gamma) * refCOV + gamma * mean_eigenvalue * I
-        # gamma is very small (1e-8) to improve numerical stability only.
+        # Step 7: Regularize (Tikhonov, Cohen 2022 style)
         refCOV = (refCOV + refCOV.T) / 2
         refCOV_reg = (
             (1 - cov_reg) * refCOV
@@ -727,22 +757,34 @@ class ZCAFilterAnalysis(BaseAnalysis):
         )
 
         # Step 7: GEDAI generalized eigendecomposition
-        # eigh(dataCOV, refCOV): eigenvalue >> 1 means data variance far exceeds
-        # what the brain reference predicts → artifact
+        # eigh(dataCOV, refCOV + dataCOV): eigenvalues in [0, 1]
+        # high eigenvalue = data energy dominates → artifact
         self.log("Computing GEDAI generalized eigendecomposition...")
-        eigenvalues, eigenvectors = eigh(dataCOV_reg, refCOV_reg)
+        denom = refCOV_reg + dataCOV_reg
+        denom = (denom + denom.T) / 2
+        eigenvalues, eigenvectors = eigh(dataCOV_reg, denom)
 
-        n_above = int(np.sum(eigenvalues > threshold))
         self.log(
-            f"Eigenvalue range: [{eigenvalues.min():.2f}, {eigenvalues.max():.2f}], "
-            f"{n_above} components above threshold={threshold}"
+            f"Eigenvalue range: [{eigenvalues.min():.4f}, {eigenvalues.max():.4f}]"
         )
 
         # Step 8: Select artifact components (high eigenvalue = artifact)
-        artifact_mask = eigenvalues > threshold
-        U_artifact = eigenvectors[:, artifact_mask]  # [n_ch × n_artifacts]
+        if threshold <= 1.0:
+            # Fractional threshold: eigenvalue > threshold → artifact
+            artifact_mask = eigenvalues > threshold
+            U_artifact = eigenvectors[:, artifact_mask]
+            U_signal = eigenvectors[:, ~artifact_mask]
+        else:
+            # Integer threshold: keep this many signal dimensions
+            n_keep = int(threshold)
+            n_remove = eigenvectors.shape[1] - n_keep
+            idx = np.argsort(eigenvalues)[::-1][:n_remove]
+            artifact_mask = np.isin(np.arange(eigenvectors.shape[1]), idx)
+            U_artifact = eigenvectors[:, artifact_mask]
+            U_signal = eigenvectors[:, ~artifact_mask]
+
         n_artifacts = U_artifact.shape[1]
-        n_signal = eigenvectors.shape[1] - n_artifacts
+        n_signal = U_signal.shape[1]
 
         self.log(f"Signal components: {n_signal}")
         self.log(f"Artifact components: {n_artifacts}")
@@ -752,7 +794,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
             return raw, noise, []
 
         # Step 9: Create SSP projectors from artifact eigenvectors
-        desc_prefix = f"GEDAI_thresh{threshold:.1f}"
+        desc_prefix = f"GEDAI_thresh{threshold:.2f}"
 
         projs = []
         for k in range(n_artifacts):
