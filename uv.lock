@@ -1394,8 +1394,8 @@ dependencies = [
 
 [[package]]
 name = "mne-bids"
-version = "0.1.0.dev1543+ga356d32ca"
-source = { git = "https://github.com/harrisonritz/mne-bids.git?branch=mne-opm#a356d32caf86662d11a0e7e2fff898b5b7695be4" }
+version = "0.1.0.dev1544+g638239920"
+source = { git = "https://github.com/harrisonritz/mne-bids.git?branch=mne-opm#6382399202383a58356f1bddeaa502d540e9435e" }
 dependencies = [
     { name = "mne" },
     { name = "numpy" },

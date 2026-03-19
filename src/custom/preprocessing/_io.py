@@ -77,8 +77,6 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
     """
     bp: BIDSPath = write_kwargs["bids_path"]
 
-    TIMEOUT = 600
-
     # Exclusive lock on participants.tsv to serialise concurrent SLURM jobs.
     # The .lock file is created next to participants.tsv in the BIDS root.
     assert bp.root is not None, "bids_path must have a root set"
