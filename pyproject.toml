@@ -25,6 +25,7 @@ dependencies = [
     "mne",
     "mne-bids",
     "mne-bids-pipeline",
+    "mne-denoise>=0.0.1",
     "mne-qt-browser>=0.7.4",
     "openmeeg>=2.5.16",
     "osl-ephys",
