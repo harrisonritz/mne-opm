@@ -6,10 +6,10 @@ accepts a `SimpleNamespace` configuration object.
 
 ## Analysis modules
 
-### regress_ref
+### regress
 
 ```{eval-rst}
-.. automodule:: custom.preprocessing.regress_ref
+.. automodule:: custom.preprocessing.regress
    :members:
    :no-index:
 ```

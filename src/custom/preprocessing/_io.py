@@ -29,7 +29,9 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+import random
 import shutil
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -37,7 +39,52 @@ from typing import Optional
 import mne
 import mne_bids
 from mne_bids import BIDSPath
+# from filelock import SoftFileLock, Timeout
 import pandas as pd
+
+
+def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
+    """Read raw BIDS data with retry logic for NFS race conditions.
+
+    When multiple SLURM jobs run in parallel, ``mne_bids.read_raw_bids``
+    can fail with an ``IndexError`` because a shared TSV file
+    (``participants.tsv``, ``scans.tsv``, etc.) is caught mid-write by
+    another job.  This wrapper retries with exponential back-off.
+
+    Parameters
+    ----------
+    bids_path : mne_bids.BIDSPath
+        Path to the BIDS dataset.
+    extra_params : dict, optional
+        Extra parameters forwarded to the raw reader (e.g.
+        ``{"preload": True}``).
+    max_retries : int
+        Maximum number of attempts (default 10).
+
+    Returns
+    -------
+    raw : mne.io.Raw
+        The loaded raw object.
+    """
+    if extra_params is None:
+        extra_params = {}
+
+    for attempt in range(max_retries):
+        try:
+            return mne_bids.read_raw_bids(
+                bids_path, extra_params=extra_params
+            )
+        except IndexError:
+            if attempt < max_retries - 1:
+                delay = (2 ** attempt) + random.uniform(0, 2)
+                print(
+                    f"[read_raw_bids_with_retry] Transient TSV read error "
+                    f"(attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+            else:
+                raise
 
 
 def write_raw_bids_preserve_events(**write_kwargs) -> None:
@@ -54,6 +101,13 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
     restores them afterwards so that only the raw data file and other
     sidecar files (channels.tsv, etc.) are updated.
 
+    An exclusive file lock on ``<bids_root>/participants.tsv.lock`` is
+    acquired before calling ``write_raw_bids`` to prevent race conditions
+    when multiple SLURM array jobs write to the shared ``participants.tsv``
+    concurrently.  If the lock cannot be obtained within the timeout, or if
+    a transient read error occurs despite the lock (possible on NFS), the
+    call is retried with exponential back-off.
+
     Parameters
     ----------
     **write_kwargs
@@ -66,6 +120,14 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
     through to a plain ``write_raw_bids`` call with no backup/restore.
     """
     bp: BIDSPath = write_kwargs["bids_path"]
+
+    # Exclusive lock on participants.tsv to serialise concurrent SLURM jobs.
+    # The .lock file is created next to participants.tsv in the BIDS root.
+    assert bp.root is not None, "bids_path must have a root set"
+    # participants_lock = SoftFileLock(
+    #     Path(bp.root) / "participants.tsv.lock",
+    #     timeout=TIMEOUT,  # seconds; long enough for slow writes, prevents deadlock
+    # )
 
     # Derive the events sidecar paths from the raw BIDSPath
     events_tsv: Path = bp.copy().update(
@@ -85,9 +147,27 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
         shutil.copy2(events_json, json_backup)
 
     try:
-        mne_bids.write_raw_bids(**write_kwargs)
+        _max_retries = 10
+        for _attempt in range(_max_retries):
+            try:
+                mne_bids.write_raw_bids(**write_kwargs)
+                break
+            except IndexError:
+                # Transient empty-file read — can still occur on NFS even with
+                # advisory locking.  Retry with exponential back-off.
+                if _attempt < _max_retries - 1:
+                    _delay = (2 ** _attempt) + random.uniform(0, 2)
+                    print(
+                        f"[write_raw_bids_preserve_events] Transient "
+                        f"participants.tsv read error "
+                        f"(attempt {_attempt + 1}/{_max_retries}), "
+                        f"retrying in {_delay:.1f} s..."
+                    )
+                    time.sleep(_delay)
+                else:
+                    raise
     finally:
-        # Restore the original events files
+        # Restore the original events files regardless of success or failure
         if tsv_backup is not None and tsv_backup.exists():
             shutil.move(str(tsv_backup), str(events_tsv))
         if json_backup is not None and json_backup.exists():

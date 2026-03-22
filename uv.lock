@@ -1394,8 +1394,8 @@ dependencies = [
 
 [[package]]
 name = "mne-bids"
-version = "0.1.0.dev1543+ga356d32ca"
-source = { git = "https://github.com/harrisonritz/mne-bids.git?branch=mne-opm#a356d32caf86662d11a0e7e2fff898b5b7695be4" }
+version = "0.1.0.dev1546+gb0f3e7daf"
+source = { git = "https://github.com/harrisonritz/mne-bids.git?branch=mne-opm#b0f3e7daf23ee0af6b40fd544bde172d51fa65b0" }
 dependencies = [
     { name = "mne" },
     { name = "numpy" },
@@ -1416,8 +1416,8 @@ full = [
 
 [[package]]
 name = "mne-bids-pipeline"
-version = "0.1.0.dev1027+gebf03b042"
-source = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm#ebf03b042831bd766227066535b9f9ca2a4c367e" }
+version = "0.1.0.dev1031+g3453ceeb0"
+source = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm#3453ceeb0c40581c4d626e066402c1df226ce71f" }
 dependencies = [
     { name = "annotated-types" },
     { name = "autoreject" },
@@ -1452,6 +1452,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mne-denoise"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "mne" },
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/01/1b249391cfd1b072f260eacd12cdac977912fdbad51b3c39fe36148183bd/mne_denoise-0.0.1.tar.gz", hash = "sha256:e889979cf832b278d4fd34bcb52fc4d2852e4bc6a770bebe8d008747429e2dfe", size = 406607, upload-time = "2026-01-23T11:44:51.033Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/a2/5da3db38c20d31a6af346d64dda78fef3106b95d72c2f9fe4810d4eb20b8/mne_denoise-0.0.1-py3-none-any.whl", hash = "sha256:dac94ffd483598431af41fc2e8ade1990f4512439855f2d87a67df570e0d04f4", size = 483690, upload-time = "2026-01-23T11:44:49.249Z" },
+]
+
+[[package]]
 name = "mne-icalabel"
 version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1480,6 +1496,7 @@ dependencies = [
     { name = "mne" },
     { name = "mne-bids" },
     { name = "mne-bids-pipeline" },
+    { name = "mne-denoise" },
     { name = "mne-qt-browser" },
     { name = "openmeeg" },
     { name = "osl-ephys" },
@@ -1511,6 +1528,7 @@ requires-dist = [
     { name = "mne", git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm" },
     { name = "mne-bids", git = "https://github.com/harrisonritz/mne-bids.git?branch=mne-opm" },
     { name = "mne-bids-pipeline", git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm" },
+    { name = "mne-denoise", specifier = ">=0.0.1" },
     { name = "mne-qt-browser", specifier = ">=0.7.4" },
     { name = "openmeeg", specifier = ">=2.5.16" },
     { name = "osl-ephys", git = "https://github.com/harrisonritz/osl-ephys.git" },

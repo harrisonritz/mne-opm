@@ -28,6 +28,12 @@ echo "--------------------------"
 echo ""
 
 
+echo ""
+echo "======================= custom: regress  =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress --config=$CONFIG_PATH
+
+
 
 echo ""
 echo "======================= OSL: bad segment 1 =============================================="

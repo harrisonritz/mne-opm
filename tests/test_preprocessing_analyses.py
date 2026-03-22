@@ -17,7 +17,7 @@ from custom.preprocessing.bad_segments import BadSegmentsAnalysis
 from custom.preprocessing.bad_channels import BadChannelsAnalysis
 from custom.preprocessing.bad_epochs import BadEpochsAnalysis
 from custom.preprocessing.manual_channel import ManualChannelAnalysis
-from custom.preprocessing.regress_ref import RegressReferenceAnalysis
+from custom.preprocessing.regress import RegressAnalysis
 from custom.preprocessing.apply_hfc import ApplyHFCAnalysis
 from custom.preprocessing.zca_filter import ZCAFilterAnalysis
 from custom.preprocessing.auto_ica import AutoICAAnalysis
@@ -39,7 +39,7 @@ class TestAnalysisClassConstants:
             (BadChannelsAnalysis, "badchannels", "bad_channels"),
             (BadEpochsAnalysis, "badepochs", "bad_epochs"),
             (ManualChannelAnalysis, "manualchannel", "manual_channel"),
-            (RegressReferenceAnalysis, "regressref", "regress_ref"),
+            (RegressAnalysis, "regress", "regress"),
             (ApplyHFCAnalysis, "applyhfc", "apply_hfc"),
             (ZCAFilterAnalysis, "zcafilter", "zca_filter"),
             (AutoICAAnalysis, "autoica", "auto_ica"),
@@ -76,17 +76,17 @@ class TestAlwaysEnabled:
 class TestFlagGatedEnabled:
     """Analyses gated by a config flag."""
 
-    def test_regress_ref_enabled(self):
-        cfg = SimpleNamespace(_regress_ref=True)
-        assert RegressReferenceAnalysis(cfg).is_enabled() is True
+    def test_regress_enabled(self):
+        cfg = SimpleNamespace(_regress=True)
+        assert RegressAnalysis(cfg).is_enabled() is True
 
-    def test_regress_ref_disabled(self):
-        cfg = SimpleNamespace(_regress_ref=False)
-        assert RegressReferenceAnalysis(cfg).is_enabled() is False
+    def test_regress_disabled(self):
+        cfg = SimpleNamespace(_regress=False)
+        assert RegressAnalysis(cfg).is_enabled() is False
 
-    def test_regress_ref_missing_defaults_false(self):
+    def test_regress_missing_defaults_false(self):
         cfg = SimpleNamespace()
-        assert RegressReferenceAnalysis(cfg).is_enabled() is False
+        assert RegressAnalysis(cfg).is_enabled() is False
 
     def test_hfc_enabled(self):
         cfg = SimpleNamespace(_do_HFC=True)
@@ -146,10 +146,10 @@ class TestICAEnabled:
 
 
 # ---------------------------------------------------------------------------
-# RegressReferenceAnalysis — core regression logic (time-varying)
+# RegressAnalysis — core regression logic (time-varying)
 # ---------------------------------------------------------------------------
 
-class TestRegressReferenceCore:
+class TestRegressCore:
     """Test the time-varying sliding-window regression on synthetic data."""
 
     @pytest.fixture()
@@ -179,46 +179,49 @@ class TestRegressReferenceCore:
         raw = mne.io.RawArray(data, info)
         return raw, brain
 
-    def test_prepare_reference_data_shape(self, regression_setup):
+    def test_prepare_predictor_data_shape(self, regression_setup):
         raw, _ = regression_setup
         cfg = SimpleNamespace(
-            _regress_ref=True,
+            _regress=True,
+            _regress_preds=["ref_meg"],
             ch_types=["mag"],
-            _regress_ref_freqs=None,
+            _regress_freqs=None,
         )
-        analysis = RegressReferenceAnalysis(cfg)
-        ref_data = analysis._prepare_reference_data(raw)
+        analysis = RegressAnalysis(cfg)
+        pred_data = analysis._prepare_predictor_data(raw)
         # Without freq bands: raw + squared = 2 * n_ref features
-        assert ref_data.shape[0] == 6  # 3 ref * 2 (raw + squared)
-        assert ref_data.shape[1] == raw.n_times
+        assert pred_data.shape[0] == 6  # 3 ref * 2 (raw + squared)
+        assert pred_data.shape[1] == raw.n_times
 
-    def test_prepare_reference_data_with_freqs(self, regression_setup):
+    def test_prepare_predictor_data_with_freqs(self, regression_setup):
         raw, _ = regression_setup
         cfg = SimpleNamespace(
-            _regress_ref=True,
+            _regress=True,
+            _regress_preds=["ref_meg"],
             ch_types=["mag"],
-            _regress_ref_freqs=[(None, 10.0), (10.0, 50.0)],
+            _regress_freqs=[(None, 10.0), (10.0, 50.0)],
         )
-        analysis = RegressReferenceAnalysis(cfg)
-        ref_data = analysis._prepare_reference_data(raw)
+        analysis = RegressAnalysis(cfg)
+        pred_data = analysis._prepare_predictor_data(raw)
         # 2 freq bands * 3 ref channels = 6 features
-        assert ref_data.shape[0] == 6
-        assert ref_data.shape[1] == raw.n_times
+        assert pred_data.shape[0] == 6
+        assert pred_data.shape[1] == raw.n_times
 
     def test_standard_regression_reduces_variance(self, regression_setup):
         """Standard regression should reduce MEG variance."""
         raw, _ = regression_setup
         cfg = SimpleNamespace(
-            _regress_ref=True,
-            _regress_ref_timevarying=False,
-            _regress_ref_plot=False,
+            _regress=True,
+            _regress_preds=["ref_meg"],
+            _regress_timevarying=False,
+            _regress_plot=False,
             ch_types=["mag"],
             find_breaks=False,
         )
-        analysis = RegressReferenceAnalysis(cfg)
+        analysis = RegressAnalysis(cfg)
 
         var_before = np.var(raw.get_data(picks="mag"))
-        raw_clean = analysis._regress_reference(raw.copy())
+        raw_clean = analysis._regress(raw.copy())
         var_after = np.var(raw_clean.get_data(picks="mag"))
 
         assert var_after < var_before, (
@@ -229,18 +232,19 @@ class TestRegressReferenceCore:
         """Time-varying regression should reduce MEG variance."""
         raw, _ = regression_setup
         cfg = SimpleNamespace(
-            _regress_ref=True,
-            _regress_ref_timevarying=True,
-            _regress_ref_window=3.0,  # short windows for 10s data
-            _regress_ref_freqs=None,
-            _regress_ref_plot=False,
+            _regress=True,
+            _regress_preds=["ref_meg"],
+            _regress_timevarying=True,
+            _regress_window=3.0,  # short windows for 10s data
+            _regress_freqs=None,
+            _regress_plot=False,
             ch_types=["mag"],
             find_breaks=False,
         )
-        analysis = RegressReferenceAnalysis(cfg)
+        analysis = RegressAnalysis(cfg)
 
         var_before = np.var(raw.get_data(picks="mag"))
-        raw_clean = analysis._regress_reference(raw.copy())
+        raw_clean = analysis._regress(raw.copy())
         var_after = np.var(raw_clean.get_data(picks="mag"))
 
         assert var_after < var_before

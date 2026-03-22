@@ -6,7 +6,7 @@ command-line arguments and dispatches to the appropriate analysis module
 in the preprocessing subpackage.
 
 Provided analyses (CLI --analysis):
-    regress_ref    -> Regress out reference channel signals
+    regress        -> Regress out a configurable list of sensor signals
     bad_segments   -> Detect & annotate bad raw data segments (legacy)
     bad_segments_1 -> Stage 1: coarse bad segment detection (pre-spatial filter)
     bad_segments_2 -> Stage 2: fine bad segment detection (post-spatial filter)
@@ -23,8 +23,8 @@ Usage
 
 Examples
 --------
-    # Run reference regression
-    python src/custom/custom_preproc.py --analysis=regress_ref --config=config.py
+    # Run sensor regression
+    python src/custom/custom_preproc.py --analysis=regress --config=config.py
 
     # Run bad segment detection
     python src/custom/custom_preproc.py --analysis=bad_segments --config=config.py
@@ -67,7 +67,7 @@ from custom.preprocessing._config import load_config, normalize_analysis_key
 # Mapping of normalized analysis keys to their module names
 # Each module must have a run(cfg) function
 ANALYSIS_REGISTRY: dict[str, str] = {
-    "regressref": "regress_ref",
+    "regress": "regress",
     "badsegments": "bad_segments",
     "badsegments1": "bad_segments",
     "badsegments2": "bad_segments",
@@ -84,7 +84,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
 
 # Human-readable names for CLI choices (with underscores)
 ANALYSIS_CHOICES: list[str] = [
-    "regress_ref",
+    "regress",
     "bad_segments",
     "bad_segments_1",
     "bad_segments_2",

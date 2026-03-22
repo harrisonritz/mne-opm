@@ -6,8 +6,8 @@ via the CLI dispatcher in custom_preproc.py.
 
 Available Analyses
 ------------------
-regress_ref
-    Regress out reference channel signals from MEG data.
+regress
+    Regress out a configurable list of sensor signals from MEG data.
 bad_segments
     Detect and annotate bad raw data segments.
 bad_channels
@@ -39,7 +39,7 @@ Author: Harrison Ritz, 2025
 
 # Import analysis modules for convenient access
 from . import (
-    regress_ref,
+    regress,
     bad_segments,
     bad_channels,
     manual_channel,
@@ -59,7 +59,7 @@ from ._bids_utils import get_bids_path
 
 __all__ = [
     # Analysis modules
-    "regress_ref",
+    "regress",
     "bad_segments",
     "bad_channels",
     "manual_channel",

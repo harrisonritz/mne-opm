@@ -88,13 +88,13 @@ Detects and annotates bad data segments using osl-ephys tools.
 3. Annotates bad segments in the raw data
 4. Saves back to BIDS
 
-## Reference channel regression (`regress_ref`)
+## Sensor regression (`regress`)
 
-Regresses out signals captured by reference MEG sensors from the primary
-sensors. Reference sensors are far from the scalp and primarily measure
-environmental noise.
+Regresses out signals from a configurable list of sensors from the primary
+MEG channels. Commonly used to remove environmental noise captured by
+reference sensors.
 
-**Config flag:** `_regress_ref = True`
+**Config flag:** `_regress = True`; **Predictors:** `_regress_preds = ['ref_meg']`
 
 **What it does:**
 1. Loads raw data with both MEG and reference channels
