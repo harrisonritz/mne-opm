@@ -61,7 +61,7 @@ import mne
 import mne_bids
 
 from ._base import BaseAnalysis, have_qt_browser
-from ._io import write_raw_bids_preserve_events
+from ._io import write_raw_bids_preserve_events, read_raw_bids_with_retry
 
 
 class ManualChannelAnalysis(BaseAnalysis):
@@ -120,7 +120,7 @@ class ManualChannelAnalysis(BaseAnalysis):
         )
         if not paths:
             raise FileNotFoundError(f"No raw data found for task={self.cfg.task}")
-        data[self.cfg.task] = mne_bids.read_raw_bids(paths[0], extra_params={"preload": True})
+        data[self.cfg.task] = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
         self.log(f"Loaded raw data for task={self.cfg.task}")
 
         # Optionally load noise
@@ -135,7 +135,7 @@ class ManualChannelAnalysis(BaseAnalysis):
                 ignore_nosub=True,
             )
             if paths_noise:
-                data["noise"] = mne_bids.read_raw_bids(paths_noise[0], extra_params={"preload": True})
+                data["noise"] = read_raw_bids_with_retry(paths_noise[0], extra_params={"preload": True})
                 self.log("Loaded raw data for task=noise")
 
         return data

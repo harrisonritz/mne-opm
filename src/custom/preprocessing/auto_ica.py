@@ -729,6 +729,8 @@ class AutoICAAnalysis(BaseAnalysis):
         # Get final list of flagged components
         outlier_idx = np.where(flagged)[0].tolist()
 
+
+        # print("SKIPPING PCA-GESD FLAGGING FOR NOW TO CHECK FOR FALSE POSITIVES")
         if len(outlier_idx) > 0:
             self.log(f"=== Total flagged components: {outlier_idx} ===")
             ica.exclude.extend(outlier_idx)
@@ -794,11 +796,9 @@ class AutoICAAnalysis(BaseAnalysis):
         source_vars = np.var(sources, axis=1)
         sensor_var = topo_norms_sq * source_vars
 
-        source_deriv_vars = np.var(np.diff(sources, axis=1), axis=1)
-        sensor_deriv_var = topo_norms_sq * source_deriv_vars
-
-        # hf_ratio = sensor_deriv_var / (sensor_var + 1e-20)
-        hf_ratio = np.sqrt(sensor_var + 1e-20)
+        # Mean absolute gradient (FASTER: Nolan et al. 2010)
+        source_diffs = np.diff(sources, axis=1)
+        mean_abs_grad = np.mean(np.abs(source_diffs), axis=1)
 
         # Temporal kurtosis
         source_kurt = kurtosis(sources, axis=1, fisher=True)
@@ -812,6 +812,12 @@ class AutoICAAnalysis(BaseAnalysis):
         # Spectral slope, derivative, and residual metrics
         nperseg = min(n_times, int(2 * sfreq))
         freqs, psd = welch(sources, sfreq, nperseg=nperseg, axis=1)
+
+        # High-frequency power ratio: fraction of power above fmin Hz.
+        # Muscle/noise has flat broadband spectra; brain has steep 1/f rolloff.
+        hf_power = np.sum(psd[:, freqs >= fmin], axis=1)
+        total_power = np.sum(psd, axis=1)
+        hf_ratio = hf_power / (total_power + 1e-20)
 
         # --- Spectral derivative kurtosis (all Welch frequencies) ---
         # d(log_psd)/df: fractional change in power per Hz.
@@ -843,8 +849,8 @@ class AutoICAAnalysis(BaseAnalysis):
 
         return {
             "sensor_var": sensor_var,
-            "sensor_deriv_var": sensor_deriv_var,
             "hf_ratio": hf_ratio,
+            "mean_abs_gradient": mean_abs_grad,
             "source_kurtosis": source_kurt,
             "autocorr_1lag": autocorr_1lag,
             "spectral_slope": spectral_slope,
@@ -853,8 +859,30 @@ class AutoICAAnalysis(BaseAnalysis):
             "spectral_resid_kurtosis": spectral_resid_kurtosis,
         }
 
+    # All available GESD metric names (used for validation).
+    AVAILABLE_GESD_METRICS = [
+        "log_hf_ratio",
+        "temporal_kurtosis_sqrt",
+        "autocorr_fisher_z",
+        "spectral_slope",
+        "spatial_kurtosis_sqrt",
+        "spectral_deriv_kurtosis_sqrt",
+        "spectral_resid_kurtosis_sqrt",
+        "log_mean_abs_gradient",
+    ]
+
     def _prepare_metrics_for_gesd(self, diagnostics: dict) -> list:
         """Transform metrics and specify outlier direction for GESD.
+
+        Which metrics are included can be controlled by setting
+        ``cfg._gesd_metrics`` to a list of metric name strings.  When the
+        attribute is absent or ``None``, all metrics are used.
+
+        Available metric names:
+            ``log_hf_ratio``, ``temporal_kurtosis_sqrt``,
+            ``autocorr_fisher_z``, ``spectral_slope``,
+            ``spatial_kurtosis_sqrt``, ``spectral_deriv_kurtosis_sqrt``,
+            ``spectral_resid_kurtosis_sqrt``, ``log_mean_abs_gradient``.
 
         Parameters
         ----------
@@ -874,45 +902,73 @@ class AutoICAAnalysis(BaseAnalysis):
         - Raw values when already approximately normal
         - Signed sqrt for kurtosis to preserve sign while reducing skew
         """
+        # Determine which metrics the user wants
+        selected = getattr(self.cfg, "_gesd_metrics", None)
+        if selected is not None:
+            unknown = set(selected) - set(self.AVAILABLE_GESD_METRICS)
+            if unknown:
+                raise ValueError(
+                    f"Unknown GESD metric names: {unknown}. "
+                    f"Available: {self.AVAILABLE_GESD_METRICS}"
+                )
+            use = set(selected)
+            self.log(f"Using selected GESD metrics: {sorted(use)}")
+        else:
+            use = set(self.AVAILABLE_GESD_METRICS)
+
         metrics = []
 
         # 1. Log HF ratio: high = high-frequency artifact (muscle)
-        log_hf = np.log(diagnostics["hf_ratio"] + 1e-10)
-        metrics.append(("log_hf_ratio", log_hf, 1))
+        if "log_hf_ratio" in use:
+            log_hf = np.log(diagnostics["hf_ratio"] + 1e-10)
+            metrics.append(("log_hf_ratio", log_hf, 1))
 
         # 2. Temporal kurtosis: high = non-Gaussian artifact
-        source_kurt = diagnostics["source_kurtosis"]
-        signed_sqrt_kurt = np.sign(source_kurt) * np.sqrt(np.abs(source_kurt)  + 1e-10)
-        metrics.append(("temporal_kurtosis_sqrt", signed_sqrt_kurt, 1))
+        if "temporal_kurtosis_sqrt" in use:
+            source_kurt = diagnostics["source_kurtosis"]
+            signed_sqrt_kurt = np.sign(source_kurt) * np.sqrt(np.abs(source_kurt)  + 1e-10)
+            metrics.append(("temporal_kurtosis_sqrt", signed_sqrt_kurt, 1))
 
         # 3. Autocorrelation: low = white noise artifact
-        autocorr = diagnostics["autocorr_1lag"]
-        autocorr_clipped = np.clip(autocorr, -0.999, 0.999)
-        fisher_z = np.arctanh(autocorr_clipped)  # Fisher z-transform
-        metrics.append(("autocorr_fisher_z", fisher_z, -1))
+        if "autocorr_fisher_z" in use:
+            autocorr = diagnostics["autocorr_1lag"]
+            autocorr_clipped = np.clip(autocorr, -0.999, 0.999)
+            fisher_z = np.arctanh(autocorr_clipped)  # Fisher z-transform
+            metrics.append(("autocorr_fisher_z", fisher_z, -1))
 
         # 4. Spectral slope: high (less negative) = flat spectrum = muscle/noise
-        metrics.append(("spectral_slope", diagnostics["spectral_slope"], 1))
+        if "spectral_slope" in use:
+            metrics.append(("spectral_slope", diagnostics["spectral_slope"], 1))
 
         # 5. Spatial kurtosis: high = focal/single-channel artifact
-        spatial_kurt = diagnostics["spatial_kurtosis"]
-        signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(np.abs(spatial_kurt) + 1e-10)
-        metrics.append(("spatial_kurtosis_sqrt", signed_sqrt_spatial, 1))
+        if "spatial_kurtosis_sqrt" in use:
+            spatial_kurt = diagnostics["spatial_kurtosis"]
+            signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(np.abs(spatial_kurt) + 1e-10)
+            metrics.append(("spatial_kurtosis_sqrt", signed_sqrt_spatial, 1))
 
         # 6. Spectral derivative kurtosis: high = sharp narrow-band transitions.
         # d(log_psd)/df has heavy tails when the spectrum has sudden onset/offset
         # edges (boxcar-like artifact). Natural 1/f spectra are smooth → low kurtosis.
-        spec_deriv_kurt = diagnostics["spectral_deriv_kurtosis"]
-        signed_sqrt_spec_deriv = np.sign(spec_deriv_kurt) * np.sqrt(np.abs(spec_deriv_kurt) + 1e-10)
-        metrics.append(("spectral_deriv_kurtosis_sqrt", signed_sqrt_spec_deriv, 1))
+        if "spectral_deriv_kurtosis_sqrt" in use:
+            spec_deriv_kurt = diagnostics["spectral_deriv_kurtosis"]
+            signed_sqrt_spec_deriv = np.sign(spec_deriv_kurt) * np.sqrt(np.abs(spec_deriv_kurt) + 1e-10)
+            metrics.append(("spectral_deriv_kurtosis_sqrt", signed_sqrt_spec_deriv, 1))
 
         # 7. Spectral residual kurtosis: high = concentrated deviation from 1/f.
         # Residuals from the power-law fit are near-Gaussian for typical brain ICs.
         # A narrow-band artifact creates a localized bump above the baseline
         # → heavy-tailed residuals → high kurtosis.
-        spec_resid_kurt = diagnostics["spectral_resid_kurtosis"]
-        signed_sqrt_spec_resid = np.sign(spec_resid_kurt) * np.sqrt(np.abs(spec_resid_kurt) + 1e-10)
-        metrics.append(("spectral_resid_kurtosis_sqrt", signed_sqrt_spec_resid, 1))
+        if "spectral_resid_kurtosis_sqrt" in use:
+            spec_resid_kurt = diagnostics["spectral_resid_kurtosis"]
+            signed_sqrt_spec_resid = np.sign(spec_resid_kurt) * np.sqrt(np.abs(spec_resid_kurt) + 1e-10)
+            metrics.append(("spectral_resid_kurtosis_sqrt", signed_sqrt_spec_resid, 1))
+
+        # 8. Mean absolute gradient (FASTER): high = temporally rough signal.
+        # Brain sources are smooth (dominated by low-freq oscillations);
+        # muscle and spike artifacts have rapid moment-to-moment fluctuations.
+        if "log_mean_abs_gradient" in use:
+            metrics.append(("log_mean_abs_gradient",
+                            np.log(diagnostics["mean_abs_gradient"] + 1e-10), 1))
 
         return metrics
 

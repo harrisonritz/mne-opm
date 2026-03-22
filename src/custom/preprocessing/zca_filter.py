@@ -105,7 +105,7 @@ from mne.preprocessing.maxwell import _prep_mf_coils, _sss_basis
 from scipy.linalg import eigh, null_space
 
 from ._base import BaseAnalysis
-from ._io import write_raw_bids_preserve_events
+from ._io import write_raw_bids_preserve_events, read_raw_bids_with_retry
 
 
 class ZCAFilterAnalysis(BaseAnalysis):
@@ -175,7 +175,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
             raise FileNotFoundError(f"No raw data found for task={self.cfg.task}")
         
         data["bids_path"] = paths[0]
-        data["raw"] = mne_bids.read_raw_bids(paths[0], extra_params={"preload": True})
+        data["raw"] = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
         self.log(f"Loaded raw data for task={self.cfg.task}")
 
         # Load noise data (required for ZCA)
@@ -193,7 +193,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
                 "No noise recording found. ZCA requires task='noise' data "
                 "for computing the noise covariance matrix."
             )
-        data["noise"] = mne_bids.read_raw_bids(paths_noise[0], extra_params={"preload": True})
+        data["noise"] = read_raw_bids_with_retry(paths_noise[0], extra_params={"preload": True})
         self.log("Loaded noise recording")
 
         # Load BEM solution

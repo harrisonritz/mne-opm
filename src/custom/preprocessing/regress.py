@@ -77,7 +77,7 @@ from scipy import stats
 from scipy.linalg import qr
 
 from ._base import BaseAnalysis
-from ._io import write_raw_bids_preserve_events
+from ._io import write_raw_bids_preserve_events, read_raw_bids_with_retry
 
 
 class RegressAnalysis(BaseAnalysis):
@@ -152,7 +152,7 @@ class RegressAnalysis(BaseAnalysis):
             if not paths:
                 raise FileNotFoundError(f"No raw data found for task={task}")
 
-            raw = mne_bids.read_raw_bids(paths[0], extra_params={"preload": True})
+            raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
             data[task] = raw
             self.log(f"Loaded raw data for task={task}")
 

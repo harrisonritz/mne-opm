@@ -43,6 +43,50 @@ from mne_bids import BIDSPath
 import pandas as pd
 
 
+def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
+    """Read raw BIDS data with retry logic for NFS race conditions.
+
+    When multiple SLURM jobs run in parallel, ``mne_bids.read_raw_bids``
+    can fail with an ``IndexError`` because a shared TSV file
+    (``participants.tsv``, ``scans.tsv``, etc.) is caught mid-write by
+    another job.  This wrapper retries with exponential back-off.
+
+    Parameters
+    ----------
+    bids_path : mne_bids.BIDSPath
+        Path to the BIDS dataset.
+    extra_params : dict, optional
+        Extra parameters forwarded to the raw reader (e.g.
+        ``{"preload": True}``).
+    max_retries : int
+        Maximum number of attempts (default 10).
+
+    Returns
+    -------
+    raw : mne.io.Raw
+        The loaded raw object.
+    """
+    if extra_params is None:
+        extra_params = {}
+
+    for attempt in range(max_retries):
+        try:
+            return mne_bids.read_raw_bids(
+                bids_path, extra_params=extra_params
+            )
+        except IndexError:
+            if attempt < max_retries - 1:
+                delay = (2 ** attempt) + random.uniform(0, 2)
+                print(
+                    f"[read_raw_bids_with_retry] Transient TSV read error "
+                    f"(attempt {attempt + 1}/{max_retries}), "
+                    f"retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+            else:
+                raise
+
+
 def write_raw_bids_preserve_events(**write_kwargs) -> None:
     """Write raw data to BIDS while preserving the existing events files.
 
