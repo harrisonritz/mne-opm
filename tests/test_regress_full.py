@@ -159,24 +159,26 @@ class TestRegressRun:
 # ---------------------------------------------------------------------------
 
 class TestRegressLoadData:
+    @patch("custom.preprocessing.regress.read_raw_bids_with_retry")
     @patch("custom.preprocessing.regress.mne_bids")
-    def test_load_single_task(self, mock_bids, raw_meg, regress_cfg):
+    def test_load_single_task(self, mock_bids, mock_read, raw_meg, regress_cfg):
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         analysis = RegressAnalysis(regress_cfg)
         data = analysis.load_data()
 
         assert regress_cfg.task in data
-        mock_bids.read_raw_bids.assert_called_once()
+        mock_read.assert_called_once()
 
+    @patch("custom.preprocessing.regress.read_raw_bids_with_retry")
     @patch("custom.preprocessing.regress.mne_bids")
-    def test_load_with_empty_room(self, mock_bids, raw_meg, regress_cfg):
+    def test_load_with_empty_room(self, mock_bids, mock_read, raw_meg, regress_cfg):
         regress_cfg.process_empty_room = True
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         analysis = RegressAnalysis(regress_cfg)
         data = analysis.load_data()
@@ -248,17 +250,18 @@ class TestRegressModuleRun:
         assert "Disabled" in captured.out
 
     @patch("custom.preprocessing.regress.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.regress.read_raw_bids_with_retry")
     @patch("custom.preprocessing.regress.mne_bids")
     def test_run_end_to_end(
-        self, mock_bids, mock_write, raw_with_ref_contamination, regress_cfg
+        self, mock_bids, mock_read, mock_write, raw_with_ref_contamination, regress_cfg
     ):
         raw, _ = raw_with_ref_contamination
         mock_bp = MagicMock()
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw
+        mock_read.return_value = raw
 
         run(regress_cfg)
 
-        mock_bids.read_raw_bids.assert_called()
+        mock_read.assert_called()
         mock_write.assert_called()

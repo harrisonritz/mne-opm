@@ -232,6 +232,7 @@ def get_bids_path_for_task(
 def save_ica_bids(
     ica: mne.preprocessing.ICA,
     cfg: SimpleNamespace,
+    components_df: "pd.DataFrame | None" = None,
 ) -> None:
     """Save ICA solution and update components TSV.
 
@@ -239,8 +240,11 @@ def save_ica_bids(
     1. Updates the components TSV to mark excluded components as bad
     2. Saves the ICA object with the updated exclusion list
 
-    This is one of the few genuine utility functions (not just a wrapper),
-    since it coordinates multiple mne_bids operations that should be atomic.
+    When ``components_df`` is provided (e.g. from
+    ``AutoICAAnalysis._build_components_tsv``), it is written directly,
+    giving full control over per-method attribution columns.  Otherwise
+    the existing TSV is read and excluded components are marked as
+    ``status='bad'`` with ``status_description='manual'``.
 
     Parameters
     ----------
@@ -248,6 +252,8 @@ def save_ica_bids(
         ICA object with excluded components marked in ica.exclude.
     cfg : SimpleNamespace
         Configuration object containing BIDS settings.
+    components_df : pd.DataFrame | None
+        If provided, written as the components TSV verbatim.
 
     Examples
     --------
@@ -285,18 +291,21 @@ def save_ica_bids(
     )
 
     # Update components TSV
-    df = pd.read_csv(tsv_path.fpath, sep="\t")
-    for comp in ica.exclude:
-        mask = df["component"].astype(str) == str(comp)
-        if mask.any():
-            df.loc[mask, "status"] = "bad"
-            try:
-                df.loc[mask, "status_description"] = "manual"
-            except Exception as e:
-                print("Exception: ", e)
-                print(f"Warning: 'status_description' column not found in {tsv_path.fpath}. Skipping description update.")
-                print(f"masked df: {df.loc[mask]}")
-    df.to_csv(tsv_path.fpath, sep="\t", index=False)
+    if components_df is not None:
+        components_df.to_csv(tsv_path.fpath, sep="\t", index=False)
+    else:
+        df = pd.read_csv(tsv_path.fpath, sep="\t")
+        for comp in ica.exclude:
+            mask = df["component"].astype(str) == str(comp)
+            if mask.any():
+                df.loc[mask, "status"] = "bad"
+                try:
+                    df.loc[mask, "status_description"] = "manual"
+                except Exception as e:
+                    print("Exception: ", e)
+                    print(f"Warning: 'status_description' column not found in {tsv_path.fpath}. Skipping description update.")
+                    print(f"masked df: {df.loc[mask]}")
+        df.to_csv(tsv_path.fpath, sep="\t", index=False)
 
     # Save ICA object
     ica.save(ica_path.fpath, overwrite=True)

@@ -149,24 +149,26 @@ class TestHFCRun:
 # ---------------------------------------------------------------------------
 
 class TestHFCLoadData:
+    @patch("custom.preprocessing.apply_hfc.read_raw_bids_with_retry")
     @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_load_task_data(self, mock_bids, raw_meg, hfc_cfg):
+    def test_load_task_data(self, mock_bids, mock_read, raw_meg, hfc_cfg):
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
         data = analysis.load_data()
 
         assert hfc_cfg.task in data
-        mock_bids.read_raw_bids.assert_called_once()
+        mock_read.assert_called_once()
 
+    @patch("custom.preprocessing.apply_hfc.read_raw_bids_with_retry")
     @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_load_with_noise(self, mock_bids, raw_meg, hfc_cfg):
+    def test_load_with_noise(self, mock_bids, mock_read, raw_meg, hfc_cfg):
         hfc_cfg.process_empty_room = True
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
         data = analysis.load_data()
@@ -237,14 +239,15 @@ class TestHFCEnabled:
 
 class TestHFCModuleRun:
     @patch("custom.preprocessing.apply_hfc.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.apply_hfc.read_raw_bids_with_retry")
     @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_run_end_to_end(self, mock_bids, mock_write, raw_meg, hfc_cfg):
+    def test_run_end_to_end(self, mock_bids, mock_read, mock_write, raw_meg, hfc_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         run(hfc_cfg)
 
-        mock_bids.read_raw_bids.assert_called()
+        mock_read.assert_called()
         mock_write.assert_called()

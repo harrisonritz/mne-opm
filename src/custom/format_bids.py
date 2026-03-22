@@ -89,9 +89,9 @@ def set_bids_params(config_path: str = "") -> SimpleNamespace:
         screen_distance=_DEFAULT_SCREEN_DISTANCE,
         # Eye-tracking alignment annotations
         # regexp matched against eye-tracking annotations to find sync events
-        eye_sync_regex="stim_onset",
+        _eye_sync_regex="stim_onset",
         # regexp matched against MEG annotations to find sync events
-        raw_sync_regex="trial",
+        _raw_sync_regex="trial",
     )
 
     if config_path:
@@ -658,7 +658,7 @@ def _align_eyetracking(
 ) -> tuple[mne.io.Raw, mne.io.Raw, float, float, float]:
     """Temporally align eye-tracking data to MEG raw data.
 
-    Uses ``cfg.eye_sync_regex`` (eye) and ``cfg.raw_sync_regex`` (raw) events
+    Uses ``cfg._eye_sync_regex`` (eye) and ``cfg._raw_sync_regex`` (raw) events
     to compute a polynomial mapping, then applies bilateral zero-padding so
     that ``mne.preprocessing.realign_raw`` crops eye data (never raw).
 
@@ -669,8 +669,8 @@ def _align_eyetracking(
     eye : mne.io.Raw
         Eye-tracking data (modified in-place via padding & realignment).
     cfg : SimpleNamespace
-        Configuration namespace. Uses ``eye_sync_regex`` and
-        ``raw_sync_regex`` to select alignment annotations.
+        Configuration namespace. Uses ``_eye_sync_regex`` and
+        ``_raw_sync_regex`` to select alignment annotations.
 
     Returns
     -------
@@ -687,11 +687,11 @@ def _align_eyetracking(
     """
     from numpy.polynomial.polynomial import Polynomial
 
-    eye_sync_regex = getattr(cfg, "eye_sync_regex", "stim_onset")
-    raw_sync_regex = getattr(cfg, "raw_sync_regex", "trial")
+    _eye_sync_regex = getattr(cfg, "_eye_sync_regex", "stim_onset")
+    _raw_sync_regex = getattr(cfg, "_raw_sync_regex", "trial")
 
-    eye_events, _ = mne.events_from_annotations(eye, regexp=eye_sync_regex)
-    raw_events, _ = mne.events_from_annotations(raw, regexp=raw_sync_regex)
+    eye_events, _ = mne.events_from_annotations(eye, regexp=_eye_sync_regex)
+    raw_events, _ = mne.events_from_annotations(raw, regexp=_raw_sync_regex)
     eye_shape, raw_shape = eye_events.shape[0], raw_events.shape[0]
 
     eye_duration = eye.times[-1] - eye.times[0]
@@ -753,13 +753,13 @@ def _align_eyetracking(
     )
 
     # Count trial events before alignment for verification
-    n_trial_before = len(mne.events_from_annotations(raw, regexp=raw_sync_regex)[0])
+    n_trial_before = len(mne.events_from_annotations(raw, regexp=_raw_sync_regex)[0])
 
     # Realign
     print("\nRealigning eye-tracking data to OPM...")
     mne.preprocessing.realign_raw(raw, eye, raw_times, eye_times, verbose=True)
 
-    n_trial_after = len(mne.events_from_annotations(raw, regexp=raw_sync_regex)[0])
+    n_trial_after = len(mne.events_from_annotations(raw, regexp=_raw_sync_regex)[0])
     if n_trial_after < n_trial_before:
         print(
             f"\n*** WARNING: realign_raw removed {n_trial_before - n_trial_after} "

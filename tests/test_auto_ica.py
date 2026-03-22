@@ -100,7 +100,7 @@ class TestICAComponentDiagnostics:
 
         expected_keys = {
             "sensor_var",
-            "sensor_deriv_var",
+            "mean_abs_gradient",
             "hf_ratio",
             "source_kurtosis",
             "autocorr_1lag",
@@ -218,7 +218,7 @@ class TestPrepareMetricsForGESD:
         n = 15  # number of components
         return {
             "sensor_var": np.abs(rng.randn(n)) * 1e-25,
-            "sensor_deriv_var": np.abs(rng.randn(n)) * 1e-25,
+            "mean_abs_gradient": np.abs(rng.randn(n)) * 1e-13,
             "hf_ratio": np.abs(rng.randn(n)) * 1e-12,
             "source_kurtosis": rng.randn(n) * 3,
             "autocorr_1lag": np.clip(rng.randn(n) * 0.3 + 0.5, -0.99, 0.99),
@@ -242,7 +242,7 @@ class TestPrepareMetricsForGESD:
     def test_seven_metrics_produced(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
-        assert len(metrics) == 7
+        assert len(metrics) == 8
 
     def test_metric_names(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
@@ -255,6 +255,7 @@ class TestPrepareMetricsForGESD:
         assert "spatial_kurtosis_sqrt" in names
         assert "spectral_deriv_kurtosis_sqrt" in names
         assert "spectral_resid_kurtosis_sqrt" in names
+        assert "log_mean_abs_gradient" in names
 
     def test_directions(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
@@ -268,6 +269,7 @@ class TestPrepareMetricsForGESD:
         assert direction_map["spatial_kurtosis_sqrt"] == 1
         assert direction_map["spectral_deriv_kurtosis_sqrt"] == 1  # high = bad (sharp transitions)
         assert direction_map["spectral_resid_kurtosis_sqrt"] == 1  # high = bad (clustered deviation)
+        assert direction_map["log_mean_abs_gradient"] == 1  # high = temporally rough
 
     def test_no_nans_in_output(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
@@ -280,7 +282,7 @@ class TestPrepareMetricsForGESD:
         analysis = AutoICAAnalysis(ica_cfg)
         diagnostics = {
             "sensor_var": np.ones(5),
-            "sensor_deriv_var": np.ones(5),
+            "mean_abs_gradient": np.ones(5),
             "hf_ratio": np.ones(5),
             "source_kurtosis": np.zeros(5),
             "autocorr_1lag": np.array([0.999, -0.999, 1.0, -1.0, 0.5]),
@@ -306,21 +308,21 @@ class TestLabelByGESDNew:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd_new(ica, raw)
+        result = analysis._label_by_gesd(ica, raw)
         assert isinstance(result, mne.preprocessing.ICA)
 
     def test_exclude_list_is_sorted_unique(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd_new(ica, raw)
+        result = analysis._label_by_gesd(ica, raw)
         assert result.exclude == sorted(set(result.exclude))
 
     def test_exclude_indices_valid(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd_new(ica, raw)
+        result = analysis._label_by_gesd(ica, raw)
         for idx in result.exclude:
             assert 0 <= idx < ica.n_components_
 
@@ -331,7 +333,7 @@ class TestLabelByGESDNew:
         ica.exclude = list(range(ica.n_components_ - 3))
         n_excluded_before = len(ica.exclude)
         analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd_new(ica, raw)
+        result = analysis._label_by_gesd(ica, raw)
         # Should not add any more (too few remaining)
         assert len(result.exclude) == n_excluded_before
 
@@ -611,26 +613,3 @@ class TestAutoICAIntegration:
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._auto_ica(ica, raw)
         assert result.exclude == []
-
-
-# ---------------------------------------------------------------------------
-# _label_by_gesd_old
-# ---------------------------------------------------------------------------
-
-class TestLabelByGESDOld:
-    """Test the legacy GESD method."""
-
-    def test_does_not_crash(self, ica_cfg, synthetic_ica_and_raw):
-        ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd_old(ica, raw)
-        assert isinstance(result, mne.preprocessing.ICA)
-
-    def test_skips_when_too_few_components(self, ica_cfg, synthetic_ica_and_raw):
-        ica, raw = synthetic_ica_and_raw
-        ica.exclude = list(range(ica.n_components_ - 3))
-        n_before = len(ica.exclude)
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd_old(ica, raw)
-        assert len(result.exclude) == n_before

@@ -55,6 +55,7 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import numpy as np
+import pandas as pd
 from scipy import stats
 from scipy.stats import kurtosis
 from scipy.signal import welch
@@ -199,7 +200,7 @@ class AutoICAAnalysis(BaseAnalysis):
         return {self.cfg.task: raw, "ica": ica}
 
     def save_results(self, results: Dict[str, Any]) -> None:
-        """Save ICA solution with updated exclusions.
+        """Save ICA solution with updated exclusions and detailed TSV.
 
         Parameters
         ----------
@@ -209,9 +210,15 @@ class AutoICAAnalysis(BaseAnalysis):
         self.log("Saving ICA results...")
 
         ica = results["ica"]
-        save_ica_bids(ica, self.cfg)
+
+        # Build detailed components TSV with method attribution
+        components_df = self._build_components_tsv(ica)
+        save_ica_bids(ica, self.cfg, components_df=components_df)
 
         self.log(f"Saved ICA with {len(ica.exclude)} excluded components")
+        self.log(
+            f"Components TSV columns: {list(components_df.columns)}"
+        )
 
     def _auto_ica(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
@@ -230,13 +237,17 @@ class AutoICAAnalysis(BaseAnalysis):
         ica : mne.preprocessing.ICA
             ICA with updated exclude list.
         """
+        # Initialize per-component label tracking for TSV attribution
+        self._component_labels = {i: [] for i in range(ica.n_components_)}
+        self._gesd_info = {}
+
         # Reference sensor correlation method
         if getattr(self.cfg, "ref_bads", True):
             ica = self._label_by_reference(ica, raw)
 
         # GESD outlier detection method (using new PCA-whitened approach)
         if getattr(self.cfg, "gesd_bads", True):
-            ica = self._label_by_gesd_new(ica, raw)
+            ica = self._label_by_gesd(ica, raw)
 
         # Spatial template matching via corrmap
         if getattr(self.cfg, "_corrmap_bads", False):
@@ -294,6 +305,10 @@ class AutoICAAnalysis(BaseAnalysis):
         self.log(f"Found {len(ref_idx)} reference-correlated components: {ref_idx}")
 
         ica.exclude.extend(ref_idx)
+
+        # Track attribution
+        for idx in ref_idx:
+            self._component_labels[idx].append("reference")
 
         # Cleanup
         del ref_raw, ref_ica, ref_src
@@ -357,6 +372,12 @@ class AutoICAAnalysis(BaseAnalysis):
             ``ica.labels_``.
         """
         self.log("Identifying bad components using corrmap template matching...")
+
+        # Lazy-init tracking dicts so the method can be tested stand-alone
+        if not hasattr(self, "_component_labels"):
+            self._component_labels = {i: [] for i in range(ica.n_components_)}
+        if not hasattr(self, "_gesd_info"):
+            self._gesd_info = {}
 
         # --- Validate template directory ---
         template_dir_str = getattr(self.cfg, "_corrmap_template_dir", "")
@@ -510,74 +531,15 @@ class AutoICAAnalysis(BaseAnalysis):
                     f"{artifact_type}: adding components {final_idx} to exclude"
                 )
                 ica.exclude.extend(final_idx)
+                # Track attribution
+                for idx in final_idx:
+                    self._component_labels[idx].append(f"corrmap_{artifact_type}")
             else:
                 self.log(f"{artifact_type}: no components matched")
 
         return ica
 
-    def _label_by_gesd_old(
-        self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
-    ) -> mne.preprocessing.ICA:
-        """Identify bad components using GESD outlier detection (original method).
-
-        Uses multiple metrics (kurtosis, variance) to identify components
-        with unusual statistical properties.
-
-        Parameters
-        ----------
-        ica : mne.preprocessing.ICA
-            ICA solution.
-        raw : mne.io.BaseRaw
-            Raw data for computing sources.
-
-        Returns
-        -------
-        ica : mne.preprocessing.ICA
-            ICA with outlier components added to exclude.
-        """
-        self.log("Identifying bad components using GESD...")
-
-        # Get ICA sources
-        sources = ica.get_sources(raw).get_data()
-        n_comps = sources.shape[0]
-
-        # Check if enough components remain for GESD
-        n_remaining = n_comps - len(ica.exclude)
-        if n_remaining < 5:
-            self.log(
-                f"Too few components remaining ({n_remaining}) for GESD; skipping"
-            )
-            return ica
-
-        # Compute statistics for each component
-        kurtosis_scores = stats.kurtosis(sources, axis=1)
-        std_scores = np.std(sources, axis=1, ddof=1)
-        std_diff_scores = np.linalg.norm(np.diff(sources, axis=1), axis=1)
-
-        # Apply GESD to each metric
-        self.log(f"Before GESD: {len(ica.exclude)} excluded components")
-
-        metrics = [
-            (kurtosis_scores, "kurtosis"),
-            (std_scores, "std"),
-            (std_diff_scores, "std_diff"),
-        ]
-
-        for scores, name in metrics:
-            gesd_mask, _ = osl_gesd(scores, p_out=1.0)
-
-            if gesd_mask.sum() == 0:
-                self.log(f"{name}: no outliers found")
-            else:
-                outlier_idx = np.where(gesd_mask)[0].tolist()
-                ica.exclude.extend(outlier_idx)
-                self.log(f"{name}: found {len(outlier_idx)} outliers: {outlier_idx}")
-
-        self.log(f"After GESD: {len(ica.exclude)} excluded components")
-
-        return ica
-
-    def _label_by_gesd_new(
+    def _label_by_gesd(
         self,
         ica: mne.preprocessing.ICA,
         raw: mne.io.BaseRaw,
@@ -617,6 +579,12 @@ class AutoICAAnalysis(BaseAnalysis):
             ICA with outlier components added to exclude.
         """
         self.log("Identifying bad components using PCA-whitened GESD...")
+
+        # Lazy-init tracking dicts so the method can be tested stand-alone
+        if not hasattr(self, "_component_labels"):
+            self._component_labels = {i: [] for i in range(ica.n_components_)}
+        if not hasattr(self, "_gesd_info"):
+            self._gesd_info = {}
 
         # Check if enough components for analysis
         n_comps = ica.n_components_
@@ -720,6 +688,9 @@ class AutoICAAnalysis(BaseAnalysis):
             n_flagged = flags.sum()
             if n_flagged > 0:
                 flagged_idx = np.where(flags)[0].tolist()
+                # Track per-PC attribution
+                for idx in flagged_idx:
+                    self._component_labels[idx].append(f"GESD_PC{p + 1}")
                 self.log(
                     f"  PC{p + 1} ({side_str} tail): {n_flagged} outliers → {flagged_idx}"
                 )
@@ -736,6 +707,16 @@ class AutoICAAnalysis(BaseAnalysis):
             ica.exclude.extend(outlier_idx)
         else:
             self.log("=== No components flagged by PCA-GESD ===")
+
+        # Store GESD details for TSV generation
+        self._gesd_info = {
+            "metric_names": metric_names,
+            "metric_values": {name: vals for name, vals, side in metrics_list},
+            "pc_scores": scores,
+            "pc_loadings": loadings,
+            "var_explained": var_explained[:n_pcs],
+            "n_pcs": n_pcs,
+        }
 
         self.log(f"After PCA-GESD: {len(ica.exclude)} excluded components")
 
@@ -870,6 +851,203 @@ class AutoICAAnalysis(BaseAnalysis):
         "spectral_resid_kurtosis_sqrt",
         "log_mean_abs_gradient",
     ]
+
+    def _build_components_tsv(
+        self, ica: mne.preprocessing.ICA
+    ) -> "pd.DataFrame":
+        """Build a detailed components TSV with per-method attribution.
+
+        Reads the existing pipeline-generated TSV (from
+        ``_06a2_find_ica_artifacts``) to preserve ECG/EOG/ICALabel
+        attributions, then adds columns for every detection method
+        used by ``auto_ica``.
+
+        Columns produced
+        ----------------
+        Standard BIDS:
+            component, type, description, status, status_description
+        Method flags (0/1):
+            method_reference, method_gesd, method_corrmap_eog,
+            method_corrmap_ecg, method_pipeline_ecg, method_pipeline_eog
+        Pipeline ICALabel:
+            method_pipeline_icalabel (class label or "n/a")
+        GESD detail (only when GESD ran):
+            gesd_pcs_flagged, gesd_score_PC1..N, metric_<name> per
+            metric, gesd_pc_loadings, gesd_var_explained
+
+        Parameters
+        ----------
+        ica : mne.preprocessing.ICA
+            ICA with final exclude list.
+
+        Returns
+        -------
+        df : pd.DataFrame
+            One row per component.
+        """
+        n_comps = ica.n_components_
+
+        # --- Read existing pipeline TSV for ECG / EOG / ICALabel attributions ---
+        subject = (
+            self.cfg.subjects[0]
+            if isinstance(self.cfg.subjects, list)
+            else self.cfg.subjects
+        )
+        session = (
+            self.cfg.sessions[0]
+            if isinstance(self.cfg.sessions, list)
+            else self.cfg.sessions
+        )
+
+        tsv_path = BIDSPath(
+            root=self.cfg.deriv_root,
+            subject=subject,
+            session=session,
+            task=self.cfg.task,
+            datatype="meg",
+            suffix="components",
+            processing="ica",
+            extension=".tsv",
+            check=False,
+        )
+
+        pipeline_ecg = np.zeros(n_comps, dtype=int)
+        pipeline_eog = np.zeros(n_comps, dtype=int)
+        pipeline_icalabel = ["n/a"] * n_comps
+
+        if tsv_path.fpath.exists():
+            existing = pd.read_csv(tsv_path.fpath, sep="\t")
+            for _, row in existing.iterrows():
+                comp = int(row["component"])
+                if comp >= n_comps:
+                    continue
+                desc = str(row.get("status_description", "n/a"))
+                if "ECG artifact (MNE)" in desc:
+                    pipeline_ecg[comp] = 1
+                    self._component_labels[comp].append("pipeline_ecg")
+                if "EOG artifact (MNE)" in desc:
+                    pipeline_eog[comp] = 1
+                    self._component_labels[comp].append("pipeline_eog")
+                if "(MNE-ICALabel)" in desc:
+                    label = (
+                        desc.replace("Auto-detected ", "")
+                        .replace(" (MNE-ICALabel)", "")
+                    )
+                    pipeline_icalabel[comp] = label
+                    self._component_labels[comp].append(
+                        f"icalabel_{label}"
+                    )
+        else:
+            self.log(
+                "No existing components TSV found; pipeline attributions "
+                "will not be available."
+            )
+
+        # --- Build status_description from all labels ---
+        status_descriptions = []
+        for i in range(n_comps):
+            labels = self._component_labels[i]
+            status_descriptions.append("; ".join(labels) if labels else "n/a")
+
+        # --- Core columns ---
+        data: dict[str, list] = {
+            "component": list(range(n_comps)),
+            "type": ["ica"] * n_comps,
+            "description": ["Independent Component"] * n_comps,
+            "status": [
+                "bad" if i in set(ica.exclude) else "good"
+                for i in range(n_comps)
+            ],
+            "status_description": status_descriptions,
+            # --- Per-method flags ---
+            "method_reference": [
+                int(
+                    any(lbl == "reference" for lbl in self._component_labels[i])
+                )
+                for i in range(n_comps)
+            ],
+            "method_gesd": [
+                int(
+                    any(
+                        lbl.startswith("GESD_PC")
+                        for lbl in self._component_labels[i]
+                    )
+                )
+                for i in range(n_comps)
+            ],
+            "method_corrmap_eog": [
+                int(
+                    any(
+                        lbl == "corrmap_eog"
+                        for lbl in self._component_labels[i]
+                    )
+                )
+                for i in range(n_comps)
+            ],
+            "method_corrmap_ecg": [
+                int(
+                    any(
+                        lbl == "corrmap_ecg"
+                        for lbl in self._component_labels[i]
+                    )
+                )
+                for i in range(n_comps)
+            ],
+            "method_pipeline_ecg": pipeline_ecg.tolist(),
+            "method_pipeline_eog": pipeline_eog.tolist(),
+            "method_pipeline_icalabel": pipeline_icalabel,
+        }
+
+        # --- GESD detail columns (only if GESD ran) ---
+        if self._gesd_info:
+            n_pcs = self._gesd_info["n_pcs"]
+            metric_names = self._gesd_info["metric_names"]
+            scores = self._gesd_info["pc_scores"]
+            loadings = self._gesd_info["pc_loadings"]
+            var_explained = self._gesd_info["var_explained"]
+
+            # Which PCs flagged each component
+            data["gesd_pcs_flagged"] = [
+                ";".join(
+                    lbl
+                    for lbl in self._component_labels[i]
+                    if lbl.startswith("GESD_PC")
+                )
+                or "n/a"
+                for i in range(n_comps)
+            ]
+
+            # PC scores per component
+            for p in range(n_pcs):
+                data[f"gesd_score_PC{p + 1}"] = np.round(
+                    scores[p], 4
+                ).tolist()
+
+            # Metric values per component
+            for mname in metric_names:
+                data[f"metric_{mname}"] = np.round(
+                    self._gesd_info["metric_values"][mname], 6
+                ).tolist()
+
+            # PC loadings (shared across components, stored once per row
+            # for self-contained CSV analysis)
+            loading_strs = []
+            for p in range(n_pcs):
+                parts = [
+                    f"{metric_names[j]}:{loadings[j, p]:.3f}"
+                    for j in range(len(metric_names))
+                ]
+                loading_strs.append(f"PC{p + 1}({','.join(parts)})")
+            data["gesd_pc_loadings"] = [";".join(loading_strs)] * n_comps
+
+            # Variance explained
+            var_str = ";".join(
+                f"PC{p + 1}:{var_explained[p]:.4f}" for p in range(n_pcs)
+            )
+            data["gesd_var_explained"] = [var_str] * n_comps
+
+        df = pd.DataFrame(data)
+        return df
 
     def _prepare_metrics_for_gesd(self, diagnostics: dict) -> list:
         """Transform metrics and specify outlier direction for GESD.

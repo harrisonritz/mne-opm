@@ -124,12 +124,13 @@ class TestBadChannelsRun:
 class TestBadChannelsLoadData:
     """Test load_data with mocked mne_bids calls."""
 
+    @patch("custom.preprocessing.bad_channels.read_raw_bids_with_retry")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_load_single_task(self, mock_bids, raw_meg, bad_ch_cfg):
+    def test_load_single_task(self, mock_bids, mock_read, raw_meg, bad_ch_cfg):
         """load_data should call find_matching_paths and read_raw_bids."""
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         data = analysis.load_data()
@@ -137,15 +138,16 @@ class TestBadChannelsLoadData:
         assert bad_ch_cfg.task in data
         assert data[bad_ch_cfg.task] is raw_meg
         mock_bids.find_matching_paths.assert_called_once()
-        mock_bids.read_raw_bids.assert_called_once()
+        mock_read.assert_called_once()
 
+    @patch("custom.preprocessing.bad_channels.read_raw_bids_with_retry")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_load_with_empty_room(self, mock_bids, raw_meg, bad_ch_cfg):
+    def test_load_with_empty_room(self, mock_bids, mock_read, raw_meg, bad_ch_cfg):
         """When process_empty_room=True, load noise + task."""
         bad_ch_cfg.process_empty_room = True
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         data = analysis.load_data()
@@ -216,16 +218,17 @@ class TestBadChannelsModuleRun:
     """Test the module-level run(cfg) function."""
 
     @patch("custom.preprocessing.bad_channels.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.bad_channels.read_raw_bids_with_retry")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_run_calls_execute(self, mock_bids, mock_write, raw_meg, bad_ch_cfg):
+    def test_run_calls_execute(self, mock_bids, mock_read, mock_write, raw_meg, bad_ch_cfg):
         """run(cfg) should construct the analysis and call execute."""
         mock_bp = MagicMock()
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_read.return_value = raw_meg
 
         # This exercises: run(cfg) -> is_enabled -> execute -> load/run/save
         run(bad_ch_cfg)
 
-        mock_bids.read_raw_bids.assert_called()
+        mock_read.assert_called()
         mock_write.assert_called()

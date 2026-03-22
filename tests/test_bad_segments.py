@@ -144,28 +144,30 @@ class TestBadSegmentsRun:
 class TestBadSegmentsLoadData:
     """Test load_data with mocked mne_bids calls."""
 
+    @patch("custom.preprocessing.bad_segments.read_raw_bids_with_retry")
     @patch("custom.preprocessing.bad_segments.mne_bids")
     def test_load_single_task(
-        self, mock_bids, raw_with_artifact_segment, bad_seg_cfg
+        self, mock_bids, mock_read, raw_with_artifact_segment, bad_seg_cfg
     ):
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_with_artifact_segment
+        mock_read.return_value = raw_with_artifact_segment
 
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         data = analysis.load_data()
 
         assert bad_seg_cfg.task in data
-        mock_bids.read_raw_bids.assert_called_once()
+        mock_read.assert_called_once()
 
+    @patch("custom.preprocessing.bad_segments.read_raw_bids_with_retry")
     @patch("custom.preprocessing.bad_segments.mne_bids")
     def test_load_with_empty_room(
-        self, mock_bids, raw_with_artifact_segment, bad_seg_cfg
+        self, mock_bids, mock_read, raw_with_artifact_segment, bad_seg_cfg
     ):
         bad_seg_cfg.process_empty_room = True
         mock_bp = MagicMock()
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_with_artifact_segment
+        mock_read.return_value = raw_with_artifact_segment
 
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         data = analysis.load_data()
@@ -234,17 +236,18 @@ class TestBadSegmentsSaveResults:
 
 class TestBadSegmentsModuleRun:
     @patch("custom.preprocessing.bad_segments.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.bad_segments.read_raw_bids_with_retry")
     @patch("custom.preprocessing.bad_segments.mne_bids")
     def test_run_entry_point(
-        self, mock_bids, mock_write, raw_with_artifact_segment, bad_seg_cfg
+        self, mock_bids, mock_read, mock_write, raw_with_artifact_segment, bad_seg_cfg
     ):
         """End-to-end: run(cfg) should load, detect, and save."""
         mock_bp = MagicMock()
         mock_bp.split = None
         mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_with_artifact_segment
+        mock_read.return_value = raw_with_artifact_segment
 
         run(bad_seg_cfg)
 
-        mock_bids.read_raw_bids.assert_called()
+        mock_read.assert_called()
         mock_write.assert_called()

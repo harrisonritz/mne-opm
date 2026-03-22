@@ -292,10 +292,10 @@ class TestInterpolateNans:
 class TestGetHeadPosChannels:
     def test_all_present(self):
         info = mne.create_info(
-            ["head_x", "head_y", "depth", "ch1"], 100.0, 4 * ["misc"]
+            ["x_head", "y_head", "distance", "ch1"], 100.0, 4 * ["misc"]
         )
         raw = mne.io.RawArray(np.zeros((4, 100)), info)
-        assert _get_head_pos_channels(raw) == ["head_x", "head_y", "depth"]
+        assert _get_head_pos_channels(raw) == ["x_head", "y_head", "distance"]
 
     def test_none_present(self):
         info = mne.create_info(["ch1", "ch2"], 100.0, ["eog", "eog"])
@@ -303,9 +303,9 @@ class TestGetHeadPosChannels:
         assert _get_head_pos_channels(raw) == []
 
     def test_partial(self):
-        info = mne.create_info(["head_x", "ch1"], 100.0, ["misc", "eog"])
+        info = mne.create_info(["x_head", "ch1"], 100.0, ["misc", "eog"])
         raw = mne.io.RawArray(np.zeros((2, 100)), info)
-        assert _get_head_pos_channels(raw) == ["head_x"]
+        assert _get_head_pos_channels(raw) == ["x_head"]
 
 
 # ---------------------------------------------------------------------------
