@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import sys
 from pathlib import Path
 from typing import Callable
@@ -237,6 +238,9 @@ def main() -> int:
 
     except FileNotFoundError as e:
         print(f"\n[ERROR] File not found: {e}")
+        return 1
+    except json.JSONDecodeError as e:
+        print(f"\n[ERROR] JSON parse error (possible NFS race condition): {e}")
         return 1
     except ValueError as e:
         print(f"\n[ERROR] Configuration error: {e}")

@@ -29,6 +29,7 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+import json
 import random
 import shutil
 import time
@@ -74,11 +75,11 @@ def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
             return mne_bids.read_raw_bids(
                 bids_path, extra_params=extra_params
             )
-        except IndexError:
+        except (IndexError, json.JSONDecodeError):
             if attempt < max_retries - 1:
                 delay = (2 ** attempt) + random.uniform(0, 2)
                 print(
-                    f"[read_raw_bids_with_retry] Transient TSV read error "
+                    f"[read_raw_bids_with_retry] Transient read error "
                     f"(attempt {attempt + 1}/{max_retries}), "
                     f"retrying in {delay:.1f}s..."
                 )
@@ -152,14 +153,14 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
             try:
                 mne_bids.write_raw_bids(**write_kwargs)
                 break
-            except IndexError:
+            except (IndexError, json.JSONDecodeError):
                 # Transient empty-file read — can still occur on NFS even with
                 # advisory locking.  Retry with exponential back-off.
                 if _attempt < _max_retries - 1:
                     _delay = (2 ** _attempt) + random.uniform(0, 2)
                     print(
                         f"[write_raw_bids_preserve_events] Transient "
-                        f"participants.tsv read error "
+                        f"BIDS sidecar read error "
                         f"(attempt {_attempt + 1}/{_max_retries}), "
                         f"retrying in {_delay:.1f} s..."
                     )
