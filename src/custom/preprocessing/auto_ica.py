@@ -626,12 +626,15 @@ class AutoICAAnalysis(BaseAnalysis):
         # Standardize each metric (row-wise)
         M_std = StandardScaler().fit_transform(M.T).T  # shape still k × n
 
-        # PCA on metrics
-        if n_pcs is None:
-            n_pcs = k
-
         # Compute PCA via SVD of standardized matrix
         U, s, Vt = np.linalg.svd(M_std, full_matrices=False)
+
+        # PCA on metrics – keep enough PCs to explain 99% of variance
+        if n_pcs is None:
+            var_explained_all = (s**2) / (s**2).sum()
+            cumvar = np.cumsum(var_explained_all)
+            n_pcs = int(np.searchsorted(cumvar, 0.99) + 1)
+            n_pcs = min(n_pcs, k)  # cap at number of metrics
 
         # PC loadings (how each PC weights the original metrics)
         loadings = U[:, :n_pcs]  # k × n_pcs

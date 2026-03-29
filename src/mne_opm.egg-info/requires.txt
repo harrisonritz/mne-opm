@@ -1,5 +1,7 @@
 dcm2niix>=1.0.20250506
+dpca>=1.0.5
 dupy>=1.2105.11
+gedai>=0.1.0
 imageio[ffmpeg]>=2.37.2
 ipykernel>=7.1.0
 mne
@@ -7,6 +9,7 @@ mne-bids
 mne-bids-pipeline
 mne-denoise>=0.0.1
 mne-qt-browser>=0.7.4
+numexpr>=2.14.1
 openmeeg>=2.5.16
 osl-ephys
 pyopengl>=3.1.10
