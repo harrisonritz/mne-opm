@@ -1,3 +1,4 @@
+cmcrameri>=1.9
 dcm2niix>=1.0.20250506
 dpca>=1.0.5
 dupy>=1.2105.11
