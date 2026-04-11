@@ -206,6 +206,11 @@ def save_ica_bids(
 
     # Update components TSV
     df = pd.read_csv(tsv_path.fpath, sep="\t")
+    # Reset all components to good first, so that components un-excluded
+    # during manual review are correctly reflected in the TSV.
+    df["status"] = "good"
+    if "status_description" in df.columns:
+        df["status_description"] = "manual"
     for comp in ica.exclude:
         mask = df["component"].astype(str) == str(comp)
         if mask.any():
