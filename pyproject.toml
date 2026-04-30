@@ -30,6 +30,7 @@ dependencies = [
     "mne-bids-pipeline",
     "mne-denoise>=0.0.1",
     "mne-qt-browser>=0.7.4",
+    "nilearn>=0.11",
     "numexpr>=2.14.1",
     "openmeeg>=2.5.16",
     "osl-ephys",

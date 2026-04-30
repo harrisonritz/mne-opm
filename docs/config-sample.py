@@ -368,3 +368,51 @@ inverse_method = 'dSPM'
 # noise_cov is shared with sensor analysis (defined in Section 7 above)
 # Re-stated here for clarity; 'emptyroom' uses the empty-room recording.
 noise_cov = 'emptyroom'
+
+
+# %% ============================================================
+# SECTION 10: COREG DIAGNOSTICS — run_coreg_diagnostics.sh
+# Source: src/custom/coreg_diagnostics.py
+# Produces BEM, alignment, dig→scalp distance and sensitivity-map
+# figures under {deriv_root}/sub-XX/ses-YY/meg/coreg_diagnostics/.
+# All figures are written to disk; no GUI required.
+# ================================================================
+
+# Master switch.  If False, the script exits without doing anything.
+_run_coreg_diagnostics = True
+
+# Per-section toggles.
+_coreg_diag_run_bem         = True
+_coreg_diag_run_alignment   = True
+_coreg_diag_run_headpoint   = True
+_coreg_diag_run_sensitivity = True
+
+# Output formats.  3D figures (alignment, sensitivity-map brain plots) are
+# always saved as PNG regardless of this list.
+_coreg_diag_output_formats = ['png']        # any subset of {'png','pdf','svg'}
+_coreg_diag_dpi            = 200
+_coreg_diag_figsize        = (10, 10)
+
+# Alignment views to render — keys of the _VIEWS dict in coreg_diagnostics.py.
+# Available: 'frontal', 'posterior', 'lateral_left', 'lateral_right',
+# 'superior', 'oblique'.
+_coreg_diag_alignment_views = [
+    'frontal', 'posterior', 'lateral_left',
+    'lateral_right', 'superior', 'oblique',
+]
+
+# 360° rotating-azimuth GIF of the alignment scene.  Off by default — slow.
+_coreg_diag_make_gif = False
+
+# mne.sensitivity_map(...) modes to compute, per ch_type in cfg.ch_types.
+_coreg_diag_sensitivity_modes = ['free', 'radiality']
+
+# Use nilearn for richer BEM-on-T1 contour overlays (added as a real dep).
+_coreg_diag_use_nilearn = True
+
+# On-the-fly forward-solution fallback.  These only matter if no
+# *-fwd.fif file is found on disk; the script will then build a forward
+# solution using these parameters.
+_coreg_diag_bem_conductivity = (0.3,)   # single-shell, appropriate for MEG
+_coreg_diag_bem_ico          = 4
+_coreg_diag_src_spacing      = 'oct6'
