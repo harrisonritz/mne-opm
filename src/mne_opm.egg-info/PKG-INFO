@@ -29,6 +29,7 @@ Requires-Dist: mne-bids
 Requires-Dist: mne-bids-pipeline
 Requires-Dist: mne-denoise>=0.0.1
 Requires-Dist: mne-qt-browser>=0.7.4
+Requires-Dist: nilearn>=0.11
 Requires-Dist: numexpr>=2.14.1
 Requires-Dist: openmeeg>=2.5.16
 Requires-Dist: osl-ephys
