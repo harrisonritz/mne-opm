@@ -343,14 +343,24 @@ class CoregAnalysis(BaseAnalysis):
         results : dict
             Dictionary from run() containing coregistration results.
         """
+        fs_subject = results["fs_subject"]
+        subjects_dir = self.cfg.subjects_dir
+
+        # When using a precomputed trans, make_forward reads it directly from
+        # the FreeSurfer bem/ folder — no BIDS write needed.
+        if getattr(self.cfg, "_use_precomputed_trans", False):
+            trans_path = getattr(self.cfg, "_precomputed_trans_path", None) or os.path.join(
+                subjects_dir, fs_subject, "bem", f"{fs_subject}-trans.fif"
+            )
+            self.log(f"Precomputed trans ready at {trans_path} — skipping BIDS write")
+            return
+
         self.log("Saving anatomical landmarks to BIDS...")
 
         trans = results["trans"]
         info = results["info"]
         subject = results["subject"]
         session = results["session"]
-        fs_subject = results["fs_subject"]
-        subjects_dir = self.cfg.subjects_dir
 
         # FreeSurfer T1 path (use T1.mgz to avoid datatype issues)
         t1w_fs_path = os.path.join(subjects_dir, fs_subject, "mri", "T1.mgz")
