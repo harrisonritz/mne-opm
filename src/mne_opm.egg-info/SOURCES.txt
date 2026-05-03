@@ -2,6 +2,7 @@ LICENSE
 README.md
 pyproject.toml
 src/custom/__init__.py
+src/custom/coreg_diagnostics.py
 src/custom/custom_preproc.py
 src/custom/format_bids.py
 src/custom/run_beamformer.py
@@ -47,6 +48,7 @@ tests/test_base.py
 tests/test_beamformer.py
 tests/test_beamformer_extended.py
 tests/test_config.py
+tests/test_coreg_diagnostics.py
 tests/test_custom_preproc.py
 tests/test_custom_preproc_extended.py
 tests/test_decoding.py
