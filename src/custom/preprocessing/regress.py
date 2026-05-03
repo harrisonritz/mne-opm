@@ -77,7 +77,11 @@ from scipy import stats
 from scipy.linalg import qr
 
 from ._base import BaseAnalysis
-from ._io import write_raw_bids_preserve_events, read_raw_bids_with_retry
+from ._io import (
+    find_custom_input_paths,
+    read_raw_bids_with_retry,
+    write_raw_bids_custom_step,
+)
 
 
 class RegressAnalysis(BaseAnalysis):
@@ -139,16 +143,7 @@ class RegressAnalysis(BaseAnalysis):
             tasks.insert(0, "noise")
 
         for task in tasks:
-            # Search for raw files (handles runs, splits, etc.)
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks=task,
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+            paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No raw data found for task={task}")
 
@@ -195,49 +190,25 @@ class RegressAnalysis(BaseAnalysis):
         # Separate task data from metadata
         tasks = {k: v for k, v in results.items() if k not in {"bads"}}
 
-        # Find empty room path if needed
-        er_bids_path = None
-        if "noise" in tasks:
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks="noise",
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
-            if paths:
-                er_bids_path = paths[0]
+        # Process noise FIRST (when present) so the task save can use the
+        # already-written noise as its empty-room association.
+        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
 
-        for task, raw in tasks.items():
-            # Find existing file
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks=task,
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+        er_output_bp = None
+        for task, raw in ordered_tasks:
+            paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
 
-            bp = paths[0]
-            bp.split = None  # Clear split to write to base file
-
-            # Associate with empty room for non-noise tasks
-            write_kwargs = dict(
-                raw=raw,
-                bids_path=bp,
-                allow_preload=True,
-                overwrite=True,
-                format="FIF",
+            source_bp = paths[0]
+            empty_room = er_output_bp if task != "noise" else None
+            output_bp = write_raw_bids_custom_step(
+                raw, self.cfg, source_bp, empty_room=empty_room
             )
-            if er_bids_path and task != "noise":
-                write_kwargs["empty_room"] = er_bids_path
-            write_raw_bids_preserve_events(**write_kwargs)
+
+            if task == "noise":
+                er_output_bp = output_bp
+
             self.log(f"Saved task={task}")
 
     def _regress(
