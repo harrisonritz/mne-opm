@@ -85,23 +85,37 @@ _DEFAULT_VIEWS: List[str] = [
 def _setup_3d_backend() -> None:
     """Configure MNE's 3D backend for off-screen rendering.
 
-    Tries ``pyvistaqt`` first (full-featured) and falls back to ``pyvista`` if
-    Qt is unavailable on the target machine.  ``set_3d_options(offscreen=True)``
-    must be called before the first 3D figure.
-    """
-    try:
-        mne.viz.set_3d_options(offscreen=True, depth_peeling=False, antialias=True)
-    except Exception as e:  # pragma: no cover - defensive
-        print(f"[_setup_3d_backend] Could not set 3D options: {e}")
+    Prefers the pure ``pyvista`` backend for headless/cluster use because
+    ``pyvistaqt`` requires a live Qt event loop and attempts to open X windows
+    even when ``QT_QPA_PLATFORM=offscreen`` is set, causing BadWindow X errors.
+    Falls back to ``pyvistaqt`` only when ``pyvista`` is unavailable.
 
-    for backend in ("pyvistaqt", "pyvista"):
+    Order matters: ``set_3d_backend`` must be called first, then
+    ``set_3d_options``.  ``mne.viz.plot_alignment`` reads ``MNE_3D_OPTION_OFFSCREEN``
+    (written by ``set_3d_options``) to decide whether to create an on-screen X
+    window.  If ``set_3d_options`` is called before the backend is set,
+    ``set_3d_backend`` resets those options and ``plot_alignment`` falls back to
+    creating a real X window, which triggers a BadWindow error on headless nodes.
+    ``stc.plot`` (used in plot_beamformer) is unaffected because Brain always
+    passes ``off_screen=True`` directly from ``pyvista.OFF_SCREEN``.
+    """
+    for backend in ("pyvista", "pyvistaqt"):
         try:
             mne.viz.set_3d_backend(backend)
             print(f"[_setup_3d_backend] Using 3D backend: {backend}")
-            return
+            break
         except Exception as e:
             print(f"[_setup_3d_backend] Backend {backend!r} unavailable: {e}")
-    print("[_setup_3d_backend] WARNING: no usable 3D backend; 3D figures will fail.")
+    else:
+        print("[_setup_3d_backend] WARNING: no usable 3D backend; 3D figures will fail.")
+        return
+
+    try:
+        # antialias=False: multisampling requires GPU features absent in software
+        # rendering and can cause VTK to fall back to X11 paths.
+        mne.viz.set_3d_options(offscreen=True, depth_peeling=False, antialias=False)
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"[_setup_3d_backend] Could not set 3D options: {e}")
 
 
 # --------------------------------------------------------------------------------------
@@ -704,6 +718,7 @@ def run_alignment_diagnostics(
     cfg: SimpleNamespace,
     info: mne.Info,
     trans: Optional[mne.transforms.Transform],
+    fwd: Optional[mne.Forward],
     fs_subject: str,
     fs_subjects_dir: str,
     out_dir: Path,
@@ -711,6 +726,12 @@ def run_alignment_diagnostics(
 ) -> Dict[str, Any]:
     """Render multi-view ``plot_alignment`` screenshots."""
     print("\n[run_alignment_diagnostics] Rendering alignment views...")
+
+    if trans is None:
+        print("[run_alignment_diagnostics] skipped: trans=None (no head-MRI transform available)")
+        return {"skipped": "no trans"}
+    
+    print('trans:', trans)
 
     surfaces = _available_surfaces(fs_subjects_dir, fs_subject)
     if not surfaces:
@@ -722,18 +743,20 @@ def run_alignment_diagnostics(
     gif_path: Optional[str] = None
 
     try:
+        print('plot_algnment kwargs: surfaces=', surfaces)
+        print('subject=', fs_subject, 'subjects_dir=', fs_subjects_dir)
         fig = mne.viz.plot_alignment(
             info=info,
             trans=trans,
             subject=fs_subject,
             subjects_dir=fs_subjects_dir,
-            surfaces=surfaces,
-            meg=("sensors", "helmet"),
-            dig="fiducials",
-            coord_frame="mri" if trans is not None else "meg",
+            # surfaces=surfaces,
+            surfaces="head-dense",
+            meg='sensors',
+            dig=True,
             show_axes=True,
-            interaction="terrain",
         )
+        print('plot_alignment rendered successfully')
     except Exception as e:
         print(f"[run_alignment_diagnostics] plot_alignment failed: {e}")
         return {"error": str(e), "surfaces": surfaces, "views": views}
@@ -743,6 +766,7 @@ def run_alignment_diagnostics(
             print(f"[run_alignment_diagnostics] unknown view {view!r}; skipping")
             continue
         try:
+            print(f"[run_alignment_diagnostics] Rendering view: {view}")
             mne.viz.set_3d_view(figure=fig, **_VIEWS[view])
             path = out_dir / f"{basename}_desc-align-{view}.png"
             try:
@@ -795,13 +819,32 @@ def run_headpoint_distance_diagnostic(
         return {"skipped": "no dig points in info"}
 
     try:
-        coreg = mne.coreg.Coregistration(
-            info=info, subject=fs_subject, subjects_dir=fs_subjects_dir
+        from mne.surface import _DistanceQuery, _get_head_surface
+
+        # Get head-shape digitization points (extra + HPI) in head coords
+        from mne.io.constants import FIFF as _FIFF
+        head_pts = np.array([
+            d["r"] for d in info["dig"]
+            if d["kind"] in (
+                _FIFF.FIFFV_POINT_EXTRA,
+                _FIFF.FIFFV_POINT_HPI,
+            )
+        ])
+        if head_pts.size == 0:
+            return {"skipped": "no head-shape digitization points"}
+
+        # Transform dig points from head to MRI surface coords
+        head_mri_t = mne.transforms._get_trans(trans, "head", "mri")[0]
+        mri_pts = mne.transforms.apply_trans(head_mri_t, head_pts)
+
+        # Load dense scalp surface in MRI coords and compute nearest distances
+        scalp = _get_head_surface(
+            subject=fs_subject,
+            source=["head-dense", "head"],
+            subjects_dir=fs_subjects_dir,
+            on_defects="warn",
         )
-        # Inject the transform that the rest of the pipeline uses; we are
-        # auditing alignment, not refitting it.
-        coreg.trans = trans
-        dists_m = np.asarray(coreg.compute_dig_mri_distances())
+        dists_m, _ = _DistanceQuery(scalp["rr"]).query(mri_pts)
     except Exception as e:
         print(f"[run_headpoint_distance_diagnostic] failed: {e}")
         return {"error": str(e)}
