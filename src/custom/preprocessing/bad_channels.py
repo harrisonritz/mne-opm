@@ -56,7 +56,11 @@ from osl_ephys.preprocessing.osl_wrappers import bad_channels as osl_bad_channel
 import mne_bids
 
 from ._base import BaseAnalysis
-from ._io import write_raw_bids_preserve_events, read_raw_bids_with_retry
+from ._io import (
+    find_custom_input_paths,
+    read_raw_bids_with_retry,
+    write_raw_bids_custom_step,
+)
 
 
 class BadChannelsAnalysis(BaseAnalysis):
@@ -113,19 +117,12 @@ class BadChannelsAnalysis(BaseAnalysis):
             tasks.insert(0, "noise")
 
         for task in tasks:
-            # Search for raw files (handles runs, splits, etc.)
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks=task,
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+            # Search for raw files (handles runs, splits, etc.); honours
+            # cfg.custom_proc so subsequent custom steps read from deriv.
+            paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No raw data found for task={task}")
-            
+
             raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
             data[task] = raw
             self.log(f"Loaded raw data for task={task}")
@@ -182,64 +179,44 @@ class BadChannelsAnalysis(BaseAnalysis):
         # Separate task data from metadata
         tasks = {k: v for k, v in results.items() if k not in {"bads"}}
 
-        # Find empty room path if needed
-        er_bids_path = None
-        if "noise" in tasks:
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks="noise",
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
-            if paths:
-                er_bids_path = paths[0]
+        # Process noise FIRST (when present) so the task save can use the
+        # already-written noise as its empty-room association.
+        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
 
-        for task, raw in tasks.items():
-            # Find existing file to get correct run/split info
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks=task,
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+        er_output_bp = None
+        for task, raw in ordered_tasks:
+            paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
-            
-            bp = paths[0]
-            
-            # Merge existing and newly detected bad channels
+
+            source_bp = paths[0]
+
+            # Merge existing and newly detected bad channels into raw.info,
+            # which write_raw_bids will reflect in the output channels.tsv.
             if unique_bads:
                 existing_bads = raw.info.get("bads", [])
                 merged_bads = sorted(set(existing_bads) | set(unique_bads))
                 raw.info["bads"] = merged_bads
                 self.log(f"task={task}: {len(merged_bads)} total bad channels")
 
-                # Update BIDS sidecar
+            empty_room = er_output_bp if task != "noise" else None
+            output_bp = write_raw_bids_custom_step(
+                raw, self.cfg, source_bp, empty_room=empty_room
+            )
+
+            # Tag the new bad channels with description="osl" in the
+            # channels.tsv that write_raw_bids just produced.
+            if unique_bads:
                 mne_bids.mark_channels(
-                    bids_path=bp,
+                    bids_path=output_bp,
                     ch_names=unique_bads,
                     status="bad",
                     descriptions="osl",
                 )
 
-            # Save raw data
-            bp.split = None  # Clear split to write to base file
-            write_kwargs = dict(
-                raw=raw,
-                bids_path=bp,
-                allow_preload=True,
-                overwrite=True,
-                format="FIF",
-            )
-            if er_bids_path and task != "noise":
-                write_kwargs["empty_room"] = er_bids_path
-            write_raw_bids_preserve_events(**write_kwargs)
+            if task == "noise":
+                er_output_bp = output_bp
+
             self.log(f"Saved task={task}")
 
     def _detect_bad_channels(self, raw: mne.io.BaseRaw) -> list[str]:

@@ -150,10 +150,10 @@ class TestHFCRun:
 
 class TestHFCLoadData:
     @patch("custom.preprocessing.apply_hfc.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_load_task_data(self, mock_bids, mock_read, raw_meg, hfc_cfg):
+    @patch("custom.preprocessing.apply_hfc.find_custom_input_paths")
+    def test_load_task_data(self, mock_find, mock_read, raw_meg, hfc_cfg):
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_meg
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
@@ -163,11 +163,11 @@ class TestHFCLoadData:
         mock_read.assert_called_once()
 
     @patch("custom.preprocessing.apply_hfc.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_load_with_noise(self, mock_bids, mock_read, raw_meg, hfc_cfg):
+    @patch("custom.preprocessing.apply_hfc.find_custom_input_paths")
+    def test_load_with_noise(self, mock_find, mock_read, raw_meg, hfc_cfg):
         hfc_cfg.process_empty_room = True
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_meg
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
@@ -176,9 +176,9 @@ class TestHFCLoadData:
         assert "noise" in data
         assert hfc_cfg.task in data
 
-    @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_load_no_files_raises(self, mock_bids, hfc_cfg):
-        mock_bids.find_matching_paths.return_value = []
+    @patch("custom.preprocessing.apply_hfc.find_custom_input_paths")
+    def test_load_no_files_raises(self, mock_find, hfc_cfg):
+        mock_find.return_value = []
         analysis = ApplyHFCAnalysis(hfc_cfg)
         with pytest.raises(FileNotFoundError):
             analysis.load_data()
@@ -189,12 +189,13 @@ class TestHFCLoadData:
 # ---------------------------------------------------------------------------
 
 class TestHFCSaveResults:
-    @patch("custom.preprocessing.apply_hfc.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_save_writes_data(self, mock_bids, mock_write, raw_meg, hfc_cfg):
+    @patch("custom.preprocessing.apply_hfc.write_raw_bids_custom_step")
+    @patch("custom.preprocessing.apply_hfc.find_custom_input_paths")
+    def test_save_writes_data(self, mock_find, mock_write, raw_meg, hfc_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
+        mock_write.return_value = mock_bp
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
         results = {hfc_cfg.task: raw_meg, "bads": []}
@@ -202,12 +203,13 @@ class TestHFCSaveResults:
 
         mock_write.assert_called_once()
 
-    @patch("custom.preprocessing.apply_hfc.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_save_with_empty_room(self, mock_bids, mock_write, raw_meg, hfc_cfg):
+    @patch("custom.preprocessing.apply_hfc.write_raw_bids_custom_step")
+    @patch("custom.preprocessing.apply_hfc.find_custom_input_paths")
+    def test_save_with_empty_room(self, mock_find, mock_write, raw_meg, hfc_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
+        mock_write.return_value = mock_bp
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
         results = {"noise": raw_meg, hfc_cfg.task: raw_meg, "bads": []}
@@ -238,14 +240,15 @@ class TestHFCEnabled:
 # ---------------------------------------------------------------------------
 
 class TestHFCModuleRun:
-    @patch("custom.preprocessing.apply_hfc.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.apply_hfc.write_raw_bids_custom_step")
     @patch("custom.preprocessing.apply_hfc.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.apply_hfc.mne_bids")
-    def test_run_end_to_end(self, mock_bids, mock_read, mock_write, raw_meg, hfc_cfg):
+    @patch("custom.preprocessing.apply_hfc.find_custom_input_paths")
+    def test_run_end_to_end(self, mock_find, mock_read, mock_write, raw_meg, hfc_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_meg
+        mock_write.return_value = mock_bp
 
         run(hfc_cfg)
 

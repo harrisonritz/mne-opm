@@ -142,15 +142,15 @@ class TestBadSegmentsRun:
 # ---------------------------------------------------------------------------
 
 class TestBadSegmentsLoadData:
-    """Test load_data with mocked mne_bids calls."""
+    """Test load_data with mocked path-resolution calls."""
 
     @patch("custom.preprocessing.bad_segments.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.bad_segments.mne_bids")
+    @patch("custom.preprocessing.bad_segments.find_custom_input_paths")
     def test_load_single_task(
-        self, mock_bids, mock_read, raw_with_artifact_segment, bad_seg_cfg
+        self, mock_find, mock_read, raw_with_artifact_segment, bad_seg_cfg
     ):
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_with_artifact_segment
 
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
@@ -160,13 +160,13 @@ class TestBadSegmentsLoadData:
         mock_read.assert_called_once()
 
     @patch("custom.preprocessing.bad_segments.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.bad_segments.mne_bids")
+    @patch("custom.preprocessing.bad_segments.find_custom_input_paths")
     def test_load_with_empty_room(
-        self, mock_bids, mock_read, raw_with_artifact_segment, bad_seg_cfg
+        self, mock_find, mock_read, raw_with_artifact_segment, bad_seg_cfg
     ):
         bad_seg_cfg.process_empty_room = True
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_with_artifact_segment
 
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
@@ -175,9 +175,9 @@ class TestBadSegmentsLoadData:
         assert "noise" in data
         assert bad_seg_cfg.task in data
 
-    @patch("custom.preprocessing.bad_segments.mne_bids")
-    def test_load_no_files_raises(self, mock_bids, bad_seg_cfg):
-        mock_bids.find_matching_paths.return_value = []
+    @patch("custom.preprocessing.bad_segments.find_custom_input_paths")
+    def test_load_no_files_raises(self, mock_find, bad_seg_cfg):
+        mock_find.return_value = []
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         with pytest.raises(FileNotFoundError, match="No raw data"):
             analysis.load_data()
@@ -188,12 +188,15 @@ class TestBadSegmentsLoadData:
 # ---------------------------------------------------------------------------
 
 class TestBadSegmentsSaveResults:
-    @patch("custom.preprocessing.bad_segments.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.bad_segments.mne_bids")
-    def test_save_writes_annotated_raw(self, mock_bids, mock_write, raw_meg, bad_seg_cfg):
+    @patch("custom.preprocessing.bad_segments.write_raw_bids_custom_step")
+    @patch("custom.preprocessing.bad_segments.find_custom_input_paths")
+    def test_save_writes_annotated_raw(
+        self, mock_find, mock_write, raw_meg, bad_seg_cfg
+    ):
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
+        mock_write.return_value = mock_bp
 
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         results = {bad_seg_cfg.task: raw_meg, "bads": []}
@@ -201,23 +204,31 @@ class TestBadSegmentsSaveResults:
 
         mock_write.assert_called_once()
 
-    @patch("custom.preprocessing.bad_segments.mne_bids")
-    def test_save_no_paths_raises(self, mock_bids, raw_meg, bad_seg_cfg):
-        mock_bids.find_matching_paths.return_value = []
+    @patch("custom.preprocessing.bad_segments.find_custom_input_paths")
+    def test_save_no_paths_raises(self, mock_find, raw_meg, bad_seg_cfg):
+        mock_find.return_value = []
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         results = {bad_seg_cfg.task: raw_meg, "bads": []}
         with pytest.raises(FileNotFoundError, match="No file found"):
             analysis.save_results(results)
 
-    @patch("custom.preprocessing.bad_segments.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.bad_segments.mne_bids")
+    @patch("custom.preprocessing.bad_segments.write_raw_bids_custom_step")
+    @patch("custom.preprocessing.bad_segments.find_custom_input_paths")
     def test_save_with_empty_room_association(
-        self, mock_bids, mock_write, raw_meg, bad_seg_cfg
+        self, mock_find, mock_write, raw_meg, bad_seg_cfg
     ):
         """save_results should pass empty_room kwarg for task data."""
-        mock_bp = MagicMock()
-        mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        # Create distinct BP objects for noise and task to verify
+        # the empty-room association is wired up correctly.
+        noise_bp = MagicMock(name="noise_bp")
+        task_bp = MagicMock(name="task_bp")
+        noise_bp.split = None
+        task_bp.split = None
+
+        # noise is processed FIRST, so first find call returns noise_bp
+        mock_find.side_effect = [[noise_bp], [task_bp]]
+        # write returns the output bp (use the same input bp as a stand-in)
+        mock_write.side_effect = [noise_bp, task_bp]
 
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         results = {"noise": raw_meg, bad_seg_cfg.task: raw_meg, "bads": []}
@@ -225,9 +236,9 @@ class TestBadSegmentsSaveResults:
 
         # Should write both noise and task
         assert mock_write.call_count == 2
-        # The task write should include empty_room
+        # The task write should include empty_room=noise_bp
         task_call_kwargs = mock_write.call_args_list[-1][1]
-        assert "empty_room" in task_call_kwargs
+        assert task_call_kwargs.get("empty_room") is noise_bp
 
 
 # ---------------------------------------------------------------------------
@@ -235,17 +246,18 @@ class TestBadSegmentsSaveResults:
 # ---------------------------------------------------------------------------
 
 class TestBadSegmentsModuleRun:
-    @patch("custom.preprocessing.bad_segments.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.bad_segments.write_raw_bids_custom_step")
     @patch("custom.preprocessing.bad_segments.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.bad_segments.mne_bids")
+    @patch("custom.preprocessing.bad_segments.find_custom_input_paths")
     def test_run_entry_point(
-        self, mock_bids, mock_read, mock_write, raw_with_artifact_segment, bad_seg_cfg
+        self, mock_find, mock_read, mock_write, raw_with_artifact_segment, bad_seg_cfg
     ):
         """End-to-end: run(cfg) should load, detect, and save."""
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_with_artifact_segment
+        mock_write.return_value = mock_bp
 
         run(bad_seg_cfg)
 

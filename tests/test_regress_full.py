@@ -160,10 +160,10 @@ class TestRegressRun:
 
 class TestRegressLoadData:
     @patch("custom.preprocessing.regress.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.regress.mne_bids")
-    def test_load_single_task(self, mock_bids, mock_read, raw_meg, regress_cfg):
+    @patch("custom.preprocessing.regress.find_custom_input_paths")
+    def test_load_single_task(self, mock_find, mock_read, raw_meg, regress_cfg):
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_meg
 
         analysis = RegressAnalysis(regress_cfg)
@@ -173,11 +173,11 @@ class TestRegressLoadData:
         mock_read.assert_called_once()
 
     @patch("custom.preprocessing.regress.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.regress.mne_bids")
-    def test_load_with_empty_room(self, mock_bids, mock_read, raw_meg, regress_cfg):
+    @patch("custom.preprocessing.regress.find_custom_input_paths")
+    def test_load_with_empty_room(self, mock_find, mock_read, raw_meg, regress_cfg):
         regress_cfg.process_empty_room = True
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_meg
 
         analysis = RegressAnalysis(regress_cfg)
@@ -186,9 +186,9 @@ class TestRegressLoadData:
         assert "noise" in data
         assert regress_cfg.task in data
 
-    @patch("custom.preprocessing.regress.mne_bids")
-    def test_load_no_files_raises(self, mock_bids, regress_cfg):
-        mock_bids.find_matching_paths.return_value = []
+    @patch("custom.preprocessing.regress.find_custom_input_paths")
+    def test_load_no_files_raises(self, mock_find, regress_cfg):
+        mock_find.return_value = []
         analysis = RegressAnalysis(regress_cfg)
         with pytest.raises(FileNotFoundError):
             analysis.load_data()
@@ -199,12 +199,13 @@ class TestRegressLoadData:
 # ---------------------------------------------------------------------------
 
 class TestRegressSaveResults:
-    @patch("custom.preprocessing.regress.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.regress.mne_bids")
-    def test_save_writes_data(self, mock_bids, mock_write, raw_meg, regress_cfg):
+    @patch("custom.preprocessing.regress.write_raw_bids_custom_step")
+    @patch("custom.preprocessing.regress.find_custom_input_paths")
+    def test_save_writes_data(self, mock_find, mock_write, raw_meg, regress_cfg):
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
+        mock_write.return_value = mock_bp
 
         analysis = RegressAnalysis(regress_cfg)
         results = {regress_cfg.task: raw_meg, "bads": []}
@@ -212,22 +213,25 @@ class TestRegressSaveResults:
 
         mock_write.assert_called_once()
 
-    @patch("custom.preprocessing.regress.mne_bids")
-    def test_save_no_paths_raises(self, mock_bids, raw_meg, regress_cfg):
-        mock_bids.find_matching_paths.return_value = []
+    @patch("custom.preprocessing.regress.find_custom_input_paths")
+    def test_save_no_paths_raises(self, mock_find, raw_meg, regress_cfg):
+        mock_find.return_value = []
         analysis = RegressAnalysis(regress_cfg)
         results = {regress_cfg.task: raw_meg, "bads": []}
         with pytest.raises(FileNotFoundError):
             analysis.save_results(results)
 
-    @patch("custom.preprocessing.regress.write_raw_bids_preserve_events")
-    @patch("custom.preprocessing.regress.mne_bids")
+    @patch("custom.preprocessing.regress.write_raw_bids_custom_step")
+    @patch("custom.preprocessing.regress.find_custom_input_paths")
     def test_save_with_empty_room_association(
-        self, mock_bids, mock_write, raw_meg, regress_cfg
+        self, mock_find, mock_write, raw_meg, regress_cfg
     ):
-        mock_bp = MagicMock()
-        mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        noise_bp = MagicMock(name="noise_bp")
+        task_bp = MagicMock(name="task_bp")
+        noise_bp.split = None
+        task_bp.split = None
+        mock_find.side_effect = [[noise_bp], [task_bp]]
+        mock_write.side_effect = [noise_bp, task_bp]
 
         analysis = RegressAnalysis(regress_cfg)
         results = {"noise": raw_meg, regress_cfg.task: raw_meg, "bads": []}
@@ -235,7 +239,7 @@ class TestRegressSaveResults:
 
         assert mock_write.call_count == 2
         task_call_kwargs = mock_write.call_args_list[-1][1]
-        assert "empty_room" in task_call_kwargs
+        assert task_call_kwargs.get("empty_room") is noise_bp
 
 
 # ---------------------------------------------------------------------------
@@ -249,17 +253,18 @@ class TestRegressModuleRun:
         captured = capsys.readouterr()
         assert "Disabled" in captured.out
 
-    @patch("custom.preprocessing.regress.write_raw_bids_preserve_events")
+    @patch("custom.preprocessing.regress.write_raw_bids_custom_step")
     @patch("custom.preprocessing.regress.read_raw_bids_with_retry")
-    @patch("custom.preprocessing.regress.mne_bids")
+    @patch("custom.preprocessing.regress.find_custom_input_paths")
     def test_run_end_to_end(
-        self, mock_bids, mock_read, mock_write, raw_with_ref_contamination, regress_cfg
+        self, mock_find, mock_read, mock_write, raw_with_ref_contamination, regress_cfg
     ):
         raw, _ = raw_with_ref_contamination
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
         mock_read.return_value = raw
+        mock_write.return_value = mock_bp
 
         run(regress_cfg)
 

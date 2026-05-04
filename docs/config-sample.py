@@ -60,6 +60,15 @@ n_jobs = int(os.environ.get('MAX_WORKERS', 1))
 interactive = False         # set True (+ %matplotlib qt) for interactive plots
 process_empty_room = True   # preprocess empty-room run alongside task data
 
+# Optional: route custom preprocessing outputs through deriv_root using a
+# proc-<label> suffix instead of overwriting the raw BIDS files.
+# When set (e.g. 'init'), every custom step (bad_channels, bad_segments,
+# regress, apply_hfc, manual_channel, zca_filter) reads from / writes to
+# ``deriv_root`` with ``proc-<custom_proc>`` and the matching mne-bids-pipeline
+# run will pick up those proc-tagged files. Leave as None to overwrite the
+# raw BIDS data files (legacy behaviour).
+custom_proc = None
+
 
 # %% ============================================================
 # SECTION 3: EXPERIMENT DESIGN — run_preproc.sh / run_sensor.sh
