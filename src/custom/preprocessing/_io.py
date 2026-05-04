@@ -17,6 +17,21 @@ save_ica_bids
 get_bids_path_for_task
     Convenience function for creating BIDSPath from config.
 
+custom_proc helpers
+-------------------
+``cfg.custom_proc`` lets custom preprocessing steps write their results to
+``deriv_root`` under a ``proc-<custom_proc>`` BIDS suffix (e.g. ``proc-init``)
+rather than overwriting the raw files in ``bids_root``.  When set, the matching
+mne-bids-pipeline run will read its inputs from the same proc-tagged
+derivatives.  When ``custom_proc`` is unset or ``None``, the legacy behaviour
+is preserved: custom steps read from and overwrite the BIDS data files.
+
+The following helpers implement that routing:
+    get_custom_proc(cfg)
+    find_custom_input_paths(cfg, task, ...)
+    get_custom_output_path(cfg, source_bp)
+    write_raw_bids_custom_step(raw, cfg, source_bp, ...)
+
 For other operations, use mne_bids directly:
     - mne_bids.read_raw_bids() - Load raw data
     - mne_bids.write_raw_bids() - Save raw data
@@ -230,6 +245,229 @@ def get_bids_path_for_task(
     )
 
 
+# -----------------------------------------------------------------------------
+# custom_proc routing helpers
+# -----------------------------------------------------------------------------
+
+
+def get_custom_proc(cfg: SimpleNamespace) -> Optional[str]:
+    """Return ``cfg.custom_proc`` (or ``None`` if not set / empty).
+
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Configuration object.
+
+    Returns
+    -------
+    proc : str or None
+        The value of ``cfg.custom_proc`` when truthy, otherwise ``None``.
+
+    Notes
+    -----
+    When this returns a string (e.g. ``"init"``), custom preprocessing
+    steps should read from / write to ``deriv_root`` using
+    ``processing="init"``.  When it returns ``None``, custom steps fall
+    back to the legacy behaviour of reading from / overwriting
+    ``bids_root``.
+    """
+    val = getattr(cfg, "custom_proc", None)
+    return val if val else None
+
+
+def find_custom_input_paths(
+    cfg: SimpleNamespace,
+    task: str,
+    **find_kwargs,
+) -> list[BIDSPath]:
+    """Locate input raw files for a custom preprocessing step.
+
+    When ``cfg.custom_proc`` is set, prefer files in ``deriv_root`` with
+    that processing label (e.g. ``proc-init``).  These will only exist
+    after a previous custom step has written there.  If no such files
+    exist yet (first custom step), or ``custom_proc`` is unset, fall
+    back to the raw files in ``bids_root``.
+
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Configuration object containing BIDS settings.
+    task : str
+        Task name (e.g. ``"restingstate"``, ``"noise"``).
+    **find_kwargs
+        Extra keyword arguments forwarded to
+        :func:`mne_bids.find_matching_paths` (e.g.
+        ``runs="01"``).  ``subjects``, ``sessions``, ``tasks``,
+        ``datatypes``, ``extensions`` and ``ignore_nosub`` have sensible
+        defaults but may be overridden.
+
+    Returns
+    -------
+    paths : list of BIDSPath
+        Matching paths.  Empty list if nothing was found.
+    """
+    common = dict(
+        subjects=cfg.subjects,
+        sessions=cfg.sessions,
+        tasks=task,
+        datatypes="meg",
+        extensions=".fif",
+        ignore_nosub=True,
+    )
+    common.update(find_kwargs)
+
+    proc = get_custom_proc(cfg)
+    if proc is not None:
+        deriv_root = getattr(cfg, "deriv_root", None)
+        if deriv_root is not None and Path(deriv_root).exists():
+            deriv_paths = mne_bids.find_matching_paths(
+                root=deriv_root,
+                processings=proc,
+                check=False,
+                **common,
+            )
+            if deriv_paths:
+                return deriv_paths
+
+    return mne_bids.find_matching_paths(
+        root=cfg.bids_root,
+        **common,
+    )
+
+
+def get_custom_output_path(
+    cfg: SimpleNamespace,
+    source_bp: BIDSPath,
+) -> BIDSPath:
+    """Compute the output BIDSPath for a custom preprocessing step.
+
+    When ``cfg.custom_proc`` is set, redirects to ``deriv_root`` with
+    ``processing=cfg.custom_proc``.  Otherwise returns a copy of
+    ``source_bp`` unchanged so the legacy "write back to source"
+    behaviour is preserved.
+
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Configuration object.
+    source_bp : BIDSPath
+        Path the data was read from.
+
+    Returns
+    -------
+    output_bp : BIDSPath
+        Path the data should be written to.
+
+    Notes
+    -----
+    The returned path always has ``check=False`` because the
+    ``proc-<custom_proc>`` label is non-canonical for raw data.
+    """
+    if source_bp is None:
+        raise ValueError("source_bp must not be None")
+
+    proc = get_custom_proc(cfg)
+    if proc is None:
+        return source_bp.copy()
+
+    return source_bp.copy().update(
+        root=cfg.deriv_root,
+        processing=proc,
+        check=False,
+    )
+
+
+def _seed_events_files(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
+    """Copy events.tsv / events.json from source to destination if needed.
+
+    ``write_raw_bids_preserve_events`` backs up and restores the events
+    sidecars at the destination so that the lossy
+    annotation ↔ events.tsv round-trip does not corrupt them.  When the
+    destination is a fresh ``proc-<custom_proc>`` directory there is
+    nothing to back up yet, which means the first write would clobber
+    whatever round-trip ``write_raw_bids`` produces from
+    ``raw.annotations``.  Seeding the destination with the source's
+    events files restores the preserve-and-restore guarantee.
+    """
+    if output_bp.fpath == source_bp.fpath:
+        return
+
+    for ext in (".tsv", ".json"):
+        src = source_bp.copy().update(
+            suffix="events", extension=ext, check=False
+        ).fpath
+        dst = output_bp.copy().update(
+            suffix="events", extension=ext, check=False
+        ).fpath
+        if src.exists() and not dst.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+
+def write_raw_bids_custom_step(
+    raw,
+    cfg: SimpleNamespace,
+    source_bp: BIDSPath,
+    *,
+    empty_room: Optional[BIDSPath] = None,
+    **extra_write_kwargs,
+) -> BIDSPath:
+    """Write raw data, redirecting to deriv_root when ``custom_proc`` is set.
+
+    Encapsulates the common save pattern used by every custom
+    preprocessing step:
+
+    1. Resolve the output path using :func:`get_custom_output_path`.
+    2. Seed the destination's events files from the source on the first
+       redirected write so :func:`write_raw_bids_preserve_events` has
+       canonical events to preserve.
+    3. Clear ``output_bp.split`` so the write goes to the base file.
+    4. Forward the ``empty_room`` association (if provided) and any
+       extra keyword arguments to
+       :func:`write_raw_bids_preserve_events`.
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw data to write.
+    cfg : SimpleNamespace
+        Configuration object.
+    source_bp : BIDSPath
+        Path the data was read from (used as the base for output path
+        construction and event-file seeding).
+    empty_room : BIDSPath or None
+        Optional empty-room association.  Should refer to the noise
+        recording at the *output* location so the BIDS association is
+        consistent with where the data is being written.
+    **extra_write_kwargs
+        Additional keyword arguments forwarded to
+        :func:`write_raw_bids_preserve_events` (e.g. ``format="FIF"``).
+        ``raw``, ``bids_path``, ``allow_preload`` and ``overwrite`` have
+        defaults but may be overridden.
+
+    Returns
+    -------
+    output_bp : BIDSPath
+        The BIDSPath the data was written to.
+    """
+    output_bp = get_custom_output_path(cfg, source_bp)
+    _seed_events_files(source_bp, output_bp)
+    output_bp.split = None
+
+    write_kwargs = dict(
+        raw=raw,
+        bids_path=output_bp,
+        allow_preload=True,
+        overwrite=True,
+        format="FIF",
+    )
+    if empty_room is not None:
+        write_kwargs["empty_room"] = empty_room
+    write_kwargs.update(extra_write_kwargs)
+    write_raw_bids_preserve_events(**write_kwargs)
+    return output_bp
+
+
 def save_ica_bids(
     ica: mne.preprocessing.ICA,
     cfg: SimpleNamespace,
@@ -317,6 +555,7 @@ def mark_bad_channels_bids(
     task: str,
     bad_channels: list[str],
     description: str = "osl",
+    bids_path: Optional[BIDSPath] = None,
 ) -> None:
     """Mark bad channels in BIDS sidecar files.
 
@@ -333,6 +572,11 @@ def mark_bad_channels_bids(
         List of channel names to mark as bad.
     description : str, optional
         Description for why channels are bad. Default is 'osl'.
+    bids_path : BIDSPath, optional
+        Explicit BIDSPath to mark.  When omitted, the path is derived
+        from ``cfg``: if ``cfg.custom_proc`` is set, the
+        ``deriv_root`` / ``proc-<custom_proc>`` location is used;
+        otherwise ``bids_root`` is used.
 
     Notes
     -----
@@ -347,7 +591,20 @@ def mark_bad_channels_bids(
     if not bad_channels:
         return
 
-    bids_path = get_bids_path_for_task(cfg, task=task, from_derivatives=False)
+    if bids_path is None:
+        proc = get_custom_proc(cfg)
+        if proc is None:
+            bids_path = get_bids_path_for_task(
+                cfg, task=task, from_derivatives=False
+            )
+        else:
+            bids_path = get_bids_path_for_task(
+                cfg, task=task, from_derivatives=False
+            ).copy().update(
+                root=cfg.deriv_root,
+                processing=proc,
+                check=False,
+            )
 
     mne_bids.mark_channels(
         bids_path=bids_path,
