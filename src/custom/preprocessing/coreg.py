@@ -42,6 +42,14 @@ Optional:
         Distance threshold for omitting HSP points (meters). Default: 0.0025.
     _coreg_n_rounds : int
         Number of ICP fitting rounds. Default: 2.
+    _use_precomputed_trans : bool
+        If True, skip ICP and load a precomputed trans file instead.
+        The landmarks are still written to the BIDS T1w JSON sidecar so
+        mne-bids-pipeline's make_forward step can read them. Default: False.
+    _precomputed_trans_path : str | None
+        Path to the precomputed trans .fif file. When None (default) the
+        conventional FreeSurfer location is used:
+        {subjects_dir}/{fs_subject}/bem/{fs_subject}-trans.fif
 
 Author: Harrison Ritz, 2025
 """
@@ -215,6 +223,8 @@ class CoregAnalysis(BaseAnalysis):
 
         Raises
         ------
+        FileNotFoundError
+            If ``_use_precomputed_trans`` is True and the trans file is missing.
         RuntimeError
             If fiducials are not found and cannot be created via GUI.
         """
@@ -222,6 +232,24 @@ class CoregAnalysis(BaseAnalysis):
         fs_subject = data["fs_subject"]
         subjects_dir = self.cfg.subjects_dir
 
+        # --- Precomputed trans path ---
+        if getattr(self.cfg, "_use_precomputed_trans", False):
+            trans_path = getattr(self.cfg, "_precomputed_trans_path", None)
+            if trans_path is None:
+                trans_path = os.path.join(
+                    subjects_dir, fs_subject, "bem", f"{fs_subject}-trans.fif"
+                )
+            self.log(f"Loading precomputed trans from {trans_path}")
+            if not os.path.exists(trans_path):
+                raise FileNotFoundError(
+                    f"Precomputed trans not found: {trans_path}. "
+                    "Run manual coregistration first and save the trans file "
+                    "to that location, or set _precomputed_trans_path explicitly."
+                )
+            trans = mne.read_trans(trans_path)
+            return {"trans": trans, "info": info, **data}
+
+        # --- ICP coregistration ---
         # Get parameters from config (with defaults)
         hair_grow = getattr(self.cfg, "_coreg_hair_grow", self.DEFAULT_HAIR_GROW)
         omit_distance = getattr(
@@ -299,6 +327,7 @@ class CoregAnalysis(BaseAnalysis):
 
         return {
             "coreg": coreg,
+            "trans": coreg.trans,
             "info": info,
             **data,
         }
@@ -314,14 +343,15 @@ class CoregAnalysis(BaseAnalysis):
         results : dict
             Dictionary from run() containing coregistration results.
         """
+        fs_subject = results["fs_subject"]
+        subjects_dir = self.cfg.subjects_dir
+
         self.log("Saving anatomical landmarks to BIDS...")
 
-        coreg = results["coreg"]
+        trans = results["trans"]
         info = results["info"]
         subject = results["subject"]
         session = results["session"]
-        fs_subject = results["fs_subject"]
-        subjects_dir = self.cfg.subjects_dir
 
         # FreeSurfer T1 path (use T1.mgz to avoid datatype issues)
         t1w_fs_path = os.path.join(subjects_dir, fs_subject, "mri", "T1.mgz")
@@ -345,7 +375,7 @@ class CoregAnalysis(BaseAnalysis):
         landmarks = get_anat_landmarks(
             t1w_fs_path,
             info=info,
-            trans=coreg.trans,
+            trans=trans,
             fs_subject=fs_subject,
             fs_subjects_dir=subjects_dir,
         )
