@@ -218,7 +218,9 @@ class CoregAnalysis(BaseAnalysis):
         -------
         results : dict
             Dictionary containing:
-            - coreg: mne.coreg.Coregistration object with fitted transform
+            - coreg: mne.coreg.Coregistration object with fitted transform,
+              or None when using a precomputed transform
+            - trans: mne.transforms.Transform object
             - All keys from input data
 
         Raises
@@ -247,7 +249,7 @@ class CoregAnalysis(BaseAnalysis):
                     "to that location, or set _precomputed_trans_path explicitly."
                 )
             trans = mne.read_trans(trans_path)
-            return {"trans": trans, "info": info, **data}
+            return {"coreg": None, "trans": trans, "info": info, **data}
 
         # --- ICP coregistration ---
         # Get parameters from config (with defaults)
