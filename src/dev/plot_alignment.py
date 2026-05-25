@@ -1,10 +1,6 @@
-
-
 # %%
 
 import mne
-
-
 
 # %% setup
 
@@ -18,7 +14,6 @@ import mne
 # 029: major
 # 031: major
 # 034: medium
-
 
 
 sub_id = "sub-036"
@@ -39,7 +34,7 @@ plot_kwargs = dict(
     subjects_dir=fs_dir,
     surfaces=dict(seghead=0.67),
     dig=True,
-    meg=dict(sensors=.67),
+    meg=dict(sensors=0.67),
     show_axes=True,
     coord_frame="meg",
     mri_fiducials=True,
@@ -49,15 +44,17 @@ plot_kwargs = dict(
 # %% plot
 # Here we look at the dense head, which isn't used for BEM computations but
 # is useful for coregistration.
-mne.viz.plot_alignment(
-    info,
-    trans,
-    **plot_kwargs
-)
-
+mne.viz.plot_alignment(info, trans, **plot_kwargs)
 
 
 # %% plot coreg options
 coreg = mne.coreg.Coregistration(info, subject, fs_dir, fiducials="auto")
 coreg.fit_fiducials(verbose=True)
+mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
+
+
+# %%
+# perform manual coregistration
+
+coreg.fit_trans(verbose=True)
 mne.viz.plot_alignment(info, trans=coreg.trans, **plot_kwargs)
