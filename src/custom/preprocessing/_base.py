@@ -180,7 +180,7 @@ class BaseAnalysis(ABC):
         Notes
         -----
         This method should check for analysis-specific config flags.
-        For example, regress_ref checks cfg._regress_ref.
+        For example, regress checks cfg._regress.
         """
         ...
 

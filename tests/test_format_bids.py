@@ -14,7 +14,9 @@ from custom.format_bids import (
     _DEFAULT_SCREEN_DISTANCE,
     _DEFAULT_SCREEN_RESOLUTION,
     _DEFAULT_SCREEN_SIZE,
+    _HEAD_POS_CHANNELS,
     _build_file_tree,
+    _get_head_pos_channels,
     _interpolate_nans,
     _annotation_to_timeseries,
     _match_lengths,
@@ -202,13 +204,19 @@ class TestConvertTriggers:
         raw.annotations.append(onset=0.5, duration=0.1, description="dummy")
         return raw
 
-    def test_adds_combined_trigger_channel(self, raw_with_triggers):
+    def test_drops_stim_channels(self, raw_with_triggers):
+        """After convert_triggers, stim channels should be dropped."""
         cfg = SimpleNamespace(
             trigger_desc={1: "stim_a", 3: "stim_b"},
             response_desc={},
         )
         raw_out = convert_triggers(raw_with_triggers, cfg)
-        assert "Trigger Combined" in raw_out.ch_names
+        # Trigger Combined and individual trigger channels should be gone
+        assert "Trigger Combined" not in raw_out.ch_names
+        stim_chs = [ch for ch in raw_out.ch_names if ch.startswith("Trigger")]
+        assert len(stim_chs) == 0, (
+            f"Stim channels should be dropped, found: {stim_chs}"
+        )
 
     def test_creates_annotations(self, raw_with_triggers):
         cfg = SimpleNamespace(
@@ -253,6 +261,51 @@ class TestInterpolateNans:
         mask = _interpolate_nans(raw, buffer_sec=0.05)
         assert mask.any()
         assert not np.isnan(raw.get_data()).any()
+
+    def test_exclude_from_mask_isolates_channels(self):
+        """Head position NaNs should not appear in the returned mask."""
+        info = mne.create_info(["ch1", "head_x"], 100.0, ["eog", "misc"])
+        data = np.ones((2, 500))
+        data[1, 200:300] = np.nan  # NaN only in head_x
+        raw = mne.io.RawArray(data, info)
+        mask = _interpolate_nans(raw, buffer_sec=0.1, exclude_from_mask=["head_x"])
+        # mask should be all-False since ch1 has no NaN
+        np.testing.assert_array_equal(mask, False)
+        # head_x should still be interpolated
+        assert not np.isnan(raw.get_data()).any()
+
+    def test_exclude_from_mask_none_is_default(self):
+        """Default behavior (no exclusion) should be unchanged."""
+        info = mne.create_info(["ch1", "ch2"], 100.0, ["eog", "eog"])
+        data = np.ones((2, 500))
+        data[1, 200:300] = np.nan
+        raw = mne.io.RawArray(data, info)
+        mask = _interpolate_nans(raw, buffer_sec=0.1)
+        # mask should reflect NaN in ch2
+        assert mask[200:300].all()
+
+
+# ---------------------------------------------------------------------------
+# _get_head_pos_channels
+# ---------------------------------------------------------------------------
+
+class TestGetHeadPosChannels:
+    def test_all_present(self):
+        info = mne.create_info(
+            ["x_head", "y_head", "distance", "ch1"], 100.0, 4 * ["misc"]
+        )
+        raw = mne.io.RawArray(np.zeros((4, 100)), info)
+        assert _get_head_pos_channels(raw) == ["x_head", "y_head", "distance"]
+
+    def test_none_present(self):
+        info = mne.create_info(["ch1", "ch2"], 100.0, ["eog", "eog"])
+        raw = mne.io.RawArray(np.zeros((2, 100)), info)
+        assert _get_head_pos_channels(raw) == []
+
+    def test_partial(self):
+        info = mne.create_info(["x_head", "ch1"], 100.0, ["misc", "eog"])
+        raw = mne.io.RawArray(np.zeros((2, 100)), info)
+        assert _get_head_pos_channels(raw) == ["x_head"]
 
 
 # ---------------------------------------------------------------------------

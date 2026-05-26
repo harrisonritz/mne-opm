@@ -61,6 +61,11 @@ import mne
 import mne_bids
 
 from ._base import BaseAnalysis
+from ._io import (
+    find_custom_input_paths,
+    read_raw_bids_with_retry,
+    write_raw_bids_custom_step,
+)
 
 
 class ApplyHFCAnalysis(BaseAnalysis):
@@ -107,33 +112,17 @@ class ApplyHFCAnalysis(BaseAnalysis):
         data: Dict[str, Any] = {}
 
         # Load main task (search for files with runs/splits)
-        paths = mne_bids.find_matching_paths(
-            root=self.cfg.bids_root,
-            subjects=self.cfg.subjects,
-            tasks=self.cfg.task,
-            sessions=self.cfg.sessions,
-            datatypes="meg",
-            extensions=".fif",
-            ignore_nosub=True,
-        )
+        paths = find_custom_input_paths(self.cfg, task=self.cfg.task)
         if not paths:
             raise FileNotFoundError(f"No raw data found for task={self.cfg.task}")
-        data[self.cfg.task] = mne_bids.read_raw_bids(paths[0], extra_params={"preload": True})
+        data[self.cfg.task] = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
         self.log(f"Loaded raw data for task={self.cfg.task}")
 
         # Optionally load noise
         if getattr(self.cfg, "process_empty_room", False):
-            paths_noise = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks="noise",
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+            paths_noise = find_custom_input_paths(self.cfg, task="noise")
             if paths_noise:
-                data["noise"] = mne_bids.read_raw_bids(paths_noise[0], extra_params={"preload": True})
+                data["noise"] = read_raw_bids_with_retry(paths_noise[0], extra_params={"preload": True})
                 self.log("Loaded raw data for task=noise")
 
         return data
@@ -182,48 +171,25 @@ class ApplyHFCAnalysis(BaseAnalysis):
         # Separate task data from metadata
         tasks = {k: v for k, v in results.items() if k not in {"bads"}}
 
-        # Find empty room path if needed
-        er_bids_path = None
-        if "noise" in tasks:
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks="noise",
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
-            if paths:
-                er_bids_path = paths[0]
+        # Process noise FIRST (when present) so the task save can use the
+        # already-written noise as its empty-room association.
+        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
 
-        for task, raw in tasks.items():
-            # Find existing file
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks=task,
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+        er_output_bp = None
+        for task, raw in ordered_tasks:
+            paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
-            
-            bp = paths[0]
-            bp.split = None  # Clear split to write to base file
-            
-            write_kwargs = dict(
-                raw=raw,
-                bids_path=bp,
-                allow_preload=True,
-                overwrite=True,
-                format="FIF",
+
+            source_bp = paths[0]
+            empty_room = er_output_bp if task != "noise" else None
+            output_bp = write_raw_bids_custom_step(
+                raw, self.cfg, source_bp, empty_room=empty_room
             )
-            if er_bids_path and task != "noise":
-                write_kwargs["empty_room"] = er_bids_path
-            mne_bids.write_raw_bids(**write_kwargs)
+
+            if task == "noise":
+                er_output_bp = output_bp
+
             self.log(f"Saved task={task}")
 
     def _apply_hfc(

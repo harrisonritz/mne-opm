@@ -50,10 +50,12 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
 
 import numpy as np
+import pandas as pd
 from scipy import stats
 from scipy.stats import kurtosis
 from scipy.signal import welch
@@ -74,6 +76,7 @@ class AutoICAAnalysis(BaseAnalysis):
     Uses multiple strategies to identify artifact components:
     - Reference sensor correlation (if ref_bads=True)
     - GESD outlier detection on kurtosis/variance (if gesd_bads=True)
+    - Spatial template matching via corrmap (if _corrmap_bads=True)
 
     Components identified by any method are added to ica.exclude
     and will be removed when ICA is applied to the data.
@@ -197,7 +200,7 @@ class AutoICAAnalysis(BaseAnalysis):
         return {self.cfg.task: raw, "ica": ica}
 
     def save_results(self, results: Dict[str, Any]) -> None:
-        """Save ICA solution with updated exclusions.
+        """Save ICA solution with updated exclusions and detailed TSV.
 
         Parameters
         ----------
@@ -207,9 +210,15 @@ class AutoICAAnalysis(BaseAnalysis):
         self.log("Saving ICA results...")
 
         ica = results["ica"]
-        save_ica_bids(ica, self.cfg)
+
+        # Build detailed components TSV with method attribution
+        components_df = self._build_components_tsv(ica)
+        save_ica_bids(ica, self.cfg, components_df=components_df)
 
         self.log(f"Saved ICA with {len(ica.exclude)} excluded components")
+        self.log(
+            f"Components TSV columns: {list(components_df.columns)}"
+        )
 
     def _auto_ica(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
@@ -228,13 +237,21 @@ class AutoICAAnalysis(BaseAnalysis):
         ica : mne.preprocessing.ICA
             ICA with updated exclude list.
         """
+        # Initialize per-component label tracking for TSV attribution
+        self._component_labels = {i: [] for i in range(ica.n_components_)}
+        self._gesd_info = {}
+
         # Reference sensor correlation method
         if getattr(self.cfg, "ref_bads", True):
             ica = self._label_by_reference(ica, raw)
 
         # GESD outlier detection method (using new PCA-whitened approach)
         if getattr(self.cfg, "gesd_bads", True):
-            ica = self._label_by_gesd_new(ica, raw)
+            ica = self._label_by_gesd(ica, raw)
+
+        # Spatial template matching via corrmap
+        if getattr(self.cfg, "_corrmap_bads", False):
+            ica = self._label_by_corrmap(ica, raw)
 
         # Remove duplicates from exclude list
         ica.exclude = sorted(set(ica.exclude))
@@ -289,74 +306,240 @@ class AutoICAAnalysis(BaseAnalysis):
 
         ica.exclude.extend(ref_idx)
 
+        # Track attribution
+        for idx in ref_idx:
+            self._component_labels[idx].append("reference")
+
         # Cleanup
         del ref_raw, ref_ica, ref_src
 
         return ica
 
-    def _label_by_gesd_old(
+    def _label_by_corrmap(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
     ) -> mne.preprocessing.ICA:
-        """Identify bad components using GESD outlier detection (original method).
+        """Identify bad components by matching against pre-computed spatial templates.
 
-        Uses multiple metrics (kurtosis, variance) to identify components
-        with unusual statistical properties.
+        Loads SVD-based topographic templates produced by ``make_ica_template.py``
+        and uses ``mne.preprocessing.corrmap`` to find ICA components whose
+        spatial patterns correlate with each template.  This is useful for
+        detecting EOG / ECG artifacts when no physiological reference channel
+        is available.
+
+        Template directory layout (produced by ``make_ica_template.py``)::
+
+            <_corrmap_template_dir>/
+                eog_channel_names.npy    # 1-D array of channel-name strings
+                eog_templates.npy        # 2-D (n_channels, n_templates) matrix
+                ecg_channel_names.npy    # (optional, same format for ECG)
+                ecg_templates.npy        # (optional)
+
+        Channel alignment
+        -----------------
+        Each artifact type has its own channel-name file.  The current ICA may
+        have a different (usually smaller) channel set due to sensor dropout.
+        For each template column, a per-channel lookup maps reference values
+        onto the ICA's channel order; channels in the ICA that are absent from
+        the reference get a template weight of 0 and are effectively ignored
+        in the correlation.
+
+        Configuration attributes
+        ------------------------
+        _corrmap_bads : bool
+            Master enable switch (default ``False``).
+        _corrmap_template_dir : str
+            Path to the template directory.
+        _n_eog_templates : int
+            Number of EOG template columns to use (default 3).  Set to 0 to
+            skip EOG matching entirely.
+        _n_ecg_templates : int
+            Number of ECG template columns to use (default 3).  Set to 0 to
+            skip ECG matching entirely.
+        _corrmap_threshold : float | 'auto'
+            Correlation threshold passed to corrmap (default ``'auto'``).
 
         Parameters
         ----------
         ica : mne.preprocessing.ICA
             ICA solution.
         raw : mne.io.BaseRaw
-            Raw data for computing sources.
+            Raw data (used for channel-type metadata).
 
         Returns
         -------
         ica : mne.preprocessing.ICA
-            ICA with outlier components added to exclude.
+            ICA with matched components added to ``ica.exclude`` and
+            ``ica.labels_``.
         """
-        self.log("Identifying bad components using GESD...")
+        self.log("Identifying bad components using corrmap template matching...")
 
-        # Get ICA sources
-        sources = ica.get_sources(raw).get_data()
-        n_comps = sources.shape[0]
+        # Lazy-init tracking dicts so the method can be tested stand-alone
+        if not hasattr(self, "_component_labels"):
+            self._component_labels = {i: [] for i in range(ica.n_components_)}
+        if not hasattr(self, "_gesd_info"):
+            self._gesd_info = {}
 
-        # Check if enough components remain for GESD
-        n_remaining = n_comps - len(ica.exclude)
-        if n_remaining < 5:
-            self.log(
-                f"Too few components remaining ({n_remaining}) for GESD; skipping"
-            )
+        # --- Validate template directory ---
+        template_dir_str = getattr(self.cfg, "_corrmap_template_dir", "")
+        if not template_dir_str:
+            self.log("_corrmap_template_dir not set; skipping")
             return ica
 
-        # Compute statistics for each component
-        kurtosis_scores = stats.kurtosis(sources, axis=1)
-        std_scores = np.std(sources, axis=1, ddof=1)
-        std_diff_scores = np.linalg.norm(np.diff(sources, axis=1), axis=1)
+        template_dir = Path(template_dir_str)
+        if not template_dir.is_dir():
+            self.log(f"Template directory not found: {template_dir}; skipping")
+            return ica
 
-        # Apply GESD to each metric
-        self.log(f"Before GESD: {len(ica.exclude)} excluded components")
+        # --- Determine which artifact types and how many templates to use ---
+        threshold = getattr(self.cfg, "_corrmap_threshold", "auto")
+        ch_type = (
+            self.cfg.ch_types[0]
+            if hasattr(self.cfg, "ch_types") and self.cfg.ch_types
+            else "mag"
+        )
 
-        metrics = [
-            (kurtosis_scores, "kurtosis"),
-            (std_scores, "std"),
-            (std_diff_scores, "std_diff"),
-        ]
+        type_configs = []
+        n_eog = getattr(self.cfg, "_n_eog_templates", 3)
+        if n_eog > 0:
+            type_configs.append(("eog", n_eog))
+        n_ecg = getattr(self.cfg, "_n_ecg_templates", 3)
+        if n_ecg > 0:
+            type_configs.append(("ecg", n_ecg))
 
-        for scores, name in metrics:
-            gesd_mask, _ = osl_gesd(scores, p_out=1.0)
+        if not type_configs:
+            self.log("No artifact types enabled for corrmap; skipping")
+            return ica
 
-            if gesd_mask.sum() == 0:
-                self.log(f"{name}: no outliers found")
+        ica_channels = ica.ch_names
+
+        # --- Run corrmap for each artifact type ---
+        for artifact_type, n_templates in type_configs:
+
+            # Load channel names for this artifact type
+            ch_names_path = template_dir / f"{artifact_type}_channel_names.npy"
+            if not ch_names_path.exists():
+                self.log(
+                    f"{ch_names_path.name} not found in {template_dir}; "
+                    f"skipping {artifact_type}"
+                )
+                continue
+
+            ref_channels = np.load(
+                str(ch_names_path), allow_pickle=True
+            ).tolist()
+            ref_channel_to_idx = {
+                name: i for i, name in enumerate(ref_channels)
+            }
+
+            # Report channel alignment
+            n_shared = sum(
+                1 for ch in ica_channels if ch in ref_channel_to_idx
+            )
+            n_total = len(ica_channels)
+            self.log(
+                f"{artifact_type} channel alignment: {n_shared}/{n_total} ICA "
+                f"channels found in reference set ({len(ref_channels)} channels)"
+            )
+            if n_shared < 0.9 * n_total:
+                self.log(
+                    f"Warning: only {n_shared}/{n_total} ICA channels are in "
+                    "the reference set — template matching may be unreliable."
+                )
+
+            # Load templates matrix
+            templates_path = template_dir / f"{artifact_type}_templates.npy"
+            if not templates_path.exists():
+                self.log(
+                    f"{templates_path.name} not found in {template_dir}; "
+                    f"skipping {artifact_type}"
+                )
+                continue
+
+            templates_matrix = np.load(str(templates_path))
+            if templates_matrix.ndim == 1:
+                templates_matrix = templates_matrix[:, np.newaxis]
+            n_available = templates_matrix.shape[1]
+            n_use = min(n_templates, n_available)
+
+            self.log(
+                f"Running corrmap: {n_use} {artifact_type} template(s) "
+                f"(of {n_available} available), threshold={threshold!r}"
+            )
+
+            # Accumulate matched indices across all templates for this type.
+            # Each corrmap call may overwrite ica.labels_[artifact_type], so we
+            # collect the union manually.
+            accumulated_idx: set[int] = set(
+                ica.labels_.get(artifact_type, [])
+            )
+
+            for ti in range(n_use):
+                template_ref = templates_matrix[:, ti]
+
+                # Align template to ICA channel order.
+                # For channels not in the reference, weight = 0 (ignored).
+                template_aligned = np.array(
+                    [
+                        template_ref[ref_channel_to_idx[ch]]
+                        if ch in ref_channel_to_idx
+                        else 0.0
+                        for ch in ica_channels
+                    ],
+                    dtype=float,
+                )
+
+                # Clear the label so we can detect only the new matches from
+                # this template call.
+                ica.labels_.pop(artifact_type, None)
+
+                try:
+                    mne.preprocessing.corrmap(
+                        [ica],
+                        template=template_aligned,
+                        label=artifact_type,
+                        threshold=threshold,
+                        ch_type=ch_type,
+                        plot=False,
+                        show=False,
+                        verbose=False,
+                    )
+                except Exception as exc:
+                    self.log(
+                        f"  template {ti}: corrmap raised "
+                        f"{type(exc).__name__}({exc}); skipping this template"
+                    )
+                    continue
+
+                newly_matched = set(ica.labels_.get(artifact_type, []))
+                new_finds = newly_matched - accumulated_idx
+                accumulated_idx |= newly_matched
+
+                self.log(
+                    f"  template {ti}: "
+                    + (
+                        f"{len(new_finds)} new → {sorted(new_finds)}"
+                        if new_finds
+                        else "no new matches"
+                    )
+                )
+
+            # Write back accumulated labels and extend exclude list.
+            final_idx = sorted(accumulated_idx)
+            ica.labels_[artifact_type] = final_idx
+            if final_idx:
+                self.log(
+                    f"{artifact_type}: adding components {final_idx} to exclude"
+                )
+                ica.exclude.extend(final_idx)
+                # Track attribution
+                for idx in final_idx:
+                    self._component_labels[idx].append(f"corrmap_{artifact_type}")
             else:
-                outlier_idx = np.where(gesd_mask)[0].tolist()
-                ica.exclude.extend(outlier_idx)
-                self.log(f"{name}: found {len(outlier_idx)} outliers: {outlier_idx}")
-
-        self.log(f"After GESD: {len(ica.exclude)} excluded components")
+                self.log(f"{artifact_type}: no components matched")
 
         return ica
 
-    def _label_by_gesd_new(
+    def _label_by_gesd(
         self,
         ica: mne.preprocessing.ICA,
         raw: mne.io.BaseRaw,
@@ -396,6 +579,12 @@ class AutoICAAnalysis(BaseAnalysis):
             ICA with outlier components added to exclude.
         """
         self.log("Identifying bad components using PCA-whitened GESD...")
+
+        # Lazy-init tracking dicts so the method can be tested stand-alone
+        if not hasattr(self, "_component_labels"):
+            self._component_labels = {i: [] for i in range(ica.n_components_)}
+        if not hasattr(self, "_gesd_info"):
+            self._gesd_info = {}
 
         # Check if enough components for analysis
         n_comps = ica.n_components_
@@ -437,12 +626,15 @@ class AutoICAAnalysis(BaseAnalysis):
         # Standardize each metric (row-wise)
         M_std = StandardScaler().fit_transform(M.T).T  # shape still k × n
 
-        # PCA on metrics
-        if n_pcs is None:
-            n_pcs = k
-
         # Compute PCA via SVD of standardized matrix
         U, s, Vt = np.linalg.svd(M_std, full_matrices=False)
+
+        # PCA on metrics – keep enough PCs to explain 99% of variance
+        if n_pcs is None:
+            var_explained_all = (s**2) / (s**2).sum()
+            cumvar = np.cumsum(var_explained_all)
+            n_pcs = int(np.searchsorted(cumvar, 0.99) + 1)
+            n_pcs = min(n_pcs, k)  # cap at number of metrics
 
         # PC loadings (how each PC weights the original metrics)
         loadings = U[:, :n_pcs]  # k × n_pcs
@@ -499,6 +691,9 @@ class AutoICAAnalysis(BaseAnalysis):
             n_flagged = flags.sum()
             if n_flagged > 0:
                 flagged_idx = np.where(flags)[0].tolist()
+                # Track per-PC attribution
+                for idx in flagged_idx:
+                    self._component_labels[idx].append(f"GESD_PC{p + 1}")
                 self.log(
                     f"  PC{p + 1} ({side_str} tail): {n_flagged} outliers → {flagged_idx}"
                 )
@@ -508,11 +703,23 @@ class AutoICAAnalysis(BaseAnalysis):
         # Get final list of flagged components
         outlier_idx = np.where(flagged)[0].tolist()
 
+
+        # print("SKIPPING PCA-GESD FLAGGING FOR NOW TO CHECK FOR FALSE POSITIVES")
         if len(outlier_idx) > 0:
             self.log(f"=== Total flagged components: {outlier_idx} ===")
             ica.exclude.extend(outlier_idx)
         else:
             self.log("=== No components flagged by PCA-GESD ===")
+
+        # Store GESD details for TSV generation
+        self._gesd_info = {
+            "metric_names": metric_names,
+            "metric_values": {name: vals for name, vals, side in metrics_list},
+            "pc_scores": scores,
+            "pc_loadings": loadings,
+            "var_explained": var_explained[:n_pcs],
+            "n_pcs": n_pcs,
+        }
 
         self.log(f"After PCA-GESD: {len(ica.exclude)} excluded components")
 
@@ -573,11 +780,9 @@ class AutoICAAnalysis(BaseAnalysis):
         source_vars = np.var(sources, axis=1)
         sensor_var = topo_norms_sq * source_vars
 
-        source_deriv_vars = np.var(np.diff(sources, axis=1), axis=1)
-        sensor_deriv_var = topo_norms_sq * source_deriv_vars
-
-        # hf_ratio = sensor_deriv_var / (sensor_var + 1e-20)
-        hf_ratio = np.sqrt(sensor_var + 1e-20)
+        # Mean absolute gradient (FASTER: Nolan et al. 2010)
+        source_diffs = np.diff(sources, axis=1)
+        mean_abs_grad = np.mean(np.abs(source_diffs), axis=1)
 
         # Temporal kurtosis
         source_kurt = kurtosis(sources, axis=1, fisher=True)
@@ -588,30 +793,277 @@ class AutoICAAnalysis(BaseAnalysis):
         autocorr_denom = np.sum(s_centered**2, axis=1)
         autocorr_1lag = autocorr_num / autocorr_denom
 
-        # Spectral slope
+        # Spectral slope, derivative, and residual metrics
         nperseg = min(n_times, int(2 * sfreq))
         freqs, psd = welch(sources, sfreq, nperseg=nperseg, axis=1)
+
+        # High-frequency power ratio: fraction of power above fmin Hz.
+        # Muscle/noise has flat broadband spectra; brain has steep 1/f rolloff.
+        hf_power = np.sum(psd[:, freqs >= fmin], axis=1)
+        total_power = np.sum(psd, axis=1)
+        hf_ratio = hf_power / (total_power + 1e-20)
+
+        # --- Spectral derivative kurtosis (all Welch frequencies) ---
+        # d(log_psd)/df: fractional change in power per Hz.
+        # A boxcar artifact creates two sharp steps (onset/offset) → heavy-tailed
+        # derivative distribution → high kurtosis.
+        df = freqs[1] - freqs[0]  # uniform frequency spacing from Welch
+        log_psd_all = np.log10(psd + 1e-20)  # (n_components, n_freqs)
+        spectral_deriv = np.diff(log_psd_all, axis=1) / df  # (n_components, n_freqs-1)
+        spectral_deriv_kurtosis = kurtosis(spectral_deriv, axis=1, fisher=True)
+
+        # --- Spectral slope and residual kurtosis (fmin-fmax band) ---
+        # Fit a power-law (1/f^n) baseline in log-log space, then take the
+        # kurtosis of the residuals. Narrow-band artifacts create a concentrated
+        # bump above the baseline → high residual kurtosis.
         freq_mask = (freqs >= fmin) & (freqs <= fmax)
         log_freqs = np.log10(freqs[freq_mask])
         log_psd = np.log10(psd[:, freq_mask] + 1e-20)
         X = np.column_stack([log_freqs, np.ones_like(log_freqs)])
-        spectral_slope = np.linalg.lstsq(X, log_psd.T, rcond=None)[0][0]
+        coeffs = np.linalg.lstsq(X, log_psd.T, rcond=None)[0]  # (2, n_components)
+        spectral_slope = coeffs[0]  # (n_components,)
+
+        # Residuals: how much each frequency deviates from the 1/f baseline
+        log_psd_fit = (X @ coeffs).T  # (n_components, n_freqs_masked)
+        residuals = log_psd - log_psd_fit  # (n_components, n_freqs_masked)
+        spectral_resid_kurtosis = kurtosis(residuals, axis=1, fisher=True)
 
         # Spatial kurtosis
         spatial_kurt = kurtosis(topos, axis=0, fisher=True)
 
         return {
             "sensor_var": sensor_var,
-            "sensor_deriv_var": sensor_deriv_var,
             "hf_ratio": hf_ratio,
+            "mean_abs_gradient": mean_abs_grad,
             "source_kurtosis": source_kurt,
             "autocorr_1lag": autocorr_1lag,
             "spectral_slope": spectral_slope,
             "spatial_kurtosis": spatial_kurt,
+            "spectral_deriv_kurtosis": spectral_deriv_kurtosis,
+            "spectral_resid_kurtosis": spectral_resid_kurtosis,
         }
+
+    # All available GESD metric names (used for validation).
+    AVAILABLE_GESD_METRICS = [
+        "log_hf_ratio",
+        "temporal_kurtosis_sqrt",
+        "autocorr_fisher_z",
+        "spectral_slope",
+        "spatial_kurtosis_sqrt",
+        "spectral_deriv_kurtosis_sqrt",
+        "spectral_resid_kurtosis_sqrt",
+        "log_mean_abs_gradient",
+    ]
+
+    def _build_components_tsv(
+        self, ica: mne.preprocessing.ICA
+    ) -> "pd.DataFrame":
+        """Build a detailed components TSV with per-method attribution.
+
+        Reads the existing pipeline-generated TSV (from
+        ``_06a2_find_ica_artifacts``) to preserve ECG/EOG/ICALabel
+        attributions, then adds columns for every detection method
+        used by ``auto_ica``.
+
+        Columns produced
+        ----------------
+        Standard BIDS:
+            component, type, description, status, status_description
+        Method flags (0/1):
+            method_reference, method_gesd, method_corrmap_eog,
+            method_corrmap_ecg, method_pipeline_ecg, method_pipeline_eog
+        Pipeline ICALabel:
+            method_pipeline_icalabel (class label or "n/a")
+        GESD detail (only when GESD ran):
+            gesd_pcs_flagged, gesd_score_PC1..N, metric_<name> per
+            metric, gesd_pc_loadings, gesd_var_explained
+
+        Parameters
+        ----------
+        ica : mne.preprocessing.ICA
+            ICA with final exclude list.
+
+        Returns
+        -------
+        df : pd.DataFrame
+            One row per component.
+        """
+        n_comps = ica.n_components_
+
+        # --- Read existing pipeline TSV for ECG / EOG / ICALabel attributions ---
+        subject = (
+            self.cfg.subjects[0]
+            if isinstance(self.cfg.subjects, list)
+            else self.cfg.subjects
+        )
+        session = (
+            self.cfg.sessions[0]
+            if isinstance(self.cfg.sessions, list)
+            else self.cfg.sessions
+        )
+
+        tsv_path = BIDSPath(
+            root=self.cfg.deriv_root,
+            subject=subject,
+            session=session,
+            task=self.cfg.task,
+            datatype="meg",
+            suffix="components",
+            processing="ica",
+            extension=".tsv",
+            check=False,
+        )
+
+        pipeline_ecg = np.zeros(n_comps, dtype=int)
+        pipeline_eog = np.zeros(n_comps, dtype=int)
+        pipeline_icalabel = ["n/a"] * n_comps
+
+        if tsv_path.fpath.exists():
+            existing = pd.read_csv(tsv_path.fpath, sep="\t")
+            for _, row in existing.iterrows():
+                comp = int(row["component"])
+                if comp >= n_comps:
+                    continue
+                desc = str(row.get("status_description", "n/a"))
+                if "ECG artifact (MNE)" in desc:
+                    pipeline_ecg[comp] = 1
+                    self._component_labels[comp].append("pipeline_ecg")
+                if "EOG artifact (MNE)" in desc:
+                    pipeline_eog[comp] = 1
+                    self._component_labels[comp].append("pipeline_eog")
+                if "(MNE-ICALabel)" in desc:
+                    label = (
+                        desc.replace("Auto-detected ", "")
+                        .replace(" (MNE-ICALabel)", "")
+                    )
+                    pipeline_icalabel[comp] = label
+                    self._component_labels[comp].append(
+                        f"icalabel_{label}"
+                    )
+        else:
+            self.log(
+                "No existing components TSV found; pipeline attributions "
+                "will not be available."
+            )
+
+        # --- Build status_description from all labels ---
+        status_descriptions = []
+        for i in range(n_comps):
+            labels = self._component_labels[i]
+            status_descriptions.append("; ".join(labels) if labels else "n/a")
+
+        # --- Core columns ---
+        data: dict[str, list] = {
+            "component": list(range(n_comps)),
+            "type": ["ica"] * n_comps,
+            "description": ["Independent Component"] * n_comps,
+            "status": [
+                "bad" if i in set(ica.exclude) else "good"
+                for i in range(n_comps)
+            ],
+            "status_description": status_descriptions,
+            # --- Per-method flags ---
+            "method_reference": [
+                int(
+                    any(lbl == "reference" for lbl in self._component_labels[i])
+                )
+                for i in range(n_comps)
+            ],
+            "method_gesd": [
+                int(
+                    any(
+                        lbl.startswith("GESD_PC")
+                        for lbl in self._component_labels[i]
+                    )
+                )
+                for i in range(n_comps)
+            ],
+            "method_corrmap_eog": [
+                int(
+                    any(
+                        lbl == "corrmap_eog"
+                        for lbl in self._component_labels[i]
+                    )
+                )
+                for i in range(n_comps)
+            ],
+            "method_corrmap_ecg": [
+                int(
+                    any(
+                        lbl == "corrmap_ecg"
+                        for lbl in self._component_labels[i]
+                    )
+                )
+                for i in range(n_comps)
+            ],
+            "method_pipeline_ecg": pipeline_ecg.tolist(),
+            "method_pipeline_eog": pipeline_eog.tolist(),
+            "method_pipeline_icalabel": pipeline_icalabel,
+        }
+
+        # --- GESD detail columns (only if GESD ran) ---
+        if self._gesd_info:
+            n_pcs = self._gesd_info["n_pcs"]
+            metric_names = self._gesd_info["metric_names"]
+            scores = self._gesd_info["pc_scores"]
+            loadings = self._gesd_info["pc_loadings"]
+            var_explained = self._gesd_info["var_explained"]
+
+            # Which PCs flagged each component
+            data["gesd_pcs_flagged"] = [
+                ";".join(
+                    lbl
+                    for lbl in self._component_labels[i]
+                    if lbl.startswith("GESD_PC")
+                )
+                or "n/a"
+                for i in range(n_comps)
+            ]
+
+            # PC scores per component
+            for p in range(n_pcs):
+                data[f"gesd_score_PC{p + 1}"] = np.round(
+                    scores[p], 4
+                ).tolist()
+
+            # Metric values per component
+            for mname in metric_names:
+                data[f"metric_{mname}"] = np.round(
+                    self._gesd_info["metric_values"][mname], 6
+                ).tolist()
+
+            # PC loadings (shared across components, stored once per row
+            # for self-contained CSV analysis)
+            loading_strs = []
+            for p in range(n_pcs):
+                parts = [
+                    f"{metric_names[j]}:{loadings[j, p]:.3f}"
+                    for j in range(len(metric_names))
+                ]
+                loading_strs.append(f"PC{p + 1}({','.join(parts)})")
+            data["gesd_pc_loadings"] = [";".join(loading_strs)] * n_comps
+
+            # Variance explained
+            var_str = ";".join(
+                f"PC{p + 1}:{var_explained[p]:.4f}" for p in range(n_pcs)
+            )
+            data["gesd_var_explained"] = [var_str] * n_comps
+
+        df = pd.DataFrame(data)
+        return df
 
     def _prepare_metrics_for_gesd(self, diagnostics: dict) -> list:
         """Transform metrics and specify outlier direction for GESD.
+
+        Which metrics are included can be controlled by setting
+        ``cfg._gesd_metrics`` to a list of metric name strings.  When the
+        attribute is absent or ``None``, all metrics are used.
+
+        Available metric names:
+            ``log_hf_ratio``, ``temporal_kurtosis_sqrt``,
+            ``autocorr_fisher_z``, ``spectral_slope``,
+            ``spatial_kurtosis_sqrt``, ``spectral_deriv_kurtosis_sqrt``,
+            ``spectral_resid_kurtosis_sqrt``, ``log_mean_abs_gradient``.
 
         Parameters
         ----------
@@ -631,30 +1083,73 @@ class AutoICAAnalysis(BaseAnalysis):
         - Raw values when already approximately normal
         - Signed sqrt for kurtosis to preserve sign while reducing skew
         """
+        # Determine which metrics the user wants
+        selected = getattr(self.cfg, "_gesd_metrics", None)
+        if selected is not None:
+            unknown = set(selected) - set(self.AVAILABLE_GESD_METRICS)
+            if unknown:
+                raise ValueError(
+                    f"Unknown GESD metric names: {unknown}. "
+                    f"Available: {self.AVAILABLE_GESD_METRICS}"
+                )
+            use = set(selected)
+            self.log(f"Using selected GESD metrics: {sorted(use)}")
+        else:
+            use = set(self.AVAILABLE_GESD_METRICS)
+
         metrics = []
 
         # 1. Log HF ratio: high = high-frequency artifact (muscle)
-        log_hf = np.log(diagnostics["hf_ratio"] + 1e-10)
-        metrics.append(("log_hf_ratio", log_hf, 1))
+        if "log_hf_ratio" in use:
+            log_hf = np.log(diagnostics["hf_ratio"] + 1e-10)
+            metrics.append(("log_hf_ratio", log_hf, 1))
 
         # 2. Temporal kurtosis: high = non-Gaussian artifact
-        source_kurt = diagnostics["source_kurtosis"]
-        signed_sqrt_kurt = np.sign(source_kurt) * np.sqrt(np.abs(source_kurt)  + 1e-10)
-        metrics.append(("temporal_kurtosis_sqrt", signed_sqrt_kurt, 1))
+        if "temporal_kurtosis_sqrt" in use:
+            source_kurt = diagnostics["source_kurtosis"]
+            signed_sqrt_kurt = np.sign(source_kurt) * np.sqrt(np.abs(source_kurt)  + 1e-10)
+            metrics.append(("temporal_kurtosis_sqrt", signed_sqrt_kurt, 1))
 
         # 3. Autocorrelation: low = white noise artifact
-        autocorr = diagnostics["autocorr_1lag"]
-        autocorr_clipped = np.clip(autocorr, -0.999, 0.999)
-        fisher_z = np.arctanh(autocorr_clipped)  # Fisher z-transform
-        metrics.append(("autocorr_fisher_z", fisher_z, -1))
+        if "autocorr_fisher_z" in use:
+            autocorr = diagnostics["autocorr_1lag"]
+            autocorr_clipped = np.clip(autocorr, -0.999, 0.999)
+            fisher_z = np.arctanh(autocorr_clipped)  # Fisher z-transform
+            metrics.append(("autocorr_fisher_z", fisher_z, -1))
 
         # 4. Spectral slope: high (less negative) = flat spectrum = muscle/noise
-        metrics.append(("spectral_slope", diagnostics["spectral_slope"], 1))
+        if "spectral_slope" in use:
+            metrics.append(("spectral_slope", diagnostics["spectral_slope"], 1))
 
         # 5. Spatial kurtosis: high = focal/single-channel artifact
-        spatial_kurt = diagnostics["spatial_kurtosis"]
-        signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(np.abs(spatial_kurt) + 1e-10)
-        metrics.append(("spatial_kurtosis_sqrt", signed_sqrt_spatial, 1))
+        if "spatial_kurtosis_sqrt" in use:
+            spatial_kurt = diagnostics["spatial_kurtosis"]
+            signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(np.abs(spatial_kurt) + 1e-10)
+            metrics.append(("spatial_kurtosis_sqrt", signed_sqrt_spatial, 1))
+
+        # 6. Spectral derivative kurtosis: high = sharp narrow-band transitions.
+        # d(log_psd)/df has heavy tails when the spectrum has sudden onset/offset
+        # edges (boxcar-like artifact). Natural 1/f spectra are smooth → low kurtosis.
+        if "spectral_deriv_kurtosis_sqrt" in use:
+            spec_deriv_kurt = diagnostics["spectral_deriv_kurtosis"]
+            signed_sqrt_spec_deriv = np.sign(spec_deriv_kurt) * np.sqrt(np.abs(spec_deriv_kurt) + 1e-10)
+            metrics.append(("spectral_deriv_kurtosis_sqrt", signed_sqrt_spec_deriv, 1))
+
+        # 7. Spectral residual kurtosis: high = concentrated deviation from 1/f.
+        # Residuals from the power-law fit are near-Gaussian for typical brain ICs.
+        # A narrow-band artifact creates a localized bump above the baseline
+        # → heavy-tailed residuals → high kurtosis.
+        if "spectral_resid_kurtosis_sqrt" in use:
+            spec_resid_kurt = diagnostics["spectral_resid_kurtosis"]
+            signed_sqrt_spec_resid = np.sign(spec_resid_kurt) * np.sqrt(np.abs(spec_resid_kurt) + 1e-10)
+            metrics.append(("spectral_resid_kurtosis_sqrt", signed_sqrt_spec_resid, 1))
+
+        # 8. Mean absolute gradient (FASTER): high = temporally rough signal.
+        # Brain sources are smooth (dominated by low-freq oscillations);
+        # muscle and spike artifacts have rapid moment-to-moment fluctuations.
+        if "log_mean_abs_gradient" in use:
+            metrics.append(("log_mean_abs_gradient",
+                            np.log(diagnostics["mean_abs_gradient"] + 1e-10), 1))
 
         return metrics
 

@@ -6,8 +6,8 @@ via the CLI dispatcher in custom_preproc.py.
 
 Available Analyses
 ------------------
-regress_ref
-    Regress out reference channel signals from MEG data.
+regress
+    Regress out a configurable list of sensor signals from MEG data.
 bad_segments
     Detect and annotate bad raw data segments.
 bad_channels
@@ -39,7 +39,7 @@ Author: Harrison Ritz, 2025
 
 # Import analysis modules for convenient access
 from . import (
-    regress_ref,
+    regress,
     bad_segments,
     bad_channels,
     manual_channel,
@@ -54,12 +54,19 @@ from . import (
 # Import shared utilities
 from ._base import BaseAnalysis, SEGMENT_LEN_SEC
 from ._config import load_config, normalize_analysis_key
-from ._io import save_ica_bids, get_bids_path_for_task
+from ._io import (
+    save_ica_bids,
+    get_bids_path_for_task,
+    get_custom_proc,
+    find_custom_input_paths,
+    get_custom_output_path,
+    write_raw_bids_custom_step,
+)
 from ._bids_utils import get_bids_path
 
 __all__ = [
     # Analysis modules
-    "regress_ref",
+    "regress",
     "bad_segments",
     "bad_channels",
     "manual_channel",
@@ -77,4 +84,8 @@ __all__ = [
     "save_ica_bids",
     "get_bids_path_for_task",
     "get_bids_path",
+    "get_custom_proc",
+    "find_custom_input_paths",
+    "get_custom_output_path",
+    "write_raw_bids_custom_step",
 ]

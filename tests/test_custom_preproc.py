@@ -45,7 +45,7 @@ class TestAnalysisRegistry:
 
     def test_expected_analyses_present(self):
         expected = {
-            "regressref",
+            "regress",
             "badsegments",
             "badchannels",
             "manualchannel",
@@ -77,7 +77,7 @@ class TestImportAnalysisModule:
             import_analysis_module("nonexistent_key")
 
     def test_import_returns_callable(self):
-        for key in ["badsegments", "badchannels", "regressref", "applyhfc"]:
+        for key in ["badsegments", "badchannels", "regress", "applyhfc"]:
             run_func = import_analysis_module(key)
             assert callable(run_func), f"run() for {key} should be callable"
 

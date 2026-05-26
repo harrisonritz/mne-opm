@@ -44,6 +44,9 @@ _DEFAULT_SCREEN_RESOLUTION = (1920, 1080)
 _DEFAULT_SCREEN_SIZE = (0.606, 0.341)  # metres
 _DEFAULT_SCREEN_DISTANCE = 0.895  # metres
 
+# Head position channel names recorded by the eye-tracker
+_HEAD_POS_CHANNELS = ("x_head", "y_head", "distance")
+
 
 def set_bids_params(config_path: str = "") -> SimpleNamespace:
     """Load BIDS conversion configuration.
@@ -84,6 +87,11 @@ def set_bids_params(config_path: str = "") -> SimpleNamespace:
         screen_resolution=_DEFAULT_SCREEN_RESOLUTION,
         screen_size=_DEFAULT_SCREEN_SIZE,
         screen_distance=_DEFAULT_SCREEN_DISTANCE,
+        # Eye-tracking alignment annotations
+        # regexp matched against eye-tracking annotations to find sync events
+        _eye_sync_regex="stim_onset",
+        # regexp matched against MEG annotations to find sync events
+        _raw_sync_regex="trial",
     )
 
     if config_path:
@@ -369,6 +377,18 @@ def convert_triggers(raw: mne.io.Raw, cfg: SimpleNamespace) -> mne.io.Raw:
     if getattr(cfg, "response_desc", None):
         raw.annotations.rename(cfg.response_desc)
 
+    # Drop trigger stim channels now that all event information is captured
+    # in annotations.  Keeping them would cause mne_bids.write_raw_bids()
+    # to re-extract events with different find_events parameters whenever
+    # the data is re-saved later in the pipeline (e.g. by bad_segments),
+    # which can produce a different event count and break metadata alignment.
+    stim_channels_to_drop = [ch for ch in trigger_channels + ["Trigger Combined"]
+                             if ch in raw.ch_names]
+    if stim_channels_to_drop:
+        raw.drop_channels(stim_channels_to_drop)
+        print(f"Dropped {len(stim_channels_to_drop)} trigger stim channels: "
+              f"{stim_channels_to_drop}")
+
     print("Trigger & Response conversion completed.\n----------\n")
     return raw
 
@@ -430,10 +450,23 @@ def _load_eyetracking(
     print("calibration:", cal)
 
     mne.preprocessing.eyetracking.convert_units(eye, calibration=cal, to="radians")
+
+    # print the channel names for eye
+    print("Eye-tracking channels:", eye.ch_names)
+
     return eye, cal
 
 
-def _interpolate_nans(eye: mne.io.Raw, buffer_sec: float = 0.1) -> np.ndarray:
+def _get_head_pos_channels(eye: mne.io.Raw) -> list[str]:
+    """Return the subset of head position channel names present in *eye*."""
+    return [ch for ch in _HEAD_POS_CHANNELS if ch in eye.ch_names]
+
+
+def _interpolate_nans(
+    eye: mne.io.Raw,
+    buffer_sec: float = 0.1,
+    exclude_from_mask: list[str] | None = None,
+) -> np.ndarray:
     """Interpolate NaN values in eye-tracking data with a buffer region.
 
     Marks samples within ``buffer_sec`` of any NaN as also needing
@@ -445,18 +478,44 @@ def _interpolate_nans(eye: mne.io.Raw, buffer_sec: float = 0.1) -> np.ndarray:
         Eye-tracking data (modified in-place).
     buffer_sec : float
         Buffer in seconds around NaN regions.
+    exclude_from_mask : list of str or None
+        Channel names to exclude from the returned ``orig_nan_mask``
+        (they are still interpolated).  Useful for head-position channels
+        whose NaN pattern should not feed into downstream feature
+        extraction (e.g. NMF decomposition).
 
     Returns
     -------
     orig_nan_mask : np.ndarray
         Boolean mask of shape ``(n_times,)`` indicating original NaN
-        positions (before interpolation), collapsed across channels.
+        positions (before interpolation), collapsed across non-excluded
+        channels.
     """
     buffer_samp = int(buffer_sec * eye.info["sfreq"])
     print(f"\nInterpolating remaining NaNs (buffer = {buffer_sec} sec)...")
 
-    orig_nan_mask = np.isnan(eye.get_data()).any(axis=0)
     data = eye.get_data()
+
+    # Compute NaN mask only from channels that are *not* excluded
+    if exclude_from_mask:
+        mask_picks = [
+            i for i, ch in enumerate(eye.ch_names) if ch not in exclude_from_mask
+        ]
+    else:
+        mask_picks = list(range(len(eye.ch_names)))
+    orig_nan_mask = np.isnan(data[mask_picks]).any(axis=0)
+
+    # Report NaN statistics for excluded (head-position) channels
+    if exclude_from_mask:
+        for ch_name in exclude_from_mask:
+            if ch_name in eye.ch_names:
+                ch_idx = eye.ch_names.index(ch_name)
+                n_nan = np.isnan(data[ch_idx]).sum()
+                pct = n_nan / data.shape[1] * 100
+                print(
+                    f"  Head position channel '{ch_name}': "
+                    f"{n_nan} NaN samples ({pct:.1f}%)"
+                )
 
     for ch_idx, ch_name in enumerate(eye.ch_names):
         ch_data = data[ch_idx, :]
@@ -595,13 +654,13 @@ def _create_eye_feature_channels(
 
 
 def _align_eyetracking(
-    raw: mne.io.Raw, eye: mne.io.Raw
+    raw: mne.io.Raw, eye: mne.io.Raw, cfg: SimpleNamespace
 ) -> tuple[mne.io.Raw, mne.io.Raw, float, float, float]:
     """Temporally align eye-tracking data to MEG raw data.
 
-    Uses ``stim_onset`` (eye) and ``trial`` (raw) events to compute a
-    polynomial mapping, then applies bilateral zero-padding so that
-    ``mne.preprocessing.realign_raw`` crops eye data (never raw).
+    Uses ``cfg._eye_sync_regex`` (eye) and ``cfg._raw_sync_regex`` (raw) events
+    to compute a polynomial mapping, then applies bilateral zero-padding so
+    that ``mne.preprocessing.realign_raw`` crops eye data (never raw).
 
     Parameters
     ----------
@@ -609,6 +668,9 @@ def _align_eyetracking(
         MEG raw data.
     eye : mne.io.Raw
         Eye-tracking data (modified in-place via padding & realignment).
+    cfg : SimpleNamespace
+        Configuration namespace. Uses ``_eye_sync_regex`` and
+        ``_raw_sync_regex`` to select alignment annotations.
 
     Returns
     -------
@@ -625,8 +687,11 @@ def _align_eyetracking(
     """
     from numpy.polynomial.polynomial import Polynomial
 
-    eye_events, _ = mne.events_from_annotations(eye, regexp="stim_onset")
-    raw_events, _ = mne.events_from_annotations(raw, regexp="trial")
+    _eye_sync_regex = getattr(cfg, "_eye_sync_regex", "stim_onset")
+    _raw_sync_regex = getattr(cfg, "_raw_sync_regex", "trial")
+
+    eye_events, _ = mne.events_from_annotations(eye, regexp=_eye_sync_regex)
+    raw_events, _ = mne.events_from_annotations(raw, regexp=_raw_sync_regex)
     eye_shape, raw_shape = eye_events.shape[0], raw_events.shape[0]
 
     eye_duration = eye.times[-1] - eye.times[0]
@@ -688,13 +753,13 @@ def _align_eyetracking(
     )
 
     # Count trial events before alignment for verification
-    n_trial_before = len(mne.events_from_annotations(raw, regexp="trial")[0])
+    n_trial_before = len(mne.events_from_annotations(raw, regexp=_raw_sync_regex)[0])
 
     # Realign
     print("\nRealigning eye-tracking data to OPM...")
     mne.preprocessing.realign_raw(raw, eye, raw_times, eye_times, verbose=True)
 
-    n_trial_after = len(mne.events_from_annotations(raw, regexp="trial")[0])
+    n_trial_after = len(mne.events_from_annotations(raw, regexp=_raw_sync_regex)[0])
     if n_trial_after < n_trial_before:
         print(
             f"\n*** WARNING: realign_raw removed {n_trial_before - n_trial_after} "
@@ -798,6 +863,11 @@ def _set_eyetrack_channel_types(raw: mne.io.Raw) -> None:
         if first_ch in raw.ch_names:
             mne.preprocessing.eyetracking.set_channel_types_eyetrack(raw, mapping)
 
+    # Head position channels → misc
+    for ch_name in _HEAD_POS_CHANNELS:
+        if ch_name in raw.ch_names:
+            raw.set_channel_types({ch_name: "misc"})
+
 
 def process_eyetracking(raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace) -> mne.io.Raw:
     """Full eye-tracking processing pipeline.
@@ -824,14 +894,21 @@ def process_eyetracking(raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace) ->
     # 1. Load & calibrate
     eye, cal = _load_eyetracking(eye_path, cfg)
 
-    # 2. Interpolate NaNs
-    orig_nan_mask = _interpolate_nans(eye)
+    # 1b. Detect head position channels
+    head_pos_chs = _get_head_pos_channels(eye)
+    if head_pos_chs:
+        print(f"  Head position channels found: {head_pos_chs}")
+    else:
+        print("  No head position channels found in eye data.")
+
+    # 2. Interpolate NaNs (exclude head-pos from the NaN mask used by NMF)
+    orig_nan_mask = _interpolate_nans(eye, exclude_from_mask=head_pos_chs)
 
     # 3. Create feature channels (NMF/SVD of blink, saccade, NaN)
     _create_eye_feature_channels(eye, orig_nan_mask)
 
     # 4. Temporal alignment
-    raw, eye, zero_ord, first_ord, eye_dur = _align_eyetracking(raw, eye)
+    raw, eye, zero_ord, first_ord, eye_dur = _align_eyetracking(raw, eye, cfg)
 
     # 5. Reset first_samp to zero
     raw = _reset_first_samp(raw)
@@ -846,6 +923,9 @@ def process_eyetracking(raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace) ->
     # 8. Merge eye channels into raw
     raw.add_channels([eye], force_update_info=True)
     _set_eyetrack_channel_types(raw)
+
+    if head_pos_chs:
+        print(f"\nHead position channels added: {head_pos_chs} (type=misc)")
 
     print(
         "\nupdated raw ----------------------\n",

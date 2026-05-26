@@ -17,17 +17,24 @@ Classifier: Topic :: Scientific/Engineering
 Requires-Python: ~=3.13.0
 Description-Content-Type: text/markdown
 License-File: LICENSE
+Requires-Dist: cmcrameri>=1.9
 Requires-Dist: dcm2niix>=1.0.20250506
+Requires-Dist: dpca>=1.0.5
 Requires-Dist: dupy>=1.2105.11
+Requires-Dist: gedai>=0.1.0
+Requires-Dist: imageio[ffmpeg]>=2.37.2
 Requires-Dist: ipykernel>=7.1.0
 Requires-Dist: mne
 Requires-Dist: mne-bids
 Requires-Dist: mne-bids-pipeline
+Requires-Dist: mne-denoise>=0.0.1
 Requires-Dist: mne-qt-browser>=0.7.4
+Requires-Dist: nilearn>=0.11
+Requires-Dist: numexpr>=2.14.1
 Requires-Dist: openmeeg>=2.5.16
 Requires-Dist: osl-ephys
 Requires-Dist: pyopengl>=3.1.10
-Requires-Dist: pyqt5>=5.15.11
+Requires-Dist: pyqt5>=5.15; sys_platform != "win32"
 Requires-Dist: pyvista>=0.46.4
 Requires-Dist: trame>=3.12.0
 Requires-Dist: vtk>=9.5.2

@@ -40,7 +40,7 @@ ANALYSIS_CONFIG_FLAGS: dict[str, str] = {
     "manualchannel": "_manual_channels",
     "autoica": "_auto_ica",
     "manualica": "_manual_ica",
-    "regressref": "_regress_ref",
+    "regress": "_regress",
     "applyhfc": "_do_HFC",
     "zcafilter": "_do_ZCA",
 }
@@ -96,7 +96,7 @@ def normalize_analysis_key(analysis: str) -> str:
     Parameters
     ----------
     analysis : str
-        Analysis name from CLI (e.g., 'bad_segments', 'regress_ref').
+        Analysis name from CLI (e.g., 'bad_segments', 'regress').
 
     Returns
     -------
@@ -107,8 +107,8 @@ def normalize_analysis_key(analysis: str) -> str:
     --------
     >>> normalize_analysis_key('bad_segments')
     'badsegments'
-    >>> normalize_analysis_key('regress_ref')
-    'regressref'
+    >>> normalize_analysis_key('regress')
+    'regress'
     """
     return analysis.replace("_", "")
 
@@ -129,8 +129,8 @@ def get_analysis_config_flag(analysis_key: str) -> Optional[str]:
 
     Examples
     --------
-    >>> get_analysis_config_flag('regressref')
-    '_regress_ref'
+    >>> get_analysis_config_flag('regress')
+    '_regress'
     >>> get_analysis_config_flag('badsegments')
     None
     """
@@ -162,8 +162,8 @@ def check_analysis_enabled(cfg: SimpleNamespace, analysis_key: str) -> bool:
 
     Examples
     --------
-    >>> cfg = SimpleNamespace(_regress_ref=True)
-    >>> check_analysis_enabled(cfg, 'regressref')
+    >>> cfg = SimpleNamespace(_regress=True)
+    >>> check_analysis_enabled(cfg, 'regress')
     True
     >>> check_analysis_enabled(cfg, 'badsegments')
     True

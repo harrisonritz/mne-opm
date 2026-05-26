@@ -25,7 +25,7 @@ usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        nifti|coreg|channel|freesurfer|bids|preproc|sensor|source|beamformer|all|func|anat)
+        nifti|coreg|channel|freesurfer|bids|preproc|sensor|source|beamformer|all|func|anat|coreg_diagnostics)
             PIPELINE=$1
             shift 1
             ;;
@@ -127,6 +127,7 @@ export SUBJECT
 export SUBJECT_NUM=sub-$SUBJECT
 export ANALYSIS
 export SESSION
+export TSX_DIR
 
 export ROOT_DIR=$PWD
 

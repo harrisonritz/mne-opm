@@ -77,8 +77,14 @@ echo "\n\nBuilding watershed bem..."
 mne watershed_bem --subject=$SUBJECT --subjects-dir="$SUBJECTS_DIR" --overwrite --atlas --gcaatlas --verbose
 
 # # construct hi-res head surfaces
+#echo "\n\nMaking hi-res scalp surface..."
+#mne make_scalp_surfaces --subject=$SUBJECT --subjects-dir="$SUBJECTS_DIR" --overwrite --force --verbose
+
+# construct hi-res head surfaces
+# calls mkheadsurf directly via tcsh to avoid getpwdcmd error in MNE's subprocess wrapper
 echo "\n\nMaking hi-res scalp surface..."
-mne make_scalp_surfaces --subject=$SUBJECT --subjects-dir="$SUBJECTS_DIR" --overwrite --force --verbose
+/bin/tcsh -c "setenv SUBJECTS_DIR '$SUBJECTS_DIR'; setenv FREESURFER_HOME '$FREESURFER_HOME'; source '$FREESURFER_HOME/SetUpFreeSurfer.sh'; mkheadsurf -subjid $SUBJECT -srcvol T1.mgz -thresh1 20 -thresh2 20" \
+    || echo "WARNING: make_scalp_surfaces failed (non-fatal). Hi-res scalp surface unavailable."
 
 
 # revert to original subject formatting

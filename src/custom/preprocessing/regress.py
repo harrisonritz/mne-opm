@@ -1,23 +1,22 @@
-"""Reference regression analysis for OPM-MEG data.
+"""General sensor regression for OPM-MEG data.
 
-This module regresses out reference channel signals from MEG data channels
-to remove environmental noise captured by the reference sensors. Two
-regression methods are supported:
+This module regresses out a configurable list of sensor signals from MEG data
+channels to remove noise captured by those sensors. Two regression methods are
+supported:
 
 1. **Standard regression**: Computes a single set of regression weights
    over the entire recording using MNE's EOGRegression.
 
 2. **Time-varying regression**: Uses a sliding window approach to compute
-   time-varying regression weights, better suited for non-stationary
-   environmental noise.
+   time-varying regression weights, better suited for non-stationary noise.
 
 Usage
 -----
 CLI:
-    python src/custom/custom_preproc.py --analysis=regress_ref --config=/path/to/config.py
+    python src/custom/custom_preproc.py --analysis=regress --config=/path/to/config.py
 
 Programmatic:
-    >>> from preprocessing.regress_ref import run
+    >>> from preprocessing.regress import run
     >>> run(cfg)
 
 Configuration Attributes
@@ -33,18 +32,26 @@ Required:
         Session IDs to process.
     task : str
         Task name.
+    _regress_preds : list
+        Channel names or channel-type strings to use as predictors
+        (e.g., ['ref_meg'] or ['MEG0001', 'MEG0002']).
 
 Optional:
-    _regress_ref : bool
+    _regress : bool
         Enable/disable this analysis. Default: False.
-    _regress_ref_timevarying : bool
+    _regress_timevarying : bool
         Use time-varying regression instead of standard. Default: False.
-    _regress_ref_window : float
+    _regress_window : float
         Window size in seconds for time-varying regression. Default: 100.0.
-    _regress_ref_freqs : list of tuple
-        Frequency bands for filtering reference channels.
+    _regress_freqs : list of tuple
+        Frequency bands for filtering predictor channels.
         Example: [(None, 5.0), (5.0, 15.0)]. Default: None (use raw + squared).
-    _regress_ref_plot : bool
+    _regress_lags : int
+        Number of past time-lags for delay-embedded regression. When > 0,
+        time-shifted copies of each predictor channel (lag-1 … lag-N samples)
+        are added as extra regressors and ridge regression is used instead of
+        EOGRegression. Default: 0 (no delay embedding).
+    _regress_plot : bool
         Show PSD comparison plots before/after. Default: False.
     process_empty_room : bool
         Also process empty room noise recording. Default: False.
@@ -56,6 +63,7 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+import warnings
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -69,15 +77,20 @@ from scipy import stats
 from scipy.linalg import qr
 
 from ._base import BaseAnalysis
+from ._io import (
+    find_custom_input_paths,
+    read_raw_bids_with_retry,
+    write_raw_bids_custom_step,
+)
 
 
-class RegressReferenceAnalysis(BaseAnalysis):
-    """Regress out reference channels from MEG data.
+class RegressAnalysis(BaseAnalysis):
+    """Regress out a configurable set of sensor signals from MEG data.
 
-    This analysis removes environmental noise captured by reference sensors
-    from the primary MEG channels using linear regression. Reference channels
-    typically measure background magnetic fields that contaminate the brain
-    signals of interest.
+    This analysis removes noise captured by a user-specified list of sensors
+    from the primary MEG channels using linear regression. The predictor
+    channels are set via ``cfg._regress_preds`` and can be channel type
+    strings (e.g., ``'ref_meg'``) or individual channel names.
 
     The sliding window (time-varying) method is recommended for recordings
     with non-stationary noise, as it allows the regression weights to adapt
@@ -86,30 +99,30 @@ class RegressReferenceAnalysis(BaseAnalysis):
     Attributes
     ----------
     ANALYSIS_KEY : str
-        'regressref'
+        'regress'
     ANALYSIS_NAME : str
-        'regress_ref'
+        'regress'
 
     See Also
     --------
     mne.preprocessing.EOGRegression : MNE's standard regression method.
     """
 
-    ANALYSIS_KEY = "regressref"
-    ANALYSIS_NAME = "regress_ref"
+    ANALYSIS_KEY = "regress"
+    ANALYSIS_NAME = "regress"
 
     def is_enabled(self) -> bool:
-        """Check if reference regression is enabled.
+        """Check if regression is enabled.
 
         Returns
         -------
         enabled : bool
-            True if cfg._regress_ref is True.
+            True if cfg._regress is True.
         """
-        return getattr(self.cfg, "_regress_ref", False)
+        return getattr(self.cfg, "_regress", False)
 
     def load_data(self) -> Dict[str, Any]:
-        """Load raw data for reference regression.
+        """Load raw data for regression.
 
         Loads the main task data and optionally empty room data if
         process_empty_room is enabled.
@@ -130,27 +143,18 @@ class RegressReferenceAnalysis(BaseAnalysis):
             tasks.insert(0, "noise")
 
         for task in tasks:
-            # Search for raw files (handles runs, splits, etc.)
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks=task,
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+            paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No raw data found for task={task}")
-            
-            raw = mne_bids.read_raw_bids(paths[0], extra_params={"preload": True})
+
+            raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
             data[task] = raw
             self.log(f"Loaded raw data for task={task}")
 
         return data
 
     def run(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute reference regression on all loaded data.
+        """Execute regression on all loaded data.
 
         Parameters
         ----------
@@ -168,7 +172,7 @@ class RegressReferenceAnalysis(BaseAnalysis):
             is_noise = task == "noise"
             self.log(f"Processing task={task} (is_noise={is_noise})")
 
-            cleaned = self._regress_reference(raw, is_noise=is_noise)
+            cleaned = self._regress(raw, is_noise=is_noise)
             results[task] = cleaned
 
         return results
@@ -186,55 +190,31 @@ class RegressReferenceAnalysis(BaseAnalysis):
         # Separate task data from metadata
         tasks = {k: v for k, v in results.items() if k not in {"bads"}}
 
-        # Find empty room path if needed
-        er_bids_path = None
-        if "noise" in tasks:
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks="noise",
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
-            if paths:
-                er_bids_path = paths[0]
+        # Process noise FIRST (when present) so the task save can use the
+        # already-written noise as its empty-room association.
+        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
 
-        for task, raw in tasks.items():
-            # Find existing file
-            paths = mne_bids.find_matching_paths(
-                root=self.cfg.bids_root,
-                subjects=self.cfg.subjects,
-                tasks=task,
-                sessions=self.cfg.sessions,
-                datatypes="meg",
-                extensions=".fif",
-                ignore_nosub=True,
-            )
+        er_output_bp = None
+        for task, raw in ordered_tasks:
+            paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
-            
-            bp = paths[0]
-            bp.split = None  # Clear split to write to base file
-            
-            # Associate with empty room for non-noise tasks
-            write_kwargs = dict(
-                raw=raw,
-                bids_path=bp,
-                allow_preload=True,
-                overwrite=True,
-                format="FIF",
+
+            source_bp = paths[0]
+            empty_room = er_output_bp if task != "noise" else None
+            output_bp = write_raw_bids_custom_step(
+                raw, self.cfg, source_bp, empty_room=empty_room
             )
-            if er_bids_path and task != "noise":
-                write_kwargs["empty_room"] = er_bids_path
-            mne_bids.write_raw_bids(**write_kwargs)
+
+            if task == "noise":
+                er_output_bp = output_bp
+
             self.log(f"Saved task={task}")
 
-    def _regress_reference(
+    def _regress(
         self, raw: mne.io.BaseRaw, is_noise: bool = False
     ) -> mne.io.BaseRaw:
-        """Perform reference regression on raw data.
+        """Perform regression on raw data.
 
         Parameters
         ----------
@@ -246,9 +226,19 @@ class RegressReferenceAnalysis(BaseAnalysis):
         Returns
         -------
         raw_clean : mne.io.BaseRaw
-            Raw data with reference signals regressed out.
+            Raw data with predictor signals regressed out.
         """
-        self.log("Regressing out reference channels...")
+        self.log(f"Regressing out channels: {self.cfg._regress_preds}")
+
+        # Check whether predictor channels exist in this recording
+        try:
+            _picks_to_idx(raw.info, self.cfg._regress_preds)
+        except (ValueError, KeyError):
+            warnings.warn(
+                f"Predictor channels {self.cfg._regress_preds} not found "
+                f"in noise recording — skipping regression."
+            )
+            return raw
 
         # Annotate breaks if configured (not for noise recordings)
         if getattr(self.cfg, "find_breaks", False) and not is_noise:
@@ -260,23 +250,23 @@ class RegressReferenceAnalysis(BaseAnalysis):
             )
 
         # Choose regression method
-        if getattr(self.cfg, "_regress_ref_timevarying", False):
+        if getattr(self.cfg, "_regress_timevarying", False):
             raw_clean = self._regress_timevarying(raw)
         else:
             raw_clean = self._regress_standard(raw)
 
         # Optional PSD comparison plot
-        if getattr(self.cfg, "_regress_ref_plot", False):
+        if getattr(self.cfg, "_regress_plot", False):
             self._plot_psd_comparison(raw, raw_clean)
 
-        self.log("Reference regression complete!")
+        self.log("Regression complete!")
         return raw_clean
 
     def _regress_standard(self, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
-        """Standard (time-invariant) reference regression.
+        """Standard (time-invariant) regression.
 
-        Uses MNE's EOGRegression to compute a single set of regression
-        weights over the entire recording.
+        Uses MNE's EOGRegression when no lags are requested, or a custom
+        ridge regression with delay-embedded predictors when ``_regress_lags > 0``.
 
         Parameters
         ----------
@@ -288,25 +278,106 @@ class RegressReferenceAnalysis(BaseAnalysis):
         raw_clean : mne.io.BaseRaw
             Cleaned raw data.
         """
-        self.log("Using standard (time-invariant) regression")
+        n_lags = getattr(self.cfg, "_regress_lags", 0)
 
-        weights = mne.preprocessing.EOGRegression(
-            picks=self.cfg.ch_types[0],
-            picks_artifact="ref_meg",
-            proj=True,
-        ).fit(raw)
+        if n_lags <= 0:
+            self.log("Using standard (time-invariant) regression")
 
-        raw_clean = weights.apply(raw, copy=True)
-        del weights
+            weights = mne.preprocessing.EOGRegression(
+                picks=self.cfg.ch_types[0],
+                picks_artifact=self.cfg._regress_preds,
+                proj=True,
+            ).fit(raw)
+
+            raw_clean = weights.apply(raw, copy=True)
+            del weights
+
+        else:
+            self.log(
+                f"Using delay-embedded ridge regression ({n_lags} lags, "
+                f"{n_lags / raw.info['sfreq'] * 1000:.1f} ms)"
+            )
+            
+            # # print channel names for debugging
+            # self.log(f"  Target channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg.ch_types[0])]}")
+            # # print all channel names
+            # self.log(f"  Info: {raw.info}")
+            # self.log(f"  All channels: {raw.ch_names}")
+            # self.log(f"  Predictor channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg._regress_preds)]}")
+            
+            raw_clean = self._regress_delay_embedded(raw, n_lags)
+
+        return raw_clean
+
+    def _regress_delay_embedded(
+        self, raw: mne.io.BaseRaw, n_lags: int
+    ) -> mne.io.BaseRaw:
+        """Ridge regression with delay-embedded artifact predictors.
+
+        Builds a design matrix from the artifact channels and their
+        time-shifted (lagged) copies, then solves a ridge regression
+        to remove the artifact subspace from the target channels.
+
+        Parameters
+        ----------
+        raw : mne.io.BaseRaw
+            Raw data to process.
+        n_lags : int
+            Number of past lags to include (lag-1 … lag-n_lags).
+
+        Returns
+        -------
+        raw_clean : mne.io.BaseRaw
+            Cleaned raw data.
+        """
+        # --- resolve channel indices ---
+        mag_idx = _picks_to_idx(raw.info, self.cfg.ch_types[0])
+        pred_idx = _picks_to_idx(raw.info, self.cfg._regress_preds)
+
+        # --- build delay-embedded design matrix ---
+        pred_data = raw.get_data(picks=pred_idx)  # (n_pred, n_times)
+        n_pred, n_times = pred_data.shape
+
+        embedded = [pred_data]  # lag-0
+        for lag in range(1, n_lags + 1):
+            shifted = np.zeros_like(pred_data)
+            shifted[:, lag:] = pred_data[:, :-lag]
+            embedded.append(shifted)
+
+        X = np.vstack(embedded)  # (n_pred * (n_lags + 1), n_times)
+        del embedded, pred_data
+
+        # mean-center each predictor row
+        X -= X.mean(axis=1, keepdims=True)
+
+        n_features = X.shape[0]
+        self.log(f"  Design matrix: {n_features} features x {n_times} samples")
+
+        # --- ridge regression ---
+        cov_xx = X @ X.T  # (n_features, n_features)
+        alpha = 1e-6 * np.trace(cov_xx) / n_features
+        cov_xx[np.diag_indices_from(cov_xx)] += alpha
+
+        raw_data = raw.get_data().copy()
+        target = raw_data[mag_idx, :]  # (n_target, n_times)
+
+        cov_xy = X @ target.T  # (n_features, n_target)
+        beta = np.linalg.solve(cov_xx, cov_xy)  # (n_features, n_target)
+
+        # subtract predicted artifact
+        raw_data[mag_idx, :] -= beta.T @ X
+
+        raw_clean = mne.io.RawArray(raw_data, raw.info)
+        del raw_data, X, beta
 
         return raw_clean
 
     def _regress_timevarying(self, raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
-        """Time-varying (sliding window) reference regression.
+        """Time-varying (sliding window) regression.
 
         Computes regression weights in overlapping windows to handle
-        non-stationary environmental noise. Uses QR decomposition for
-        efficient computation with ridge regularization.
+        non-stationary noise. Uses QR decomposition for efficient
+        computation with ridge regularization.
 
         Parameters
         ----------
@@ -324,22 +395,22 @@ class RegressReferenceAnalysis(BaseAnalysis):
         raw_data = raw.get_data()
         info = raw.info
 
-        # Prepare reference data
-        ref_data = self._prepare_reference_data(raw)
+        # Prepare predictor data
+        pred_data = self._prepare_predictor_data(raw)
 
         # Get channel indices and dimensions
         mag_idx = _picks_to_idx(info, self.cfg.ch_types[0])
         n_channels, n_times = raw_data.shape
-        n_ref, _ = ref_data.shape
+        n_pred, _ = pred_data.shape
         sfreq = info["sfreq"]
 
         # Window parameters
-        window_size = int(sfreq * getattr(self.cfg, "_regress_ref_window", 100.0))
+        window_size = int(sfreq * getattr(self.cfg, "_regress_window", 100.0))
         step_size = int(window_size // 2)  # 50% overlap
         n_windows = int(np.ceil((n_times - window_size) / step_size))
 
         # Ridge regression prior (regularization)
-        prior = np.diag(np.repeat([np.sqrt(1e-4)], n_ref))
+        prior = np.diag(np.repeat([np.sqrt(1e-4)], n_pred))
 
         self.log(
             f"Processing {n_windows} windows "
@@ -352,14 +423,14 @@ class RegressReferenceAnalysis(BaseAnalysis):
             end = min(start + window_size, n_times)
 
             # Build design matrix with ridge prior
-            data_x = ref_data[:, start:end].T
+            data_x = pred_data[:, start:end].T
             X = np.vstack([data_x, prior])
 
             # QR decomposition with column pivoting for numerical stability
             Q, _, _ = qr(X, pivoting=True, mode="economic")
             Qd = Q[: (end - start), :]  # Extract data portion
 
-            # Regress out reference from MEG channels
+            # Regress out predictors from MEG channels
             raw_data[mag_idx, start:end] -= (
                 raw_data[mag_idx, start:end] @ Qd
             ) @ Qd.T
@@ -370,36 +441,37 @@ class RegressReferenceAnalysis(BaseAnalysis):
 
         # Create cleaned Raw object with original info
         raw_clean = mne.io.RawArray(raw_data, info)
-        del raw_data, ref_data
+        del raw_data, pred_data
 
         return raw_clean
 
-    def _prepare_reference_data(self, raw: mne.io.BaseRaw) -> np.ndarray:
-        """Prepare reference channel data for regression.
+    def _prepare_predictor_data(self, raw: mne.io.BaseRaw) -> np.ndarray:
+        """Prepare predictor channel data for regression.
 
-        If _regress_ref_freqs is set, filters reference channels in
-        frequency bands. Otherwise, uses raw reference data plus
+        If ``_regress_freqs`` is set, filters predictor channels in
+        frequency bands. Otherwise, uses raw predictor data plus
         squared values to capture nonlinear relationships.
 
         Parameters
         ----------
         raw : mne.io.BaseRaw
-            Raw data containing reference channels.
+            Raw data containing the predictor channels.
 
         Returns
         -------
-        ref_data : ndarray, shape (n_ref_features, n_times)
-            Prepared reference data, z-scored along time axis.
+        pred_data : ndarray, shape (n_pred_features, n_times)
+            Prepared predictor data, z-scored along time axis.
         """
-        freq_bands = getattr(self.cfg, "_regress_ref_freqs", None)
+        preds = self.cfg._regress_preds
+        freq_bands = getattr(self.cfg, "_regress_freqs", None)
 
         if freq_bands is not None:
-            # Filter reference in multiple frequency bands
-            ref_data_list = []
+            # Filter predictors in multiple frequency bands
+            pred_data_list = []
             for l_freq, h_freq in freq_bands:
-                ref_filt = (
+                pred_filt = (
                     raw.copy()
-                    .pick("ref_meg")
+                    .pick(preds)
                     .filter(
                         l_freq=l_freq,
                         h_freq=h_freq,
@@ -407,20 +479,20 @@ class RegressReferenceAnalysis(BaseAnalysis):
                         h_trans_bandwidth=5.0,
                     )
                 )
-                ref_data_list.append(ref_filt.get_data(picks="ref_meg"))
-                del ref_filt
+                pred_data_list.append(pred_filt.get_data(picks=preds))
+                del pred_filt
         else:
-            # Use raw reference + squared (captures nonlinearity)
-            ref_raw = raw.get_data(picks="ref_meg")
-            ref_raw -= np.mean(ref_raw, axis=1, keepdims=True)
-            ref_data_list = [ref_raw, ref_raw**2]
-            del ref_raw
+            # Use raw predictors + squared (captures nonlinearity)
+            pred_raw = raw.get_data(picks=preds)
+            pred_raw -= np.mean(pred_raw, axis=1, keepdims=True)
+            pred_data_list = [pred_raw, pred_raw**2]
+            del pred_raw
 
         # Stack and z-score normalize
-        ref_data = stats.zscore(np.vstack(ref_data_list), axis=1)
-        del ref_data_list
+        pred_data = stats.zscore(np.vstack(pred_data_list), axis=1)
+        del pred_data_list
 
-        return ref_data
+        return pred_data
 
     def _plot_psd_comparison(
         self, raw_before: mne.io.BaseRaw, raw_after: mne.io.BaseRaw
@@ -535,7 +607,7 @@ def run(cfg: SimpleNamespace) -> None:
     cfg : SimpleNamespace
         Loaded configuration object.
     """
-    analysis = RegressReferenceAnalysis(cfg)
+    analysis = RegressAnalysis(cfg)
 
     if not analysis.is_enabled():
         print(f"\n[{analysis.ANALYSIS_NAME}] Disabled in configuration; exiting")

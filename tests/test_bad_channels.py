@@ -122,42 +122,44 @@ class TestBadChannelsRun:
 # ---------------------------------------------------------------------------
 
 class TestBadChannelsLoadData:
-    """Test load_data with mocked mne_bids calls."""
+    """Test load_data with mocked path-resolution calls."""
 
-    @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_load_single_task(self, mock_bids, raw_meg, bad_ch_cfg):
-        """load_data should call find_matching_paths and read_raw_bids."""
+    @patch("custom.preprocessing.bad_channels.read_raw_bids_with_retry")
+    @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
+    def test_load_single_task(self, mock_find, mock_read, raw_meg, bad_ch_cfg):
+        """load_data should resolve input paths and read raw."""
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_find.return_value = [mock_bp]
+        mock_read.return_value = raw_meg
 
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         data = analysis.load_data()
 
         assert bad_ch_cfg.task in data
         assert data[bad_ch_cfg.task] is raw_meg
-        mock_bids.find_matching_paths.assert_called_once()
-        mock_bids.read_raw_bids.assert_called_once()
+        mock_find.assert_called_once()
+        mock_read.assert_called_once()
 
-    @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_load_with_empty_room(self, mock_bids, raw_meg, bad_ch_cfg):
+    @patch("custom.preprocessing.bad_channels.read_raw_bids_with_retry")
+    @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
+    def test_load_with_empty_room(self, mock_find, mock_read, raw_meg, bad_ch_cfg):
         """When process_empty_room=True, load noise + task."""
         bad_ch_cfg.process_empty_room = True
         mock_bp = MagicMock()
-        mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_find.return_value = [mock_bp]
+        mock_read.return_value = raw_meg
 
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         data = analysis.load_data()
 
         assert "noise" in data
         assert bad_ch_cfg.task in data
-        assert mock_bids.find_matching_paths.call_count == 2
+        assert mock_find.call_count == 2
 
-    @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_load_missing_task_raises(self, mock_bids, bad_ch_cfg):
+    @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
+    def test_load_missing_task_raises(self, mock_find, bad_ch_cfg):
         """load_data raises FileNotFoundError if no paths found."""
-        mock_bids.find_matching_paths.return_value = []
+        mock_find.return_value = []
 
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         with pytest.raises(FileNotFoundError, match="No raw data"):
@@ -169,14 +171,19 @@ class TestBadChannelsLoadData:
 # ---------------------------------------------------------------------------
 
 class TestBadChannelsSaveResults:
-    """Test save_results merges bads and calls write_raw_bids."""
+    """Test save_results merges bads and calls write_raw_bids_custom_step."""
 
+    @patch("custom.preprocessing.bad_channels.write_raw_bids_custom_step")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_save_merges_bads_into_raw(self, mock_bids, raw_meg, bad_ch_cfg):
+    @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
+    def test_save_merges_bads_into_raw(
+        self, mock_find, mock_bids, mock_write, raw_meg, bad_ch_cfg
+    ):
         """save_results should merge detected bads into raw.info['bads']."""
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
+        mock_write.return_value = mock_bp  # output bp
 
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         results = {bad_ch_cfg.task: raw_meg, "bads": ["MEG001", "MEG003"]}
@@ -185,23 +192,28 @@ class TestBadChannelsSaveResults:
         # Verify bads were merged into raw.info
         assert "MEG001" in raw_meg.info["bads"]
         assert "MEG003" in raw_meg.info["bads"]
-        # Verify mark_channels was called
+        # Verify mark_channels was called (after the redirected write)
         mock_bids.mark_channels.assert_called()
-        # Verify write_raw_bids was called
-        mock_bids.write_raw_bids.assert_called()
+        # Verify write_raw_bids_custom_step was called
+        mock_write.assert_called()
 
+    @patch("custom.preprocessing.bad_channels.write_raw_bids_custom_step")
     @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_save_no_bads_still_writes(self, mock_bids, raw_meg, bad_ch_cfg):
+    @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
+    def test_save_no_bads_still_writes(
+        self, mock_find, mock_bids, mock_write, raw_meg, bad_ch_cfg
+    ):
         """save_results with empty bads should still write raw."""
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
+        mock_find.return_value = [mock_bp]
+        mock_write.return_value = mock_bp
 
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         results = {bad_ch_cfg.task: raw_meg, "bads": []}
         analysis.save_results(results)
 
-        mock_bids.write_raw_bids.assert_called_once()
+        mock_write.assert_called_once()
         # mark_channels should NOT be called with empty bads
         mock_bids.mark_channels.assert_not_called()
 
@@ -213,16 +225,21 @@ class TestBadChannelsSaveResults:
 class TestBadChannelsModuleRun:
     """Test the module-level run(cfg) function."""
 
-    @patch("custom.preprocessing.bad_channels.mne_bids")
-    def test_run_calls_execute(self, mock_bids, raw_meg, bad_ch_cfg):
+    @patch("custom.preprocessing.bad_channels.write_raw_bids_custom_step")
+    @patch("custom.preprocessing.bad_channels.read_raw_bids_with_retry")
+    @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
+    def test_run_calls_execute(
+        self, mock_find, mock_read, mock_write, raw_meg, bad_ch_cfg
+    ):
         """run(cfg) should construct the analysis and call execute."""
         mock_bp = MagicMock()
         mock_bp.split = None
-        mock_bids.find_matching_paths.return_value = [mock_bp]
-        mock_bids.read_raw_bids.return_value = raw_meg
+        mock_find.return_value = [mock_bp]
+        mock_read.return_value = raw_meg
+        mock_write.return_value = mock_bp
 
         # This exercises: run(cfg) -> is_enabled -> execute -> load/run/save
         run(bad_ch_cfg)
 
-        mock_bids.read_raw_bids.assert_called()
-        mock_bids.write_raw_bids.assert_called()
+        mock_read.assert_called()
+        mock_write.assert_called()
