@@ -60,22 +60,26 @@ import pandas as pd
 
 
 def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
-    """Read raw BIDS data with retry logic for NFS race conditions.
+    """Read raw BIDS data, dispatching to the right reader.
 
-    When multiple SLURM jobs run in parallel, ``mne_bids.read_raw_bids``
-    can fail with an ``IndexError`` because a shared TSV file
-    (``participants.tsv``, ``scans.tsv``, etc.) is caught mid-write by
-    another job.  This wrapper retries with exponential back-off.
+    Derivative files (``suffix="raw"``) are loaded directly with
+    ``mne.io.read_raw_fif``, following the mne-bids-pipeline convention
+    (see ``_04_frequency_filter.py``).  This avoids ``scans.tsv``
+    validation and sidecar-suffix conflicts introduced by ``write_raw_bids``.
+
+    Source files (``suffix="meg"``) use ``mne_bids.read_raw_bids`` with
+    retry logic for NFS race conditions.
 
     Parameters
     ----------
     bids_path : mne_bids.BIDSPath
-        Path to the BIDS dataset.
+        Path to the BIDS file.  The ``suffix`` attribute determines the
+        reader: ``"raw"`` → ``read_raw_fif``, anything else → ``read_raw_bids``.
     extra_params : dict, optional
         Extra parameters forwarded to the raw reader (e.g.
         ``{"preload": True}``).
     max_retries : int
-        Maximum number of attempts (default 10).
+        Maximum number of attempts for ``read_raw_bids`` (default 10).
 
     Returns
     -------
@@ -85,6 +89,11 @@ def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
     if extra_params is None:
         extra_params = {}
 
+    # Derivative files — load directly; no BIDS sidecar validation needed.
+    if getattr(bids_path, "suffix", None) == "raw":
+        return mne.io.read_raw_fif(bids_path.fpath, **extra_params)
+
+    # Source files — retry on transient NFS read errors.
     for attempt in range(max_retries):
         try:
             return mne_bids.read_raw_bids(
@@ -379,33 +388,34 @@ def get_custom_output_path(
     )
 
 
-def _delete_meg_fif_and_fix_scans(write_bp: BIDSPath) -> None:
-    """Delete _meg.fif data files written by write_raw_bids and update scans.tsv.
+def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
+    """Copy BIDS sidecar files from source to output on first write.
 
-    ``write_raw_bids`` always forces ``suffix=datatype`` ("meg") and is used only
-    for BIDS sidecar generation.  The actual FIF data is re-saved to ``_raw.fif``
-    by ``raw.save()`` so that FIF split-file headers correctly reference the next
-    split as ``_split-02_raw.fif``.  This function removes the ``_meg.fif`` data
-    files produced by ``write_raw_bids`` and updates ``scans.tsv`` to reference
-    the ``_raw.fif`` files written by ``raw.save()``.
+    Copies ``_channels.tsv``, ``_meg.json``, ``_events.tsv``, and
+    ``_events.json`` from the source location to the output location.
+    Each sidecar is only copied if it exists at the source and does not yet
+    exist at the destination, making this safe to call on every save.
+
+    The split entity is stripped from both sides so the lookup is correct
+    regardless of whether source_bp refers to a split file.
     """
-    parent = write_bp.fpath.parent
-    stem = write_bp.fpath.stem  # e.g. "sub-007_…_proc-init_meg"
-    if not stem.endswith("_meg"):
-        return
-    prefix = stem[: -len("_meg")]  # "sub-007_…_proc-init"
-
-    deleted: list[str] = []
-    for fif_file in sorted(parent.glob(f"{prefix}*_meg.fif")):
-        deleted.append(fif_file.name)
-        fif_file.unlink()  # works for both real files and symlinks
-
-    session_dir = parent.parent
-    for scans_path in session_dir.glob("*_scans.tsv"):
-        text = scans_path.read_text(encoding="utf-8-sig")
-        for meg_name in deleted:
-            text = text.replace(meg_name, meg_name.replace("_meg.fif", "_raw.fif"))
-        scans_path.write_text(text, encoding="utf-8-sig")
+    sidecars = [
+        ("channels", ".tsv"),
+        ("meg", ".json"),
+        ("events", ".tsv"),
+        ("events", ".json"),
+    ]
+    for suffix, ext in sidecars:
+        src = source_bp.copy().update(
+            suffix=suffix, extension=ext, split=None, check=False
+        ).fpath
+        dst = output_bp.copy().update(
+            suffix=suffix, extension=ext, split=None, check=False
+        ).fpath
+        if src == dst or not src.exists() or dst.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
 
 
 def _seed_events_files(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
@@ -445,17 +455,15 @@ def write_raw_bids_custom_step(
 ) -> BIDSPath:
     """Write raw data, redirecting to deriv_root when ``custom_proc`` is set.
 
-    Encapsulates the common save pattern used by every custom
-    preprocessing step:
+    **Derivative mode** (``custom_proc`` is set):
+    Follows the mne-bids-pipeline save pattern (see ``_04_frequency_filter.py``):
+    seeds BIDS sidecars from the source on the first write, then saves the FIF
+    data with ``raw.save(split_naming="bids")``.  This avoids the
+    ``suffix=datatype`` override in ``write_raw_bids`` and all associated
+    ``scans.tsv`` conflicts.
 
-    1. Resolve the output path using :func:`get_custom_output_path`.
-    2. Seed the destination's events files from the source on the first
-       redirected write so :func:`write_raw_bids_preserve_events` has
-       canonical events to preserve.
-    3. Clear ``output_bp.split`` so the write goes to the base file.
-    4. Forward the ``empty_room`` association (if provided) and any
-       extra keyword arguments to
-       :func:`write_raw_bids_preserve_events`.
+    **Legacy mode** (``custom_proc`` is None):
+    Writes back to the source location via :func:`write_raw_bids_preserve_events`.
 
     Parameters
     ----------
@@ -464,55 +472,37 @@ def write_raw_bids_custom_step(
     cfg : SimpleNamespace
         Configuration object.
     source_bp : BIDSPath
-        Path the data was read from (used as the base for output path
-        construction and event-file seeding).
+        Path the data was read from (used as base for output path and
+        sidecar seeding).
     empty_room : BIDSPath or None
-        Optional empty-room association.  Should refer to the noise
-        recording at the *output* location so the BIDS association is
-        consistent with where the data is being written.
+        Empty-room association.  Only used in legacy mode; silently ignored
+        in derivative mode (the ``emptyroommatch.json`` is seeded once from
+        the source and not updated thereafter).
     **extra_write_kwargs
-        Additional keyword arguments forwarded to
-        :func:`write_raw_bids_preserve_events` (e.g. ``format="FIF"``).
-        ``raw``, ``bids_path``, ``allow_preload`` and ``overwrite`` have
-        defaults but may be overridden.
+        Extra keyword arguments forwarded to
+        :func:`write_raw_bids_preserve_events` in legacy mode only.
 
     Returns
     -------
     output_bp : BIDSPath
-        The BIDSPath the data was written to.
+        The BIDSPath the data was written to (base path, split=None).
     """
     output_bp = get_custom_output_path(cfg, source_bp)
     proc = get_custom_proc(cfg)
 
     if proc is not None:
-        # Derivative mode: write_raw_bids forces suffix=datatype ("meg") regardless
-        # of the bids_path suffix.  We use it only for BIDS sidecar generation
-        # (_meg.json, _channels.tsv, etc.), then re-save the data directly with
-        # raw.save() so that FIF split-file headers reference _split-02_raw.fif
-        # instead of _split-02_meg.fif.  raw is already in memory, so this is one
-        # extra write pass with no extra read.
-        write_bp = output_bp.copy().update(suffix="meg", check=False)
-        _seed_events_files(source_bp, write_bp)
-        write_bp.split = None
+        # Derivative mode — follow the mne-bids-pipeline save pattern:
+        #   - Seed BIDS sidecars (channels.tsv, meg.json, events.*) from the
+        #     source on first write; subsequent writes are a no-op here.
+        #   - Save FIF data with raw.save() + split_naming="bids" so that
+        #     FIF split-file headers reference _split-02_raw.fif, not _meg.fif.
+        #     This avoids all scans.tsv / suffix conflicts from write_raw_bids.
+        # See _04_frequency_filter.py in mne-bids-pipeline for the same pattern.
+        _seed_sidecars(source_bp, output_bp)
 
-        write_kwargs = dict(
-            raw=raw,
-            bids_path=write_bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-        if empty_room is not None:
-            write_kwargs["empty_room"] = empty_room
-        write_kwargs.update(extra_write_kwargs)
-        write_raw_bids_preserve_events(**write_kwargs)
-
-        # Re-save data to _raw.fif with correct FIF split headers.
         output_bp.split = None
-        raw.save(output_bp.fpath, overwrite=True)
-
-        # Remove _meg.fif data files (sidecars are kept) and update scans.tsv.
-        _delete_meg_fif_and_fix_scans(write_bp)
+        output_bp.fpath.parent.mkdir(parents=True, exist_ok=True)
+        raw.save(output_bp.fpath, overwrite=True, split_naming="bids")
     else:
         # Legacy mode: write back to the source location unchanged.
         _seed_events_files(source_bp, output_bp)
