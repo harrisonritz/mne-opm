@@ -172,7 +172,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
 
         data["bids_path"] = paths[0]
         data["raw"] = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
-        self.log(f"Loaded raw data for task={self.cfg.task}")
+        self.log(f"Loaded raw data for task={self.cfg.task} at {paths[0].fpath}")
 
         # Load noise data (required for ZCA)
         paths_noise = find_custom_input_paths(self.cfg, task="noise")
@@ -182,17 +182,17 @@ class ZCAFilterAnalysis(BaseAnalysis):
                 "for computing the noise covariance matrix."
             )
         data["noise"] = read_raw_bids_with_retry(paths_noise[0], extra_params={"preload": True})
-        self.log("Loaded noise recording")
+        self.log(f"Loaded noise recording at {paths_noise[0].fpath}")
 
         # Load BEM solution
         bem_path = self._find_bem_solution(fs_subject)
         data["bem"] = mne.read_bem_solution(bem_path)
-        self.log(f"Loaded BEM solution: {bem_path.name}")
+        self.log(f"Loaded BEM solution: {bem_path.name} at {bem_path.parent}")
 
         # Load source space
         src_path = self._find_source_space(fs_subject)
         data["src"] = mne.read_source_spaces(src_path)
-        self.log(f"Loaded source space: {src_path.name}")
+        self.log(f"Loaded source space: {src_path.name} at {src_path.parent}")
 
         # Load head-MRI transform
         data["trans"] = mne_bids.get_head_mri_trans(
@@ -271,7 +271,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
             if task == "noise":
                 er_output_bp = output_bp
 
-            self.log(f"Saved task={task}")
+            self.log(f"Saved task={task} → {output_bp.fpath}")
 
     def _get_fs_subject(self) -> str:
         """Get FreeSurfer subject name.

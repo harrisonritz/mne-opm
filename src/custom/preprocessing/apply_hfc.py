@@ -116,14 +116,14 @@ class ApplyHFCAnalysis(BaseAnalysis):
         if not paths:
             raise FileNotFoundError(f"No raw data found for task={self.cfg.task}")
         data[self.cfg.task] = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
-        self.log(f"Loaded raw data for task={self.cfg.task}")
+        self.log(f"Loaded raw data for task={self.cfg.task} at {paths[0].fpath}")
 
         # Optionally load noise
         if getattr(self.cfg, "process_empty_room", False):
             paths_noise = find_custom_input_paths(self.cfg, task="noise")
             if paths_noise:
                 data["noise"] = read_raw_bids_with_retry(paths_noise[0], extra_params={"preload": True})
-                self.log("Loaded raw data for task=noise")
+                self.log(f"Loaded raw data for task=noise at {paths_noise[0].fpath}")
 
         return data
 
@@ -190,7 +190,7 @@ class ApplyHFCAnalysis(BaseAnalysis):
             if task == "noise":
                 er_output_bp = output_bp
 
-            self.log(f"Saved task={task}")
+            self.log(f"Saved task={task} → {output_bp.fpath}")
 
     def _apply_hfc(
         self,

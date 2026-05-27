@@ -323,6 +323,7 @@ def find_custom_input_paths(
             deriv_paths = mne_bids.find_matching_paths(
                 root=deriv_root,
                 processings=proc,
+                suffixes="raw",
                 check=False,
                 **common,
             )
@@ -373,8 +374,38 @@ def get_custom_output_path(
     return source_bp.copy().update(
         root=cfg.deriv_root,
         processing=proc,
+        suffix="raw",
         check=False,
     )
+
+
+def _delete_meg_fif_and_fix_scans(write_bp: BIDSPath) -> None:
+    """Delete _meg.fif data files written by write_raw_bids and update scans.tsv.
+
+    ``write_raw_bids`` always forces ``suffix=datatype`` ("meg") and is used only
+    for BIDS sidecar generation.  The actual FIF data is re-saved to ``_raw.fif``
+    by ``raw.save()`` so that FIF split-file headers correctly reference the next
+    split as ``_split-02_raw.fif``.  This function removes the ``_meg.fif`` data
+    files produced by ``write_raw_bids`` and updates ``scans.tsv`` to reference
+    the ``_raw.fif`` files written by ``raw.save()``.
+    """
+    parent = write_bp.fpath.parent
+    stem = write_bp.fpath.stem  # e.g. "sub-007_…_proc-init_meg"
+    if not stem.endswith("_meg"):
+        return
+    prefix = stem[: -len("_meg")]  # "sub-007_…_proc-init"
+
+    deleted: list[str] = []
+    for fif_file in sorted(parent.glob(f"{prefix}*_meg.fif")):
+        deleted.append(fif_file.name)
+        fif_file.unlink()  # works for both real files and symlinks
+
+    session_dir = parent.parent
+    for scans_path in session_dir.glob("*_scans.tsv"):
+        text = scans_path.read_text(encoding="utf-8-sig")
+        for meg_name in deleted:
+            text = text.replace(meg_name, meg_name.replace("_meg.fif", "_raw.fif"))
+        scans_path.write_text(text, encoding="utf-8-sig")
 
 
 def _seed_events_files(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
@@ -451,20 +482,54 @@ def write_raw_bids_custom_step(
         The BIDSPath the data was written to.
     """
     output_bp = get_custom_output_path(cfg, source_bp)
-    _seed_events_files(source_bp, output_bp)
-    output_bp.split = None
+    proc = get_custom_proc(cfg)
 
-    write_kwargs = dict(
-        raw=raw,
-        bids_path=output_bp,
-        allow_preload=True,
-        overwrite=True,
-        format="FIF",
-    )
-    if empty_room is not None:
-        write_kwargs["empty_room"] = empty_room
-    write_kwargs.update(extra_write_kwargs)
-    write_raw_bids_preserve_events(**write_kwargs)
+    if proc is not None:
+        # Derivative mode: write_raw_bids forces suffix=datatype ("meg") regardless
+        # of the bids_path suffix.  We use it only for BIDS sidecar generation
+        # (_meg.json, _channels.tsv, etc.), then re-save the data directly with
+        # raw.save() so that FIF split-file headers reference _split-02_raw.fif
+        # instead of _split-02_meg.fif.  raw is already in memory, so this is one
+        # extra write pass with no extra read.
+        write_bp = output_bp.copy().update(suffix="meg", check=False)
+        _seed_events_files(source_bp, write_bp)
+        write_bp.split = None
+
+        write_kwargs = dict(
+            raw=raw,
+            bids_path=write_bp,
+            allow_preload=True,
+            overwrite=True,
+            format="FIF",
+        )
+        if empty_room is not None:
+            write_kwargs["empty_room"] = empty_room
+        write_kwargs.update(extra_write_kwargs)
+        write_raw_bids_preserve_events(**write_kwargs)
+
+        # Re-save data to _raw.fif with correct FIF split headers.
+        output_bp.split = None
+        raw.save(output_bp.fpath, overwrite=True)
+
+        # Remove _meg.fif data files (sidecars are kept) and update scans.tsv.
+        _delete_meg_fif_and_fix_scans(write_bp)
+    else:
+        # Legacy mode: write back to the source location unchanged.
+        _seed_events_files(source_bp, output_bp)
+        output_bp.split = None
+
+        write_kwargs = dict(
+            raw=raw,
+            bids_path=output_bp,
+            allow_preload=True,
+            overwrite=True,
+            format="FIF",
+        )
+        if empty_room is not None:
+            write_kwargs["empty_room"] = empty_room
+        write_kwargs.update(extra_write_kwargs)
+        write_raw_bids_preserve_events(**write_kwargs)
+
     return output_bp
 
 

@@ -149,7 +149,7 @@ class RegressAnalysis(BaseAnalysis):
 
             raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
             data[task] = raw
-            self.log(f"Loaded raw data for task={task}")
+            self.log(f"Loaded raw data for task={task} at {paths[0].fpath}")
 
         return data
 
@@ -209,7 +209,7 @@ class RegressAnalysis(BaseAnalysis):
             if task == "noise":
                 er_output_bp = output_bp
 
-            self.log(f"Saved task={task}")
+            self.log(f"Saved task={task} → {output_bp.fpath}")
 
     def _regress(
         self, raw: mne.io.BaseRaw, is_noise: bool = False

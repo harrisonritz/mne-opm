@@ -125,7 +125,7 @@ class BadChannelsAnalysis(BaseAnalysis):
 
             raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
             data[task] = raw
-            self.log(f"Loaded raw data for task={task}")
+            self.log(f"Loaded raw data for task={task} at {paths[0].fpath}")
 
         return data
 
@@ -217,7 +217,7 @@ class BadChannelsAnalysis(BaseAnalysis):
             if task == "noise":
                 er_output_bp = output_bp
 
-            self.log(f"Saved task={task}")
+            self.log(f"Saved task={task} → {output_bp.fpath}")
 
     def _detect_bad_channels(self, raw: mne.io.BaseRaw) -> list[str]:
         """Detect bad channels in raw data.
