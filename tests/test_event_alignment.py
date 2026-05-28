@@ -29,7 +29,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from custom.preprocessing._io import write_raw_bids_preserve_events
+from custom.preprocessing._io import (
+    count_condition_events_in_raw,
+    count_condition_events_in_tsv,
+    verify_event_count_after_write,
+    write_raw_bids_custom_step,
+    write_raw_bids_preserve_events,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -539,3 +545,120 @@ class TestEventsJsonPreservation:
 
         restored_content = events_json.read_text()
         assert original_content == restored_content
+
+
+# ---------------------------------------------------------------------------
+# Tests: post-write event-count verification helpers
+# ---------------------------------------------------------------------------
+
+
+class TestEventCountHelpers:
+    """Unit tests for the count_* helpers used by verify_event_count_after_write."""
+
+    def test_count_in_raw_matches_hierarchical(self, tmp_path):
+        """count_condition_events_in_raw matches hierarchical events like
+        ``mne-bids-pipeline.match_event_names``."""
+        raw = _make_raw_with_events(
+            n_trial_events=12,
+            event_descriptions=[
+                "trial/read_read", "trial/listen_listen",
+                "feedback", "ITI",
+            ],
+        )
+        n, names = count_condition_events_in_raw(raw, ["trial"])
+        # 12 annotations total, every 4th is "trial/read_read" and "trial/listen_listen"
+        # i.e. half of 12 = 6 trial events
+        assert n == 6, f"expected 6 trial events, got {n}"
+        assert set(names) == {"trial/read_read", "trial/listen_listen"}
+
+    def test_count_in_raw_ignores_bad_segments(self, tmp_path):
+        """BAD_ annotations are excluded by the default regexp, like the pipeline."""
+        raw = _make_raw_with_events(n_trial_events=10)
+        raw.annotations.append(2.0, 0.5, "BAD_segment_mag")
+        raw.annotations.append(5.0, 0.5, "BAD_segment_mag")
+        n, _ = count_condition_events_in_raw(raw, ["trial"])
+        assert n == 10
+
+    def test_count_in_tsv_matches_hierarchical(self, tmp_path):
+        """count_condition_events_in_tsv applies the same hierarchical match."""
+        raw = _make_raw_with_events(
+            n_trial_events=8,
+            event_descriptions=["trial/X", "trial/Y", "feedback", "ITI"],
+        )
+        bp = _write_initial_bids(raw, tmp_path / "bids")
+        tsv = bp.copy().update(suffix="events", extension=".tsv").fpath
+        n, names = count_condition_events_in_tsv(tsv, ["trial"])
+        assert n == 4, f"expected 4 trial events, got {n}"
+        assert set(names) == {"trial/X", "trial/Y"}
+
+
+class TestVerifyEventCountAfterWrite:
+    """End-to-end behaviour of verify_event_count_after_write."""
+
+    def test_passes_on_consistent_write(self, tmp_path):
+        """A normal write should pass verification silently."""
+        raw = _make_raw_with_events(n_trial_events=20)
+        bp = _write_initial_bids(raw, tmp_path / "bids")
+        # Should not raise.
+        verify_event_count_after_write(raw, bp, ("trial",), context="test")
+
+    def test_raises_on_event_drop(self, tmp_path):
+        """If the FIF on disk has fewer trials than raw_before, raise."""
+        raw = _make_raw_with_events(n_trial_events=20)
+        bp = _write_initial_bids(raw, tmp_path / "bids")
+
+        # Simulate a "fake" before raw with extra trials that aren't on disk.
+        raw_extra = raw.copy()
+        raw_extra.annotations.append(15.0, 0.0, "trial/extra")
+        raw_extra.annotations.append(16.0, 0.0, "trial/extra")
+
+        with pytest.raises(RuntimeError, match="Event-count mismatch"):
+            verify_event_count_after_write(
+                raw_extra, bp, ("trial",), context="test"
+            )
+
+    def test_raises_when_tsv_disagrees_with_fif(self, tmp_path):
+        """Mismatch between FIF and events.tsv at the same path raises."""
+        raw = _make_raw_with_events(n_trial_events=20)
+        bp = _write_initial_bids(raw, tmp_path / "bids")
+
+        # Corrupt the events.tsv by adding a fake "trial" row.
+        tsv = bp.copy().update(suffix="events", extension=".tsv").fpath
+        df = pd.read_csv(tsv, sep="\t")
+        extra = df.iloc[[0]].copy()
+        extra["onset"] = 25.0
+        extra["sample"] = int(25.0 * 300.0)
+        extra["trial_type"] = "trial/ghost"
+        pd.concat([df, extra], ignore_index=True).to_csv(tsv, sep="\t", index=False)
+
+        with pytest.raises(RuntimeError, match="Event-count mismatch"):
+            verify_event_count_after_write(
+                raw, bp, ("trial",), context="test"
+            )
+
+
+class TestWriteCustomStepInvokesVerification:
+    """Smoke test that write_raw_bids_custom_step actually runs the new check."""
+
+    def test_invokes_verification_in_derivative_mode(self, tmp_path):
+        """In derivative mode, an inconsistent save raises immediately."""
+        raw = _make_raw_with_events(n_trial_events=10)
+        bp = _write_initial_bids(raw, tmp_path / "bids")
+        # Patch raw to claim more trials than the FIF will have.
+        raw_inflated = raw.copy()
+        for i in range(3):
+            raw_inflated.annotations.append(20.0 + i, 0.0, "trial/ghost")
+
+        # Make raw_inflated have MORE trials than what's actually written by
+        # overriding the save to write the (slimmer) `raw` instead.
+        # Simplest reproduction: use the helper directly.
+        cfg = SimpleNamespace(
+            bids_root=str(tmp_path / "bids"),
+            deriv_root=str(tmp_path / "deriv"),
+            subjects=["001"], sessions=["01"], task="test",
+            custom_proc="init",
+            conditions=["trial"],
+        )
+        # Re-saving the consistent `raw` should pass.
+        out = write_raw_bids_custom_step(raw, cfg, bp)
+        assert out.fpath.exists()

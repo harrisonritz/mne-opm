@@ -61,6 +61,9 @@ from ._io import (
     find_custom_input_paths,
     get_custom_output_path,
     write_raw_bids_custom_step,
+    count_condition_events_in_raw,
+    count_condition_events_in_tsv,
+    verify_event_count_after_write,
 )
 from ._bids_utils import get_bids_path
 
@@ -88,4 +91,7 @@ __all__ = [
     "find_custom_input_paths",
     "get_custom_output_path",
     "write_raw_bids_custom_step",
+    "count_condition_events_in_raw",
+    "count_condition_events_in_tsv",
+    "verify_event_count_after_write",
 ]
