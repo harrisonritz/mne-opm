@@ -54,6 +54,7 @@ from typing import Optional
 
 import mne
 import mne_bids
+import numpy as np
 from mne_bids import BIDSPath
 # from filelock import SoftFileLock, Timeout
 import pandas as pd
@@ -175,6 +176,132 @@ def count_condition_events_in_tsv(events_tsv_path, conditions):
 
     n_events = int(descriptions.isin(matched_names).sum())
     return n_events, matched_names
+
+
+def trim_raw_to_events_tsv(
+    raw,
+    events_tsv_path,
+    conditions=("trial",),
+    *,
+    tol_sec: float = 0.02,
+    context: str = "",
+) -> int:
+    """Remove condition-matching annotations from *raw* that are absent from
+    the events.tsv.
+
+    Recordings sometimes start or end while triggers are still firing,
+    producing extra condition annotations in the raw that have no
+    corresponding row in the authoritative BIDS events.tsv.  Left
+    uncorrected, these orphan annotations cause the derivative FIF to carry
+    more events than the metadata, breaking downstream metadata ↔ epochs
+    alignment.
+
+    This function greedily matches each events.tsv onset to the nearest
+    unmatched raw annotation of the same condition, then removes any
+    raw annotations that were not matched.
+
+    The raw is modified **in place** (only ``raw.annotations`` is changed).
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw object whose annotations will be trimmed.
+    events_tsv_path : str or Path
+        Path to a BIDS ``*_events.tsv`` file.  Used as the authoritative list
+        of condition onsets.
+    conditions : iterable of str
+        Condition names matched hierarchically (default ``('trial',)``).
+        Non-matching annotations are never removed.
+    tol_sec : float
+        Maximum onset difference (seconds) for two events to be considered
+        the same (default 0.02 s).
+    context : str
+        Short label for log messages.
+
+    Returns
+    -------
+    n_removed : int
+        Number of annotations removed from *raw*.
+
+    Raises
+    ------
+    RuntimeError
+        If, after trimming, *raw* has fewer condition annotations than the
+        events.tsv (which would indicate data loss, not just trailing
+        triggers).
+    """
+    events_tsv_path = Path(events_tsv_path)
+    if not events_tsv_path.exists():
+        return 0
+
+    tsv_n, tsv_matched = count_condition_events_in_tsv(events_tsv_path, conditions)
+    raw_n, matched_names = count_condition_events_in_raw(raw, conditions)
+
+    # If the tsv has no matching rows at all it may simply not exist yet or may
+    # not carry condition annotations — skip silently rather than treating every
+    # raw annotation as orphan.
+    if tsv_n == 0:
+        return 0
+
+    if raw_n == tsv_n:
+        return 0  # already aligned
+
+    prefix = f"[trim_raw_to_events_tsv{':' + context if context else ''}]"
+
+    if raw_n < tsv_n:
+        raise RuntimeError(
+            f"{prefix} raw has fewer condition events ({raw_n}) than "
+            f"events.tsv ({tsv_n}) — cannot trim; data may be missing."
+        )
+
+    # Build authoritative onset list from events.tsv.
+    events_df = pd.read_csv(events_tsv_path, sep="\t")
+    descriptions = events_df["trial_type"].astype(str)
+    tsv_cond_mask = descriptions.isin(matched_names)
+    tsv_onsets = events_df.loc[tsv_cond_mask, "onset"].to_numpy(dtype=float)
+
+    # Collect indices of condition-matching annotations in raw.
+    ann = raw.annotations
+    cond_ann_idx = np.array(
+        [i for i, d in enumerate(ann.description) if d in matched_names]
+    )
+    raw_onsets = ann.onset[cond_ann_idx]
+
+    # Greedy nearest-neighbour matching: each tsv_onset claims the closest
+    # unclaimed raw onset within tol_sec.
+    used = np.zeros(len(raw_onsets), dtype=bool)
+    for t_on in tsv_onsets:
+        dists = np.abs(raw_onsets - t_on)
+        dists[used] = np.inf
+        best = int(np.argmin(dists))
+        if dists[best] <= tol_sec:
+            used[best] = True
+
+    unmatched_local = np.where(~used)[0]
+    n_removed = len(unmatched_local)
+
+    if n_removed == 0:
+        return 0
+
+    # Build keep mask over ALL raw annotations.
+    unmatched_global = set(cond_ann_idx[unmatched_local])
+    keep_mask = np.array(
+        [i not in unmatched_global for i in range(len(ann))]
+    )
+    new_ann = mne.Annotations(
+        onset=ann.onset[keep_mask],
+        duration=ann.duration[keep_mask],
+        description=ann.description[keep_mask],
+        orig_time=ann.orig_time,
+    )
+    raw.set_annotations(new_ann)
+
+    print(
+        f"{prefix} removed {n_removed} orphan condition annotation(s) "
+        f"(raw had {raw_n}, events.tsv has {tsv_n}); "
+        f"raw now has {tsv_n} condition events."
+    )
+    return n_removed
 
 
 def verify_event_count_after_write(
@@ -691,9 +818,37 @@ def write_raw_bids_custom_step(
         # See _04_frequency_filter.py in mne-bids-pipeline for the same pattern.
         _seed_sidecars(source_bp, output_bp)
 
+        # Before writing, trim any condition annotations that are absent from
+        # the seeded events.tsv.  Recordings sometimes carry trailing or leading
+        # trigger events that were never part of the task (e.g. the recording
+        # started/stopped while triggers were firing).  These orphan annotations
+        # would make the derivative FIF disagree with the authoritative
+        # events.tsv, breaking metadata ↔ epochs alignment downstream.
+        task_name_for_trim = getattr(output_bp, "task", None) or ""
+        if not task_name_for_trim.startswith("noise"):
+            conditions_for_trim = tuple(
+                getattr(cfg, "conditions", ("trial",)) or ("trial",)
+            )
+            _events_tsv_for_trim = output_bp.copy().update(
+                suffix="events", extension=".tsv", split=None, check=False
+            ).fpath
+            trim_raw_to_events_tsv(
+                raw, _events_tsv_for_trim,
+                conditions=conditions_for_trim,
+                context=f"write_raw_bids_custom_step:{task_name_for_trim or '?'}",
+            )
+
         output_bp.split = None
         output_bp.fpath.parent.mkdir(parents=True, exist_ok=True)
         raw.save(output_bp.fpath, overwrite=True, split_naming="bids")
+
+        # With split_naming="bids", MNE writes _split-01_raw.fif (not the
+        # nominal unsplit path) when data is large enough to be split.
+        # Resolve the actual first file so verification and callers can find it.
+        if not output_bp.fpath.exists():
+            split01_bp = output_bp.copy().update(split="01", check=False)
+            if split01_bp.fpath.exists():
+                output_bp = split01_bp
     else:
         # Legacy mode: write back to the source location unchanged.
         _seed_events_files(source_bp, output_bp)

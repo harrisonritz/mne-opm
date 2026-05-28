@@ -121,7 +121,12 @@ def set_bids_params(config_path: str = "") -> SimpleNamespace:
 # ===========================================================================
 
 
-def _build_file_tree(directory: str, prefix: str = "", max_depth: int = 3) -> str:
+def _build_file_tree(
+    directory: str,
+    prefix: str = "",
+    max_depth: int = 3,
+    ignore: list[str] | None = ["*.dcm"],
+) -> str:
     """Build a visual file-tree string for *directory*.
 
     Parameters
@@ -132,19 +137,32 @@ def _build_file_tree(directory: str, prefix: str = "", max_depth: int = 3) -> st
         Line prefix for recursive indentation (internal use).
     max_depth : int
         Maximum depth of recursion.
+    ignore : list of str or None
+        Wildcard patterns (e.g. ``["*.dcm", "*.nii"]``) for files to skip.
+        Matched against the filename only using :func:`fnmatch.fnmatch`.
 
     Returns
     -------
     tree : str
         Multi-line string showing the directory structure.
     """
+    import fnmatch
+
     lines: list[str] = []
     dir_path = Path(directory)
 
     if not dir_path.is_dir():
         return f"  {prefix}{dir_path.name}/ [NOT FOUND]"
 
-    entries = sorted(dir_path.iterdir(), key=lambda p: (p.is_file(), p.name))
+    all_entries = sorted(dir_path.iterdir(), key=lambda p: (p.is_file(), p.name))
+    entries = [
+        e for e in all_entries
+        if not (
+            e.is_file()
+            and ignore
+            and any(fnmatch.fnmatch(e.name, pat) for pat in ignore)
+        )
+    ]
     for i, entry in enumerate(entries):
         connector = "└── " if i == len(entries) - 1 else "├── "
         if entry.is_dir():
@@ -152,7 +170,10 @@ def _build_file_tree(directory: str, prefix: str = "", max_depth: int = 3) -> st
             if max_depth > 1:
                 extension = "    " if i == len(entries) - 1 else "│   "
                 subtree = _build_file_tree(
-                    str(entry), prefix=prefix + extension, max_depth=max_depth - 1
+                    str(entry),
+                    prefix=prefix + extension,
+                    max_depth=max_depth - 1,
+                    ignore=ignore,
                 )
                 if subtree:
                     lines.append(subtree)
