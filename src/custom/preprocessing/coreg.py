@@ -96,7 +96,7 @@ class CoregAnalysis(BaseAnalysis):
     ANALYSIS_NAME = "coreg"
 
     # Default coregistration parameters
-    DEFAULT_HAIR_GROW: float = 5.0
+    DEFAULT_HAIR_GROW: float = 0.0
     """Default hair growth offset in mm."""
 
     DEFAULT_OMIT_DISTANCE: float = 2.5 / 1e3  # 2.5mm in meters
@@ -302,22 +302,23 @@ class CoregAnalysis(BaseAnalysis):
         )
 
         # Fit fiducials
-        coreg.set_scale_mode("Uniform")
-        coreg.fit_fiducials(verbose=True)
+        coreg.set_scale_mode(None)
 
-        # Fit head shape points iteratively
-        coreg.set_scale_mode("3-axis")
-        coreg.set_grow_hair(hair_grow)
+        coreg.fit_fiducials(
+            lpa_weight = 5.0,
+            nasion_weight = 10.0,
+            rpa_weight = 5.0,
+            verbose=True,
+        )
 
-        for rr in range(n_rounds):
-            coreg.omit_head_shape_points(distance=omit_distance)
-            coreg.fit_icp(n_iterations=100, verbose=True)
-
-            dists = coreg.compute_dig_mri_distances() * 1e3  # in mm
-            self.log(
-                f"Round {rr + 1}/{n_rounds}: HSP-MRI distance "
-                f"(mean/median/max): {np.mean(dists):.2f} / "
-                f"{np.median(dists):.2f} / {np.max(dists):.2f} mm"
+        coreg.omit_head_shape_points(distance=omit_distance)
+        
+        coreg.fit_icp(
+            lpa_weight = 5.0,
+            nasion_weight = 10.0,
+            rpa_weight = 5.0,
+            n_iterations=100, 
+            verbose=True,
             )
 
         # Final distance report
