@@ -188,19 +188,32 @@ def run_subject(subject: str, session: str = SESSION) -> str:
         return "no_t1"
 
     print(
-        f"\n→ Save the trans file to:\n  {info['trans_path']}\n"
+        f"\n------------------------------------------------\n"
+        f"→ Save the trans file to:\n  {info['trans_path']}\n"
         f"  (this is the default checked by CoregAnalysis when "
-        f"_use_precomputed_trans=True)\n"
+        f"_use_precomputed_trans=True)"
+        f"\n------------------------------------------------\n"
     )
     print("Launching mne.gui.coregistration ... close the window to continue.\n")
 
     try:
-        mne.gui.coregistration(
-            inst=str(info["raw_path"]),
-            subject=info["fs_subject"],
-            subjects_dir=FS_DIR,
-            block=True,
-        )
+        trans_path = _trans_path(subject, session)
+        if trans_path.exists():              
+            mne.gui.coregistration(
+                inst=str(info["raw_path"]),
+                subject=info["fs_subject"],
+                subjects_dir=FS_DIR,
+                block=True,
+                trans = trans_path,
+            )
+        else:                     
+            mne.gui.coregistration(
+                inst=str(info["raw_path"]),
+                subject=info["fs_subject"],
+                subjects_dir=FS_DIR,
+                block=True,
+            )
+
     except Exception as e:
         print(f"→ GUI failed: {e}")
         return "gui_error"

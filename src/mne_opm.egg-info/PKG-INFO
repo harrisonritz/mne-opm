@@ -55,6 +55,9 @@ inspect and curate bad channels/epochs, run coregistration and FreeSurfer, and p
 This README documents how to set up the environment, prepare your data and configuration, and run the pipeline
 using the provided run scripts.
 
+[![DOI](https://zenodo.org/badge/962744712.svg)](https://doi.org/10.5281/zenodo.17328630)
+
+
 ## Contents
 - `src/custom/` - custom preprocessing helpers and OSL wrappers
 - `src/run/` - shell wrappers that run high-level pipeline stages (`run_all.sh`, `run_preproc.sh`, etc.)
