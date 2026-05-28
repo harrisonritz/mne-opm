@@ -328,6 +328,17 @@ class CoregAnalysis(BaseAnalysis):
             f"median={np.median(final_dists):.2f} mm"
         )
 
+        # Save Trans file
+        trans_path = os.path.join(
+                    subjects_dir, fs_subject, "bem", f"{fs_subject}-trans.fif"
+                )
+        mne.write_trans(
+            fname=trans_path, 
+            trans=coreg.trans,
+            overwrite=True,
+            )
+        self.log(f"Saved Trans file to {trans_path}")
+
         return {
             "coreg": coreg,
             "trans": coreg.trans,
@@ -393,6 +404,7 @@ class CoregAnalysis(BaseAnalysis):
         )
 
         self.log(f"Saved T1w with landmarks to {t1w_bids_path}")
+
 
 
 def run(cfg: SimpleNamespace) -> None:
