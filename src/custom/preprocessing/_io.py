@@ -59,6 +59,197 @@ from mne_bids import BIDSPath
 import pandas as pd
 
 
+# -----------------------------------------------------------------------------
+# Event-count verification (used to catch metadata ↔ epoch mismatches early)
+# -----------------------------------------------------------------------------
+
+
+def count_condition_events_in_raw(raw, conditions):
+    """Count annotations that will produce epochs for the given conditions.
+
+    Mirrors the exact selection logic used by ``mne-bids-pipeline``'s
+    ``make_epochs``:
+
+      1. ``mne.events_from_annotations`` with the default regexp
+         (which excludes ``BAD_*`` and ``EDGE_*`` annotations).
+      2. ``mne.event.match_event_names`` for hierarchical
+         (slash-separated) matching against ``conditions``.
+
+    Using the same logic as the pipeline ensures the count returned here
+    is what the pipeline will actually epoch.
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw object whose ``annotations`` are inspected.
+    conditions : iterable of str
+        Condition names (e.g. ``['trial']``) matched against annotation
+        descriptions hierarchically (i.e. ``'trial'`` matches ``'trial/X'``).
+
+    Returns
+    -------
+    n_events : int
+        Number of annotations that would become epochs.
+    matched_names : list of str
+        Annotation description names that matched ``conditions``.
+    """
+    if len(raw.annotations) == 0:
+        return 0, []
+
+    try:
+        _, event_id = mne.events_from_annotations(raw=raw, verbose="ERROR")
+    except ValueError:
+        # All annotations filtered out (e.g. only BAD_*).
+        return 0, []
+
+    try:
+        matched_names = mne.event.match_event_names(
+            event_names=event_id,
+            keys=list(conditions),
+            on_missing="ignore",
+        )
+    except KeyError:
+        return 0, []
+
+    if not matched_names:
+        return 0, []
+
+    event_id_filtered = {
+        name: event_id[name] for name in matched_names if name in event_id
+    }
+    events, _ = mne.events_from_annotations(
+        raw, event_id=event_id_filtered, verbose="ERROR"
+    )
+    return len(events), matched_names
+
+
+def count_condition_events_in_tsv(events_tsv_path, conditions):
+    """Count rows in ``events.tsv`` that would produce epochs for ``conditions``.
+
+    Applies the same hierarchical matching as
+    :func:`count_condition_events_in_raw`, but on a BIDS events.tsv file.
+    Rows with ``trial_type == 'n/a'`` are excluded (matching
+    ``mne_bids.read_raw_bids`` behaviour).
+
+    Parameters
+    ----------
+    events_tsv_path : str or Path
+        Path to a BIDS ``*_events.tsv`` file.
+    conditions : iterable of str
+        Condition names to match.
+
+    Returns
+    -------
+    n_events : int
+        Number of rows that would become epochs.
+    matched_names : list of str
+        Description names that matched ``conditions``.
+    """
+    events_path = Path(events_tsv_path)
+    if not events_path.exists():
+        return 0, []
+
+    events_df = pd.read_csv(events_path, sep="\t")
+    if "trial_type" not in events_df.columns:
+        return 0, []
+
+    # Mirror mne_bids drop of n/a trial_type rows
+    descriptions = events_df["trial_type"].astype(str)
+    descriptions = descriptions[descriptions != "n/a"]
+    unique_names = sorted(set(descriptions))
+
+    if not unique_names:
+        return 0, []
+
+    try:
+        matched_names = mne.event.match_event_names(
+            event_names=unique_names,
+            keys=list(conditions),
+            on_missing="ignore",
+        )
+    except KeyError:
+        return 0, []
+
+    if not matched_names:
+        return 0, []
+
+    n_events = int(descriptions.isin(matched_names).sum())
+    return n_events, matched_names
+
+
+def verify_event_count_after_write(
+    raw_before,
+    bids_path,
+    conditions=("trial",),
+    *,
+    context: str = "write",
+) -> None:
+    """Verify that a freshly-written BIDS/derivative file preserves event counts.
+
+    Reads back the written FIF (and, when available, the matching
+    ``events.tsv``) and confirms that the number of condition-matching
+    annotations equals the count in ``raw_before``.  Raises
+    ``RuntimeError`` with a detailed diagnostic on mismatch.
+
+    Use this immediately after ``mne_bids.write_raw_bids`` or
+    ``raw.save()`` to catch silent data loss before downstream steps run.
+
+    Parameters
+    ----------
+    raw_before : mne.io.BaseRaw
+        The raw object that was just written.
+    bids_path : BIDSPath
+        Path the data was written to.  Must point at the FIF; sidecars
+        are derived from it.
+    conditions : iterable of str
+        Condition names matched hierarchically against annotation
+        descriptions (default ``('trial',)``).
+    context : str
+        Short label for the error message (e.g. ``"format_bids"``,
+        ``"bad_segments"``) so the user can locate the offending step.
+    """
+    expected_n, _ = count_condition_events_in_raw(raw_before, conditions)
+
+    # 1. Re-read the FIF and recount.
+    fif_path = Path(bids_path.fpath)
+    if not fif_path.exists():
+        raise RuntimeError(
+            f"[{context}] verify_event_count_after_write: written FIF "
+            f"not found at {fif_path}"
+        )
+    raw_after = mne.io.read_raw_fif(fif_path, preload=False, verbose="ERROR")
+    fif_n, _ = count_condition_events_in_raw(raw_after, conditions)
+    del raw_after
+
+    # 2. If an events.tsv exists alongside, recount that too.
+    events_tsv = bids_path.copy().update(
+        suffix="events", extension=".tsv", split=None, check=False
+    ).fpath
+    tsv_n = None
+    if events_tsv.exists():
+        tsv_n, _ = count_condition_events_in_tsv(events_tsv, conditions)
+
+    # 3. Compare; raise on any divergence.
+    summary = (
+        f"[{context}] event-count verification "
+        f"({'/'.join(conditions)} matches):\n"
+        f"    raw before write : {expected_n}\n"
+        f"    FIF after write  : {fif_n}\n"
+        f"    events.tsv       : "
+        f"{tsv_n if tsv_n is not None else '(absent)'}\n"
+        f"    file             : {fif_path}"
+    )
+
+    if fif_n != expected_n or (tsv_n is not None and tsv_n != expected_n):
+        raise RuntimeError(
+            f"Event-count mismatch detected after write — this will "
+            f"break metadata ↔ epochs alignment downstream.\n{summary}"
+        )
+
+    # Successful match: log so the user can see the check passed.
+    print(summary)
+
+
 def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
     """Read raw BIDS data, dispatching to the right reader.
 
@@ -519,6 +710,17 @@ def write_raw_bids_custom_step(
             write_kwargs["empty_room"] = empty_room
         write_kwargs.update(extra_write_kwargs)
         write_raw_bids_preserve_events(**write_kwargs)
+
+    # Post-write verification — catch silent annotation loss before later
+    # pipeline steps fail with a confusing metadata-mismatch error.  We skip
+    # the noise/empty-room task because it carries no condition annotations.
+    task_name = getattr(output_bp, "task", None) or ""
+    if not task_name.startswith("noise"):
+        conditions = tuple(getattr(cfg, "conditions", ("trial",)) or ("trial",))
+        verify_event_count_after_write(
+            raw, output_bp, conditions=conditions,
+            context=f"write_raw_bids_custom_step:{task_name or '?'}",
+        )
 
     return output_bp
 

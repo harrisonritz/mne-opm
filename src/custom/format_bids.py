@@ -1109,6 +1109,20 @@ def bids_conversion(cfg: SimpleNamespace) -> None:
 
     mne_bids.write_raw_bids(**write_kwargs)
 
+    # --- Verify the write preserved condition-event counts -------------------
+    # The pre-flight check in TSX_OPM's config-trial.py reads events.tsv at
+    # bids_root, but mne-bids-pipeline (with custom_proc set) creates epochs
+    # from raw.annotations in derivative FIFs.  If the FIF and events.tsv
+    # disagree on the count of "trial" annotations even at this initial write
+    # — for instance because some annotations get dropped during the
+    # write_raw_bids round-trip — downstream metadata alignment will break in
+    # confusing ways.  Catch it here while the failure is still local.
+    from custom.preprocessing._io import verify_event_count_after_write
+    conditions = getattr(cfg, "verify_conditions", ("trial",))
+    verify_event_count_after_write(
+        raw, bids_path, conditions=conditions, context="format_bids"
+    )
+
     # --- Anatomical images ---
     _write_anatomical(cfg, subj, t1w_path, t2w_path)
 
