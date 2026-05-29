@@ -1078,14 +1078,20 @@ def bids_conversion(cfg: SimpleNamespace) -> None:
             "id": int(subj),
             "his_id": f"{subj:03}",
         }
-        if getattr(cfg, "_device_info", None) is not None:
-            with raw_run.info._unlock():
-                raw_run.info["device_info"] = dict(type=cfg._device_info)
 
         raw_list.append(raw_run)
 
     raw = mne.concatenate_raws(raw_list, preload=True, on_mismatch="raise")
     del raw_list
+
+    # update device info
+    if getattr(cfg, "device_info", None) is not None:
+            # Merge cfg.device_info into the raw file's device_info,
+            # overwriting any fields shared with the raw file.
+            merged_device_info = dict(raw.info["device_info"] or {})
+            merged_device_info.update(cfg.device_info)
+            raw.info["device_info"] = merged_device_info
+    print("device info: ", raw.info["device_info"])
 
     # Optional crop
     crop = getattr(cfg, "crop", 0)
