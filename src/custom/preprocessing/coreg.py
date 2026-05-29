@@ -40,8 +40,6 @@ Optional:
         Hair growth parameter in mm for ICP fitting. Default: 5.0.
     _coreg_omit_distance : float
         Distance threshold for omitting HSP points (meters). Default: 0.0025.
-    _coreg_n_rounds : int
-        Number of ICP fitting rounds. Default: 2.
     _use_precomputed_trans : bool
         If True, skip ICP and load a precomputed trans file instead.
         The landmarks are still written to the BIDS T1w JSON sidecar so
@@ -102,8 +100,6 @@ class CoregAnalysis(BaseAnalysis):
     DEFAULT_OMIT_DISTANCE: float = 2.5 / 1e3  # 2.5mm in meters
     """Default distance threshold for omitting head shape points."""
 
-    DEFAULT_N_ROUNDS: int = 2
-    """Default number of ICP fitting rounds."""
 
     def is_enabled(self) -> bool:
         """Check if coregistration is enabled.
@@ -257,12 +253,10 @@ class CoregAnalysis(BaseAnalysis):
         omit_distance = getattr(
             self.cfg, "_coreg_omit_distance", self.DEFAULT_OMIT_DISTANCE
         )
-        n_rounds = getattr(self.cfg, "_coreg_n_rounds", self.DEFAULT_N_ROUNDS)
 
         self.log("Coregistration parameters:")
         self.log(f"  Hair grow: {hair_grow} mm")
         self.log(f"  Omit distance: {omit_distance * 1e3:.2f} mm")
-        self.log(f"  N rounds: {n_rounds}")
 
         # Check for existing fiducials
         fid_pattern = os.path.join(subjects_dir, fs_subject, "bem", "*fiducials.fif")
