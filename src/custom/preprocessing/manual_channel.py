@@ -60,7 +60,10 @@ import mne
 
 import mne_bids
 
+import pandas as pd
+
 from ._base import BaseAnalysis, have_qt_browser
+from .bad_channels import candidates_sidecar_path
 from ._io import (
     find_custom_input_paths,
     read_raw_bids_with_retry,
@@ -150,8 +153,12 @@ class ManualChannelAnalysis(BaseAnalysis):
         raw = data[self.cfg.task]
         noise = data.get("noise")
 
+        # Surface automatic bad-channel *candidates* (channels flagged by a
+        # single detector in the bad_channels step) for confirmation.
+        candidates = self._load_candidates()
+
         # Run interactive selection
-        raw, bads, noise = self._manual_channel_selection(raw, noise)
+        raw, bads, noise = self._manual_channel_selection(raw, noise, candidates)
 
         results[self.cfg.task] = raw
         results["bads"] = bads
@@ -210,10 +217,42 @@ class ManualChannelAnalysis(BaseAnalysis):
 
             self.log(f"Saved task={task} → {output_bp.fpath}")
 
+    def _load_candidates(self) -> list[str]:
+        """Read bad-channel candidates written by the bad_channels step.
+
+        Returns
+        -------
+        candidates : list of str
+            Channel names flagged as candidates (single-detector hits) for the
+            main task, or an empty list if no sidecar exists.
+        """
+        paths = find_custom_input_paths(self.cfg, task=self.cfg.task)
+        if not paths:
+            return []
+
+        sidecar = candidates_sidecar_path(paths[0])
+        if not sidecar.exists():
+            return []
+
+        try:
+            df = pd.read_csv(sidecar, sep="\t")
+            candidates = [str(ch) for ch in df["channel"].tolist()]
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log(f"Could not read candidates sidecar {sidecar}: {exc}")
+            return []
+
+        if candidates:
+            self.log(
+                f"{len(candidates)} bad-channel candidate(s) for review "
+                f"(from {sidecar.name}): {candidates}"
+            )
+        return candidates
+
     def _manual_channel_selection(
         self,
         raw: mne.io.BaseRaw,
         noise: mne.io.BaseRaw | None = None,
+        candidates: list[str] | None = None,
     ) -> tuple[mne.io.BaseRaw, list[str], mne.io.BaseRaw | None]:
         """Interactive manual selection of bad channels.
 
@@ -227,6 +266,12 @@ class ManualChannelAnalysis(BaseAnalysis):
             Raw data for channel inspection.
         noise : mne.io.BaseRaw or None
             Optional noise data to apply same markings.
+        candidates : list of str or None
+            Automatic bad-channel candidates to pre-highlight in the browser so
+            the user can confirm (leave marked) or reject (unmark) them.  Only
+            pre-marked when the interactive browser is actually shown; if the
+            browser is unavailable the candidates are left untouched so they are
+            not silently confirmed.
 
         Returns
         -------
@@ -237,12 +282,29 @@ class ManualChannelAnalysis(BaseAnalysis):
         noise : mne.io.BaseRaw or None
             Noise data with same bad channels (if provided).
         """
+        candidates = candidates or []
+
         if not have_qt_browser():
             self.log(
                 "Qt browser not available; skipping interactive plot "
                 "(set SKIP_MANUAL=1 to suppress this message)"
             )
+            if candidates:
+                self.log(
+                    f"{len(candidates)} candidate(s) left unconfirmed "
+                    "(no interactive browser to review them)"
+                )
         else:
+            # Pre-highlight candidates as bad so they show up flagged in the
+            # browser; the user confirms by leaving them or rejects by clicking.
+            present = [ch for ch in candidates if ch in raw.ch_names]
+            if present:
+                raw.info["bads"] = sorted(set(raw.info["bads"]) | set(present))
+                self.log(
+                    f"Pre-highlighting {len(present)} candidate(s) for "
+                    f"confirmation: {present}"
+                )
+
             self.log("Opening interactive plot for channel inspection")
             self.log("Instructions: Click on channels to mark as bad, then close window")
 

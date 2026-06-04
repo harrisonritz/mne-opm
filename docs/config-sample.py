@@ -170,6 +170,27 @@ find_flat_channels_meg  = use_maxwell_filter
 find_noisy_channels_meg = use_maxwell_filter
 find_bad_channels_extra_kws = {'ignore_ref': True}
 
+# --- Custom automatic bad-channel detection (bad_channels step) ---
+# Detectors are combined by a consensus vote: a channel is auto-marked bad when
+# at least `_bad_channel_consensus_n` detectors agree.  Channels flagged by
+# fewer detectors are written to a *_badchannel-candidates.tsv sidecar and
+# surfaced (pre-highlighted) in the manual_channel step for confirmation.
+#   - 'gesd'         : full-recording GESD on per-channel std (whole-session bads)
+#   - 'timeresolved' : windowed GESD — catches INTERMITTENT bad channels
+#   - 'psd'          : OSL PSD / noise-floor outliers
+#   - 'lof'          : MNE Local Outlier Factor (spatial-neighbour outliers)
+_bad_channel_methods = ['gesd', 'timeresolved', 'psd', 'lof']
+_bad_channel_consensus_n = 2          # detectors that must agree to auto-mark bad
+                                      # (set to 1 to mark any flagged channel bad)
+_bad_channel_significance_level = 0.05  # GESD alpha (gesd + timeresolved + psd)
+_bad_channel_window_sec = 2.0         # time-resolved window length (seconds)
+_bad_channel_frac_threshold = 0.20    # flag if outlier in >20% of windows
+_bad_channel_psd_fmin = 1.0           # PSD detector frequency band (Hz)
+_bad_channel_psd_fmax = 100.0
+_bad_channel_psd_nfft = 2000          # PSD detector FFT length
+_bad_channel_lof_neighbors = 20       # LOF neighbours
+_bad_channel_lof_threshold = 1.5      # LOF threshold
+
 # Manual bad channel review step (run_channel.sh / run_preproc.sh)
 _manual_channels = True   # pause pipeline to inspect bad channels interactively
 
