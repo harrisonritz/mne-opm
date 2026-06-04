@@ -49,6 +49,9 @@ BIDS_DIR = f"{ROOT_DIR}/bids"
 TASK = "TSX"
 SESSION = "01"
 
+assert os.path.isdir(BIDS_DIR), f"BIDS_DIR does not exist: {BIDS_DIR}"
+assert os.path.isdir(FS_DIR), f"FS_DIR does not exist: {FS_DIR}"
+
 
 # ---------------------------------------------------------------------------
 # Helpers

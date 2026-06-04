@@ -1,8 +1,10 @@
-"""Tests for bad_channels.py — GESD bad channel detection.
+"""Tests for bad_channels.py — multi-detector consensus bad channel detection.
 
-Exercises the core detection logic (_detect_bad_channels), the run()
-accumulation across tasks, and the module-level run(cfg) entry point.
-BIDS I/O is mocked; the statistical detection itself runs on synthetic data.
+Exercises the individual detectors (full-recording GESD, time-resolved GESD,
+PSD, LOF), the consensus vote that splits confirmed vs candidate channels, the
+candidates sidecar, the run() accumulation across tasks, and the module-level
+run(cfg) entry point.  BIDS I/O is mocked; the statistical detection itself runs
+on synthetic data.
 """
 
 from __future__ import annotations
@@ -14,7 +16,11 @@ import mne
 import numpy as np
 import pytest
 
-from custom.preprocessing.bad_channels import BadChannelsAnalysis, run
+from custom.preprocessing.bad_channels import (
+    BadChannelsAnalysis,
+    candidates_sidecar_path,
+    run,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -40,29 +46,30 @@ def bad_ch_cfg(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _detect_bad_channels — core GESD logic
+# Detectors — core per-recording logic
 # ---------------------------------------------------------------------------
 
 class TestDetectBadChannels:
-    """Test the core detection method on synthetic data."""
+    """Test the detectors on synthetic data."""
 
     def test_detects_bad_channel_with_high_variance(
         self, raw_with_bad_channel, bad_ch_cfg
     ):
-        """A channel with 100x higher variance should be flagged."""
+        """A channel with 100x higher variance should be flagged by detectors."""
         analysis = BadChannelsAnalysis(bad_ch_cfg)
-        bads = analysis._detect_bad_channels(raw_with_bad_channel)
-        assert isinstance(bads, list)
-        # MEG001 has 100x variance — GESD should detect it
-        assert "MEG001" in bads
+        results = analysis._detect_all_methods(raw_with_bad_channel)
+        flagged = set().union(*results.values()) if results else set()
+        # MEG001 has 100x variance — multiple detectors should catch it
+        assert "MEG001" in flagged
+        assert "gesd" in results and "MEG001" in results["gesd"]
 
-    def test_clean_data_has_few_or_no_bads(self, raw_meg, bad_ch_cfg):
-        """Homogeneous random data should flag few or no channels."""
+    def test_clean_data_has_few_or_no_confirmed_bads(self, raw_meg, bad_ch_cfg):
+        """Homogeneous random data should yield no confirmed (consensus) bads."""
         analysis = BadChannelsAnalysis(bad_ch_cfg)
-        bads = analysis._detect_bad_channels(raw_meg)
-        assert isinstance(bads, list)
-        # With iid Gaussian channels, we expect 0 or very few detections
-        assert len(bads) <= 2
+        results = analysis._detect_all_methods(raw_meg)
+        confirmed, _ = analysis._combine_votes(results, analysis._consensus_n())
+        # Consensus of >=2 detectors on iid data should confirm nothing.
+        assert len(confirmed) == 0
 
     def test_filtering_applied_before_detection(
         self, raw_with_bad_channel, bad_ch_cfg
@@ -72,8 +79,150 @@ class TestDetectBadChannels:
         bad_ch_cfg.h_freq = 40.0
         analysis = BadChannelsAnalysis(bad_ch_cfg)
         # Should not crash, and still detect the outlier
-        bads = analysis._detect_bad_channels(raw_with_bad_channel)
-        assert isinstance(bads, list)
+        results = analysis._detect_all_methods(raw_with_bad_channel)
+        flagged = set().union(*results.values()) if results else set()
+        assert "MEG001" in flagged
+
+
+# ---------------------------------------------------------------------------
+# Time-resolved detector — intermittent bad channels
+# ---------------------------------------------------------------------------
+
+class TestTimeResolvedDetection:
+    """The time-resolved detector should catch intermittent bad channels."""
+
+    def _make_intermittent(self, meg_info, bad_frac=0.3):
+        """Raw where MEG002 is bad in only `bad_frac` of the recording."""
+        rng = np.random.RandomState(7)
+        n_ch = len(meg_info["ch_names"])
+        n_samples = int(meg_info["sfreq"] * 60)  # 60 s → many windows
+        data = rng.randn(n_ch, n_samples) * 1e-13
+        # Inflate MEG002 variance in a contiguous early fraction of the record.
+        bad_stop = int(bad_frac * n_samples)
+        data[2, :bad_stop] *= 80.0
+        return mne.io.RawArray(data, meg_info)
+
+    def test_timeresolved_catches_intermittent(self, meg_info, bad_ch_cfg):
+        """A channel bad in ~30% of windows is flagged by time-resolved."""
+        bad_ch_cfg.l_freq = 1.0
+        bad_ch_cfg.h_freq = 100.0
+        raw = self._make_intermittent(meg_info, bad_frac=0.3)
+
+        analysis = BadChannelsAnalysis(bad_ch_cfg)
+        filt = raw.copy().filter(l_freq=1.0, h_freq=100.0, method="iir")
+        tr = analysis._detect_timeresolved(filt, "mag")
+        assert "MEG002" in tr
+
+    def _make_heterogeneous_intermittent(self, bad_frac=0.3):
+        """Raw with a realistic spread of channel noise levels, plus an
+        intermittent channel whose whole-recording variance hides in the pack.
+
+        Real OPM arrays have heterogeneous per-channel noise floors.  A channel
+        that is only intermittently disruptive has a whole-recording std that
+        sits within that natural spread (so full-recording GESD misses it), yet
+        in its bad windows it transiently exceeds even the noisiest channels (so
+        the time-resolved detector catches it).
+        """
+        n_meg = 40
+        info = mne.create_info(
+            [f"MEG{i:03d}" for i in range(n_meg)], sfreq=300.0, ch_types="mag"
+        )
+        rng = np.random.RandomState(11)
+        n_samples = int(info["sfreq"] * 60)
+        # Smoothly varying baseline noise levels — no static outlier channel.
+        scales = np.linspace(1.0, 3.0, n_meg)
+        data = rng.randn(n_meg, n_samples) * scales[:, None] * 1e-13
+        # MEG002 is a quiet channel (low baseline) that misbehaves intermittently.
+        data[2, :] = rng.randn(n_samples) * 1e-13
+        win = int(info["sfreq"] * 2.0)
+        n_windows = n_samples // win
+        bad_windows = rng.choice(
+            n_windows, size=int(bad_frac * n_windows), replace=False
+        )
+        for w in bad_windows:
+            data[2, w * win:(w + 1) * win] *= 6.0
+        return mne.io.RawArray(data, info)
+
+    def test_full_gesd_misses_intermittent(self, bad_ch_cfg):
+        """Whole-recording GESD misses the intermittent channel that the
+        time-resolved detector catches (the core motivation)."""
+        raw = self._make_heterogeneous_intermittent(bad_frac=0.3)
+        analysis = BadChannelsAnalysis(bad_ch_cfg)
+        filt = raw.copy().filter(l_freq=1.0, h_freq=100.0, method="iir")
+        full = analysis._detect_gesd_full(filt, "mag")
+        tr = analysis._detect_timeresolved(filt, "mag")
+        # The time-resolved detector catches it even when full-recording does not.
+        assert "MEG002" in tr
+        assert "MEG002" not in full
+
+
+# ---------------------------------------------------------------------------
+# Consensus voting
+# ---------------------------------------------------------------------------
+
+class TestConsensusVoting:
+    """Test _combine_votes confirmed/candidate split."""
+
+    def test_consensus_two_confirms_multi_method(self, bad_ch_cfg):
+        analysis = BadChannelsAnalysis(bad_ch_cfg)
+        method_results = {
+            "gesd": {"MEG001"},
+            "timeresolved": {"MEG001"},
+            "lof": {"MEG005"},  # single method only
+        }
+        confirmed, candidates = analysis._combine_votes(method_results, 2)
+        assert "MEG001" in confirmed
+        assert "MEG005" in candidates
+        assert "MEG005" not in confirmed
+        assert "MEG001" not in candidates
+
+    def test_consensus_one_marks_any_flag(self, bad_ch_cfg):
+        """With consensus_n=1, any single flag confirms (no candidates)."""
+        analysis = BadChannelsAnalysis(bad_ch_cfg)
+        method_results = {"lof": {"MEG005"}}
+        confirmed, candidates = analysis._combine_votes(method_results, 1)
+        assert "MEG005" in confirmed
+        assert candidates == {}
+
+
+# ---------------------------------------------------------------------------
+# Candidates sidecar — written here, consumed by manual_channel
+# ---------------------------------------------------------------------------
+
+class TestCandidatesSidecar:
+    """Single-method flags are written to a sidecar and not auto-marked."""
+
+    def test_sidecar_written_and_readable(self, tmp_path, bad_ch_cfg):
+        """_write_candidates_sidecar writes a TSV that manual_channel can read."""
+        # Lightweight stand-in for a BIDSPath with directory + basename.
+        fake_bp = SimpleNamespace(
+            directory=str(tmp_path),
+            basename="sub-001_ses-01_task-restingstate_meg",
+        )
+        analysis = BadChannelsAnalysis(bad_ch_cfg)
+        analysis._write_candidates_sidecar(
+            fake_bp, {"MEG004": ["lof"], "MEG006": ["psd"]}
+        )
+
+        sidecar = candidates_sidecar_path(fake_bp)
+        assert sidecar.exists()
+
+        import pandas as pd
+        df = pd.read_csv(sidecar, sep="\t")
+        assert set(df["channel"]) == {"MEG004", "MEG006"}
+
+    def test_empty_candidates_removes_stale_sidecar(self, tmp_path, bad_ch_cfg):
+        """An empty candidate set clears any stale sidecar from a prior run."""
+        fake_bp = SimpleNamespace(
+            directory=str(tmp_path),
+            basename="sub-001_ses-01_task-restingstate_meg",
+        )
+        analysis = BadChannelsAnalysis(bad_ch_cfg)
+        analysis._write_candidates_sidecar(fake_bp, {"MEG004": ["lof"]})
+        assert candidates_sidecar_path(fake_bp).exists()
+
+        analysis._write_candidates_sidecar(fake_bp, {})
+        assert not candidates_sidecar_path(fake_bp).exists()
 
 
 # ---------------------------------------------------------------------------
