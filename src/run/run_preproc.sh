@@ -162,3 +162,13 @@ _print_timing "MNE: prep source space" $STEP_START
 
 
 
+
+STEP_START=$SECONDS
+echo ""
+echo "======================= BEAMFORMER =============================================="
+echo ""
+source "$ROOT_DIR/src/run/run_beamformer.sh"
+_print_timing "BEAMFORMER" $STEP_START
+
+
+

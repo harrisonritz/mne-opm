@@ -42,8 +42,12 @@ Optional:
         Enable/disable automatic ICA labeling. Default: False.
     ref_bads : bool
         Use reference sensor ICA correlation. Default: True.
-    gesd_bads : bool
+    _gesd_bads : bool
         Use GESD outlier detection. Default: True.
+    _auto_ica_overlay : bool
+        Save cumulative ``ica.plot_overlay`` PNGs after each labelling
+        step (pre-custom, ref-bads, gesd-bads, corrmap-bads) into the
+        ``meg`` derivatives directory. Default: True.
 
 Author: Harrison Ritz, 2025
 """
@@ -75,7 +79,7 @@ class AutoICAAnalysis(BaseAnalysis):
 
     Uses multiple strategies to identify artifact components:
     - Reference sensor correlation (if ref_bads=True)
-    - GESD outlier detection on kurtosis/variance (if gesd_bads=True)
+    - GESD outlier detection on kurtosis/variance (if _gesd_bads=True)
     - Spatial template matching via corrmap (if _corrmap_bads=True)
 
     Components identified by any method are added to ica.exclude
@@ -241,17 +245,33 @@ class AutoICAAnalysis(BaseAnalysis):
         self._component_labels = {i: [] for i in range(ica.n_components_)}
         self._gesd_info = {}
 
+        # Resolve which labelling steps are enabled (read once so the overlay
+        # plots and the labelling calls stay in sync).
+        do_ref = getattr(self.cfg, "ref_bads", True)
+        do_gesd = getattr(self.cfg, "_gesd_bads", True)
+        do_corrmap = getattr(self.cfg, "_corrmap_bads", False)
+
+        # (a) Overlay before any custom labelling — shows the components already
+        #     flagged by the mne-bids-pipeline EOG/ECG detection (loaded ICA).
+        self._save_ica_overlay(ica, raw, 1, "pre-custom")
+
         # Reference sensor correlation method
-        if getattr(self.cfg, "ref_bads", True):
+        if do_ref:
             ica = self._label_by_reference(ica, raw)
+            # (b) Overlay after reference-sensor labelling (cumulative).
+            self._save_ica_overlay(ica, raw, 2, "ref-bads")
 
         # GESD outlier detection method (using new PCA-whitened approach)
-        if getattr(self.cfg, "gesd_bads", True):
+        if do_gesd:
             ica = self._label_by_gesd(ica, raw)
+            # (c) Overlay after GESD labelling (cumulative).
+            self._save_ica_overlay(ica, raw, 3, "gesd-bads")
 
         # Spatial template matching via corrmap
-        if getattr(self.cfg, "_corrmap_bads", False):
+        if do_corrmap:
             ica = self._label_by_corrmap(ica, raw)
+            # (d) Overlay after corrmap labelling (cumulative).
+            self._save_ica_overlay(ica, raw, 4, "corrmap-bads")
 
         # Remove duplicates from exclude list
         ica.exclude = sorted(set(ica.exclude))
@@ -260,6 +280,109 @@ class AutoICAAnalysis(BaseAnalysis):
         self.log(f"Excluded: {ica.exclude}")
 
         return ica
+
+    def _overlay_basepath(self) -> tuple[Path, str]:
+        """Resolve the output directory and BIDS basename for overlay plots.
+
+        Overlay PNGs are written into the same ``meg`` derivatives directory
+        as the ICA solution, sharing the ``proc-ica`` prefix.
+
+        Returns
+        -------
+        out_dir : Path
+            ``{deriv_root}/sub-XX/ses-YY/meg`` directory.
+        basename : str
+            ``sub-XX_ses-YY_task-<task>_proc-ica`` prefix.
+        """
+        subject = (
+            self.cfg.subjects[0]
+            if isinstance(self.cfg.subjects, list)
+            else self.cfg.subjects
+        )
+        session = (
+            self.cfg.sessions[0]
+            if isinstance(self.cfg.sessions, list)
+            else self.cfg.sessions
+        )
+
+        bp = BIDSPath(
+            root=self.cfg.deriv_root,
+            subject=subject,
+            session=session,
+            task=self.cfg.task,
+            datatype="meg",
+            suffix="ica",
+            processing="ica",
+            extension=".fif",
+            check=False,
+        )
+        out_dir = Path(bp.directory)
+        basename = f"sub-{subject}_ses-{session}_task-{self.cfg.task}_proc-ica"
+        return out_dir, basename
+
+    def _save_ica_overlay(
+        self,
+        ica: mne.preprocessing.ICA,
+        inst: mne.io.BaseRaw,
+        step_idx: int,
+        step_label: str,
+    ) -> None:
+        """Save an ICA overlay plot for the current (cumulative) exclusions.
+
+        Renders ``ica.plot_overlay`` showing the data before (red) and after
+        (black) removing the components currently in ``ica.exclude``.  Because
+        ``ica.exclude`` grows as labelling steps run, successive calls produce
+        cumulative overlays.  Files are named::
+
+            <basename>_icaOverlay_<NN>_<step_label>.png
+
+        e.g. ``sub-009_ses-01_task-TSX_proc-ica_icaOverlay_01_pre-custom.png``.
+
+        Disabled by setting ``cfg._auto_ica_overlay = False``.  Any plotting
+        failure is logged and swallowed so it never aborts labelling.
+
+        Parameters
+        ----------
+        ica : mne.preprocessing.ICA
+            ICA solution with the current ``exclude`` list.
+        inst : mne.io.BaseRaw
+            Raw data passed to ``plot_overlay`` as ``inst``.
+        step_idx : int
+            Step number used for the zero-padded filename ordinal.
+        step_label : str
+            Short human-readable step label (e.g. ``"ref-bads"``).
+        """
+        if not getattr(self.cfg, "_auto_ica_overlay", True):
+            return
+
+        import matplotlib.pyplot as plt
+
+        out_dir, basename = self._overlay_basepath()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fname = out_dir / f"{basename}_icaOverlay_{step_idx:02d}_{step_label}.png"
+
+        n_excl = len(ica.exclude)
+        title = (
+            f"Step {step_idx:02d}: {step_label} — {n_excl} excluded "
+            f"(red=before, black=after cleaning)"
+        )
+
+        try:
+            fig = ica.plot_overlay(
+                inst=inst, show=False, on_baseline="reapply", title=title
+            )
+        except Exception as exc:  # plotting must never break labelling
+            self.log(
+                f"Overlay plot '{step_label}' failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return
+
+        try:
+            fig.savefig(fname, dpi=150, bbox_inches="tight")
+            self.log(f"Saved ICA overlay: {fname.name}")
+        finally:
+            plt.close(fig)
 
     def _label_by_reference(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
@@ -289,6 +412,7 @@ class AutoICAAnalysis(BaseAnalysis):
         ref_ica = mne.preprocessing.ICA(
             n_components=0.99,
             method="picard",
+            fit_params=dict(extended=True),
             max_iter=256,
             allow_ref_meg=True,
         )
@@ -732,6 +856,8 @@ class AutoICAAnalysis(BaseAnalysis):
         sfreq: float | None = None,
         fmin: float = 7,
         fmax: float = 45,
+        line_freq: float | None = None,
+        line_bw: float = 1.0,
     ) -> dict:
         """Compute diagnostic metrics for ICA components.
 
@@ -747,6 +873,13 @@ class AutoICAAnalysis(BaseAnalysis):
             Minimum frequency for spectral slope calculation (default 7 Hz).
         fmax : float
             Maximum frequency for spectral slope calculation (default 45 Hz).
+        line_freq : float | None
+            Power-line frequency in Hz used for the line-power metric. If None,
+            it is read from ``inst.info['line_freq']`` (e.g. 60 Hz in North
+            America); if that is also unset, it falls back to 60 Hz.
+        line_bw : float
+            Half-bandwidth (Hz) of the band centred on ``line_freq`` used to
+            measure line-noise power (default 1.0, i.e. ``line_freq ± 1`` Hz).
 
         Returns
         -------
@@ -755,6 +888,15 @@ class AutoICAAnalysis(BaseAnalysis):
         """
         if sfreq is None:
             sfreq = float(inst.info["sfreq"])
+
+        # Resolve the power-line frequency: explicit arg > inst.info > 60 Hz.
+        if line_freq is None:
+            line_freq = inst.info.get("line_freq", None)
+        if line_freq is None:
+            line_freq = 60.0
+            self.log(
+                "line_freq not set in info; defaulting to 60.0 Hz for line_ratio"
+            )
 
         # === Get topographies ===
         topos = ica.get_components()  # (n_channels, n_components)
@@ -803,6 +945,15 @@ class AutoICAAnalysis(BaseAnalysis):
         total_power = np.sum(psd, axis=1)
         hf_ratio = hf_power / (total_power + 1e-20)
 
+        # Line-frequency power ratio: fraction of power in a narrow band
+        # (line_freq ± line_bw Hz) around the mains frequency. Power-line
+        # components concentrate spectral power at this frequency, so a high
+        # ratio flags line-noise artifacts. The band is empty (ratio 0) if
+        # line_freq lies beyond the Welch frequency range (e.g. above Nyquist).
+        line_mask = (freqs >= line_freq - line_bw) & (freqs <= line_freq + line_bw)
+        line_power = np.sum(psd[:, line_mask], axis=1)
+        line_ratio = line_power / (total_power + 1e-20)
+
         # --- Spectral derivative kurtosis (all Welch frequencies) ---
         # d(log_psd)/df: fractional change in power per Hz.
         # A boxcar artifact creates two sharp steps (onset/offset) → heavy-tailed
@@ -834,6 +985,7 @@ class AutoICAAnalysis(BaseAnalysis):
         return {
             "sensor_var": sensor_var,
             "hf_ratio": hf_ratio,
+            "line_ratio": line_ratio,
             "mean_abs_gradient": mean_abs_grad,
             "source_kurtosis": source_kurt,
             "autocorr_1lag": autocorr_1lag,
@@ -846,12 +998,12 @@ class AutoICAAnalysis(BaseAnalysis):
     # All available GESD metric names (used for validation).
     AVAILABLE_GESD_METRICS = [
         "log_hf_ratio",
+        "log_line_ratio",
         "temporal_kurtosis_sqrt",
         "autocorr_fisher_z",
         "spectral_slope",
         "spatial_kurtosis_sqrt",
         "spectral_deriv_kurtosis_sqrt",
-        "spectral_resid_kurtosis_sqrt",
         "log_mean_abs_gradient",
     ]
 
@@ -1060,7 +1212,8 @@ class AutoICAAnalysis(BaseAnalysis):
         attribute is absent or ``None``, all metrics are used.
 
         Available metric names:
-            ``log_hf_ratio``, ``temporal_kurtosis_sqrt``,
+            ``log_hf_ratio``, ``log_line_ratio``,
+            ``temporal_kurtosis_sqrt``,
             ``autocorr_fisher_z``, ``spectral_slope``,
             ``spatial_kurtosis_sqrt``, ``spectral_deriv_kurtosis_sqrt``,
             ``spectral_resid_kurtosis_sqrt``, ``log_mean_abs_gradient``.
@@ -1103,6 +1256,13 @@ class AutoICAAnalysis(BaseAnalysis):
         if "log_hf_ratio" in use:
             log_hf = np.log(diagnostics["hf_ratio"] + 1e-10)
             metrics.append(("log_hf_ratio", log_hf, 1))
+
+        # 1b. Log line-frequency ratio: high = power-line (50/60 Hz) artifact.
+        # Line-noise components concentrate power in a narrow band at the mains
+        # frequency, giving a high ratio relative to total power.
+        if "log_line_ratio" in use:
+            log_line = np.log(diagnostics["line_ratio"] + 1e-10)
+            metrics.append(("log_line_ratio", log_line, 1))
 
         # 2. Temporal kurtosis: high = non-Gaussian artifact
         if "temporal_kurtosis_sqrt" in use:

@@ -34,6 +34,7 @@ def ica_cfg():
         task="restingstate",
         ref_bads=False,  # disable ref method by default
         gesd_bads=True,
+        _auto_ica_overlay=False,  # skip overlay PNGs in unit tests
     )
 
 
@@ -102,6 +103,7 @@ class TestICAComponentDiagnostics:
             "sensor_var",
             "mean_abs_gradient",
             "hf_ratio",
+            "line_ratio",
             "source_kurtosis",
             "autocorr_1lag",
             "spectral_slope",
@@ -141,6 +143,49 @@ class TestICAComponentDiagnostics:
         analysis = AutoICAAnalysis(ica_cfg)
         diag = analysis._ica_component_diagnostics(ica, raw)
         assert np.all(diag["hf_ratio"] > 0)
+
+    def test_line_ratio_in_unit_range(self, ica_cfg, synthetic_ica_and_raw):
+        """line_ratio is a power fraction, so it must lie in [0, 1]."""
+        ica, raw = synthetic_ica_and_raw
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica, raw)
+        assert np.all(diag["line_ratio"] >= 0.0)
+        assert np.all(diag["line_ratio"] <= 1.0)
+
+    def test_line_ratio_uses_info_line_freq(self, ica_cfg, synthetic_ica_and_raw):
+        """line_ratio is read from inst.info['line_freq'] and is highest for a
+        component whose power sits at that frequency."""
+        ica, raw = synthetic_ica_and_raw
+        sfreq = float(raw.info["sfreq"])
+        n_times = raw.n_times
+        t = np.arange(n_times) / sfreq
+
+        # Component 0: pure 50 Hz sinusoid; component 1: pure 10 Hz sinusoid.
+        rng = np.random.RandomState(1)
+        sources = np.vstack([
+            np.sin(2 * np.pi * 50 * t),
+            np.sin(2 * np.pi * 10 * t),
+        ])
+        sources = sources / sources.std(axis=1, keepdims=True)
+
+        ica2 = mne.preprocessing.ICA(
+            n_components=2, method="fastica", random_state=1, max_iter=200
+        )
+        ica2.fit(raw)
+        mock_src = MagicMock()
+        mock_src.get_data.return_value = sources
+        ica2.get_sources = MagicMock(return_value=mock_src)
+
+        # Tell the diagnostics the mains frequency is 50 Hz via info.
+        with raw.info._unlock():
+            raw.info["line_freq"] = 50.0
+
+        analysis = AutoICAAnalysis(ica_cfg)
+        diag = analysis._ica_component_diagnostics(ica2, raw)
+
+        # The 50 Hz component must carry far more line-band power.
+        assert diag["line_ratio"][0] > diag["line_ratio"][1]
+        assert diag["line_ratio"][0] > 0.5
 
     def test_spectral_deriv_kurtosis_higher_for_narrow_band(self, ica_cfg):
         """Narrow-band artifact should produce higher spectral derivative kurtosis.
@@ -220,6 +265,7 @@ class TestPrepareMetricsForGESD:
             "sensor_var": np.abs(rng.randn(n)) * 1e-25,
             "mean_abs_gradient": np.abs(rng.randn(n)) * 1e-13,
             "hf_ratio": np.abs(rng.randn(n)) * 1e-12,
+            "line_ratio": np.abs(rng.randn(n)) * 1e-2,
             "source_kurtosis": rng.randn(n) * 3,
             "autocorr_1lag": np.clip(rng.randn(n) * 0.3 + 0.5, -0.99, 0.99),
             "spectral_slope": rng.randn(n) * 0.5 - 1.5,
@@ -242,13 +288,14 @@ class TestPrepareMetricsForGESD:
     def test_seven_metrics_produced(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
-        assert len(metrics) == 8
+        assert len(metrics) == 9
 
     def test_metric_names(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
         names = [m[0] for m in metrics]
         assert "log_hf_ratio" in names
+        assert "log_line_ratio" in names
         assert "temporal_kurtosis_sqrt" in names
         assert "autocorr_fisher_z" in names
         assert "spectral_slope" in names
@@ -263,6 +310,7 @@ class TestPrepareMetricsForGESD:
         direction_map = {name: side for name, _, side in metrics}
 
         assert direction_map["log_hf_ratio"] == 1  # high = bad
+        assert direction_map["log_line_ratio"] == 1  # high = line-noise artifact
         assert direction_map["temporal_kurtosis_sqrt"] == 1
         assert direction_map["autocorr_fisher_z"] == -1  # low = bad
         assert direction_map["spectral_slope"] == 1
@@ -284,6 +332,7 @@ class TestPrepareMetricsForGESD:
             "sensor_var": np.ones(5),
             "mean_abs_gradient": np.ones(5),
             "hf_ratio": np.ones(5),
+            "line_ratio": np.ones(5) * 0.01,
             "source_kurtosis": np.zeros(5),
             "autocorr_1lag": np.array([0.999, -0.999, 1.0, -1.0, 0.5]),
             "spectral_slope": np.zeros(5),
@@ -572,7 +621,7 @@ class TestLabelByCorrmap:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg.ref_bads = False
-        ica_cfg.gesd_bads = False
+        ica_cfg._gesd_bads = False
         ica_cfg._corrmap_bads = True
         # Point at a dir with no reference_channels.npy → graceful skip
         ica_cfg._corrmap_template_dir = str(tmp_path)
@@ -609,7 +658,76 @@ class TestAutoICAIntegration:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg.ref_bads = False
-        ica_cfg.gesd_bads = False
+        ica_cfg._gesd_bads = False
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._auto_ica(ica, raw)
         assert result.exclude == []
+
+
+# ---------------------------------------------------------------------------
+# ICA overlay plots
+# ---------------------------------------------------------------------------
+
+class TestICAOverlay:
+    """Tests for the cumulative ICA overlay PNGs written during _auto_ica."""
+
+    def test_overlay_basepath(self, ica_cfg, tmp_path):
+        """Output dir is the meg derivatives dir; basename carries proc-ica."""
+        ica_cfg.deriv_root = str(tmp_path)
+        analysis = AutoICAAnalysis(ica_cfg)
+        out_dir, basename = analysis._overlay_basepath()
+        assert out_dir.name == "meg"
+        assert "sub-001" in str(out_dir) and "ses-01" in str(out_dir)
+        assert basename == "sub-001_ses-01_task-restingstate_proc-ica"
+
+    def test_overlay_disabled_writes_nothing(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """With _auto_ica_overlay=False, no PNG is written."""
+        ica, raw = synthetic_ica_and_raw
+        ica_cfg.deriv_root = str(tmp_path)
+        ica_cfg._auto_ica_overlay = False
+        analysis = AutoICAAnalysis(ica_cfg)
+        analysis._save_ica_overlay(ica, raw, 1, "pre-custom")
+        assert list(tmp_path.rglob("*.png")) == []
+
+    def test_overlay_writes_named_png(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """A single labelled overlay PNG is created with the expected name."""
+        import matplotlib
+        matplotlib.use("Agg")
+
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = [0]
+        ica_cfg.deriv_root = str(tmp_path)
+        ica_cfg._auto_ica_overlay = True
+        analysis = AutoICAAnalysis(ica_cfg)
+        analysis._save_ica_overlay(ica, raw, 2, "ref-bads")
+
+        expected = (
+            tmp_path / "sub-001" / "ses-01" / "meg"
+            / "sub-001_ses-01_task-restingstate_proc-ica_icaOverlay_02_ref-bads.png"
+        )
+        assert expected.exists()
+
+    def test_overlay_cumulative_steps_during_auto_ica(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        """_auto_ica writes the pre-custom and gesd-bads overlays (ref disabled)."""
+        import matplotlib
+        matplotlib.use("Agg")
+
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.deriv_root = str(tmp_path)
+        ica_cfg._auto_ica_overlay = True
+        ica_cfg.ref_bads = False
+        analysis = AutoICAAnalysis(ica_cfg)
+        analysis._auto_ica(ica, raw)
+
+        pngs = sorted(p.name for p in tmp_path.rglob("*icaOverlay*.png"))
+        assert any("_01_pre-custom.png" in p for p in pngs)
+        assert any("_03_gesd-bads.png" in p for p in pngs)
+        # ref-bads step was disabled, so no step 02 overlay.
+        assert not any("_02_ref-bads.png" in p for p in pngs)
