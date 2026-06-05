@@ -574,7 +574,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         fmax = float(getattr(self.cfg, "_bad_channel_psd_fmax", _DEFAULT_PSD_FMAX))
         n_fft = int(getattr(self.cfg, "_bad_channel_psd_nfft", _DEFAULT_PSD_NFFT))
         try:
-            raw_data = raw.copy().pick("data", exclude="bads")
+            raw_data = raw.copy().pick("mag", exclude=["bads", "ref_meg"])
             bads = osl_detect_bad_channels_psd(
                 raw_data,
                 fmin=fmin,
