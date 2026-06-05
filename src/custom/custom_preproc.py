@@ -6,6 +6,8 @@ command-line arguments and dispatches to the appropriate analysis module
 in the preprocessing subpackage.
 
 Provided analyses (CLI --analysis):
+    init           -> Clear leftover proc-<custom_proc> derivatives from a
+                      previous run so preprocessing starts from the raw data
     regress        -> Regress out a configurable list of sensor signals
     bad_segments   -> Detect & annotate bad raw data segments (legacy)
     bad_segments_1 -> Stage 1: coarse bad segment detection (pre-spatial filter)
@@ -68,6 +70,8 @@ from custom.preprocessing._config import load_config, normalize_analysis_key
 # Mapping of normalized analysis keys to their module names
 # Each module must have a run(cfg) function
 ANALYSIS_REGISTRY: dict[str, str] = {
+    "init": "init_derivatives",
+    "initderivatives": "init_derivatives",
     "regress": "regress",
     "badsegments": "bad_segments",
     "badsegments1": "bad_segments",
@@ -85,6 +89,8 @@ ANALYSIS_REGISTRY: dict[str, str] = {
 
 # Human-readable names for CLI choices (with underscores)
 ANALYSIS_CHOICES: list[str] = [
+    "init",
+    "init_derivatives",
     "regress",
     "bad_segments",
     "bad_segments_1",

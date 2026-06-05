@@ -602,6 +602,76 @@ def get_custom_proc(cfg: SimpleNamespace) -> Optional[str]:
     return val if val else None
 
 
+def _is_relative_to(path: Path, other: Path) -> bool:
+    """Return True if ``path`` equals ``other`` or lives beneath it.
+
+    ``pathlib.Path.is_relative_to`` was only added in Python 3.9; this helper
+    keeps the comparison explicit and resolves both sides first so that
+    symlinks and ``..`` segments cannot smuggle a write past the check.
+    """
+    try:
+        path.resolve().relative_to(other.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def assert_not_raw_bids_write(
+    target, cfg: SimpleNamespace, context: str = ""
+) -> None:
+    """Raise if *target* would write into the raw BIDS data directory.
+
+    Custom preprocessing steps must only ever write into ``deriv_root`` (the
+    derivatives tree).  The raw BIDS recordings under ``bids_root`` are the
+    canonical, immutable inputs to the pipeline; mutating them silently
+    corrupts the source data and makes re-runs non-reproducible.
+
+    ``deriv_root`` conventionally lives *inside* ``bids_root`` (e.g.
+    ``<bids_root>/derivatives/<analysis>``), so a path under ``deriv_root`` is
+    explicitly allowed even though it is also under ``bids_root``.
+
+    Parameters
+    ----------
+    target : str or Path or BIDSPath
+        The path (or BIDSPath) about to be written.
+    cfg : SimpleNamespace
+        Configuration object exposing ``bids_root`` and ``deriv_root``.
+    context : str
+        Short label for the error message (e.g. the calling function).
+
+    Raises
+    ------
+    RuntimeError
+        If *target* resolves to a location inside ``bids_root`` that is not
+        inside ``deriv_root``.
+    """
+    # Resolve a filesystem path from whatever we were handed.
+    fpath = getattr(target, "fpath", None)
+    target_path = Path(fpath if fpath is not None else target)
+
+    bids_root = getattr(cfg, "bids_root", None)
+    if bids_root is None:
+        return
+    bids_root = Path(bids_root)
+
+    deriv_root = getattr(cfg, "deriv_root", None)
+    deriv_root = Path(deriv_root) if deriv_root is not None else None
+
+    # Writes inside the derivatives tree are always allowed.
+    if deriv_root is not None and _is_relative_to(target_path, deriv_root):
+        return
+
+    # Any other write inside the raw BIDS root is forbidden.
+    if _is_relative_to(target_path, bids_root):
+        prefix = f"[{context}] " if context else ""
+        raise RuntimeError(
+            f"{prefix}Refusing to write {target_path} inside the raw BIDS "
+            f"data directory ({bids_root}). Custom preprocessing steps must "
+            f"write to deriv_root ({deriv_root}); set cfg.custom_proc so that "
+            f"outputs are routed to a proc-<label> derivative instead."
+        )
+
+
 def find_custom_input_paths(
     cfg: SimpleNamespace,
     task: str,
@@ -709,26 +779,38 @@ def get_custom_output_path(
 def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
     """Copy BIDS sidecar files from source to output on first write.
 
-    Copies ``_channels.tsv``, ``_meg.json``, ``_events.tsv``, and
+    Copies ``_channels.tsv``, the data JSON, ``_events.tsv``, and
     ``_events.json`` from the source location to the output location.
     Each sidecar is only copied if it exists at the source and does not yet
     exist at the destination, making this safe to call on every save.
 
+    The data JSON sidecar follows the *data* suffix at each end: the source
+    raw recording is named ``_meg.json``, but a derivative whose FIF carries
+    the ``raw`` suffix (``proc-<label>_raw.fif``) must have a matching
+    ``proc-<label>_raw.json`` rather than a stray ``_meg.json``.  The
+    destination suffix is therefore taken from ``output_bp`` so the JSON and
+    the FIF it describes always agree.
+
     The split entity is stripped from both sides so the lookup is correct
     regardless of whether source_bp refers to a split file.
     """
+    # Data suffix of the output FIF: "raw" in derivative mode, "meg" in legacy
+    # mode.  The data JSON must use the same suffix as the FIF it describes.
+    data_suffix = output_bp.suffix or "meg"
+
+    # (source suffix, destination suffix, extension)
     sidecars = [
-        ("channels", ".tsv"),
-        ("meg", ".json"),
-        ("events", ".tsv"),
-        ("events", ".json"),
+        ("channels", "channels", ".tsv"),
+        ("meg", data_suffix, ".json"),
+        ("events", "events", ".tsv"),
+        ("events", "events", ".json"),
     ]
-    for suffix, ext in sidecars:
+    for src_suffix, dst_suffix, ext in sidecars:
         src = source_bp.copy().update(
-            suffix=suffix, extension=ext, split=None, check=False
+            suffix=src_suffix, extension=ext, split=None, check=False
         ).fpath
         dst = output_bp.copy().update(
-            suffix=suffix, extension=ext, split=None, check=False
+            suffix=dst_suffix, extension=ext, split=None, check=False
         ).fpath
         if src == dst or not src.exists() or dst.exists():
             continue
@@ -807,6 +889,13 @@ def write_raw_bids_custom_step(
     """
     output_bp = get_custom_output_path(cfg, source_bp)
     proc = get_custom_proc(cfg)
+
+    # Safety invariant: a custom step must never overwrite the raw BIDS data.
+    # This guards against a misconfigured custom_proc (or a future change to
+    # the routing helpers) silently writing back into bids_root.
+    assert_not_raw_bids_write(
+        output_bp, cfg, context="write_raw_bids_custom_step"
+    )
 
     if proc is not None:
         # Derivative mode — follow the mne-bids-pipeline save pattern:
@@ -1017,6 +1106,9 @@ def mark_bad_channels_bids(
                 processing=proc,
                 check=False,
             )
+
+    # Never mark channels on the raw BIDS recordings — only on derivatives.
+    assert_not_raw_bids_write(bids_path, cfg, context="mark_bad_channels_bids")
 
     mne_bids.mark_channels(
         bids_path=bids_path,

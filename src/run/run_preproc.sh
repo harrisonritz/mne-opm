@@ -47,6 +47,15 @@ echo ""
 
 STEP_START=$SECONDS
 echo ""
+echo "======================= INIT: clear stale custom derivatives =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=init --config=$CONFIG_PATH
+_print_timing "INIT: clear stale custom derivatives" $STEP_START
+
+
+
+STEP_START=$SECONDS
+echo ""
 echo "======================= custom: regress  =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress --config=$CONFIG_PATH

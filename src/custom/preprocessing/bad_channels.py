@@ -465,6 +465,10 @@ class BadChannelsAnalysis(BaseAnalysis):
         picks = self.cfg.ch_types[0]
         methods = self._methods()
 
+        # report the initial number of bad channels so the user can see how many new ones are added by the detectors.
+        initial_bads = set(raw.info.get("bads", []))
+        self.log(f"  Initial bad channels: {len(initial_bads)} ({sorted(initial_bads)})")
+
         # Bandpass-filtered copy for the variance/spatial detectors (the PSD
         # detector deliberately runs on the unfiltered data, see below).
         filt = raw.copy().filter(
@@ -570,13 +574,15 @@ class BadChannelsAnalysis(BaseAnalysis):
         fmax = float(getattr(self.cfg, "_bad_channel_psd_fmax", _DEFAULT_PSD_FMAX))
         n_fft = int(getattr(self.cfg, "_bad_channel_psd_nfft", _DEFAULT_PSD_NFFT))
         try:
+            raw_data = raw.copy().pick("data", exclude="bads")
             bads = osl_detect_bad_channels_psd(
-                raw.copy(),
+                raw_data,
                 fmin=fmin,
                 fmax=fmax,
                 n_fft=n_fft,
                 alpha=self._significance(),
             )
+            del raw_data
             return set(bads)
         except Exception as exc:
             self.log(f"  [psd] skipped ({exc})")

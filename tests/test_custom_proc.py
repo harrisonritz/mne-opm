@@ -221,34 +221,21 @@ class TestFindCustomInputPaths:
         """With custom_proc set and deriv files present, those are used."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
-        _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
-
-        # Also write a proc-init copy under deriv_root
-        deriv_root = tmp_path / "derivatives"
-        deriv_root.mkdir()
-        deriv_bp = BIDSPath(
-            root=str(deriv_root),
-            subject="001",
-            session="01",
-            task="restingstate",
-            datatype="meg",
-            suffix="meg",
-            processing="init",
-            extension=".fif",
-            check=False,
-        )
-        mne_bids.write_raw_bids(
-            raw=raw_meg,
-            bids_path=deriv_bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
+        source_bp = _write_minimal_raw_to_bids(
+            bids_root, raw_meg, task="restingstate"
         )
 
         cfg = _make_cfg(tmp_path, custom_proc="init")
+
+        # Produce a proc-init derivative through the real write helper so it is
+        # named sub-..._proc-init_raw.fif (suffix 'raw'), matching what the
+        # custom steps actually write and what find_custom_input_paths looks
+        # for.
+        write_raw_bids_custom_step(raw_meg, cfg, source_bp)
+
         paths = find_custom_input_paths(cfg, task="restingstate")
         assert len(paths) == 1
-        assert str(paths[0].root) == str(deriv_root)
+        assert str(paths[0].root) == cfg.deriv_root
         assert paths[0].processing == "init"
 
     def test_returns_empty_when_no_files(self, tmp_path):
@@ -281,8 +268,11 @@ class TestFindCustomInputPaths:
 class TestWriteRawBidsCustomStep:
     """End-to-end behaviour of write_raw_bids_custom_step."""
 
-    def test_writes_to_bids_root_when_proc_unset(self, tmp_path, raw_meg):
-        """With custom_proc unset, writes back to the source BIDS file."""
+    def test_raises_when_proc_unset_would_overwrite_bids(
+        self, tmp_path, raw_meg
+    ):
+        """With custom_proc unset the output resolves to the source BIDS file;
+        writing there is refused so the raw BIDS data is never overwritten."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
         source_bp = _write_minimal_raw_to_bids(
@@ -291,13 +281,9 @@ class TestWriteRawBidsCustomStep:
 
         cfg = _make_cfg(tmp_path)  # no custom_proc
 
-        # Modify raw and write back
         raw_meg.info["bads"] = ["MEG001"]
-        output_bp = write_raw_bids_custom_step(raw_meg, cfg, source_bp)
-
-        assert str(output_bp.root) == str(bids_root)
-        assert output_bp.processing is None
-        assert output_bp.fpath.exists()
+        with pytest.raises(RuntimeError, match="raw BIDS"):
+            write_raw_bids_custom_step(raw_meg, cfg, source_bp)
 
     def test_writes_to_deriv_with_proc_when_set(self, tmp_path, raw_meg):
         """With custom_proc set, writes go to deriv_root with proc-* tag."""
@@ -377,8 +363,9 @@ class TestWriteRawBidsCustomStep:
         assert deriv_events.exists()
         assert deriv_events.read_text().splitlines() == source_event_lines
 
-    def test_forwards_empty_room(self, tmp_path, raw_meg):
-        """The empty_room kwarg is forwarded to write_raw_bids."""
+    def test_accepts_empty_room_kwarg(self, tmp_path, raw_meg):
+        """The empty_room kwarg is accepted (ignored in derivative mode)
+        without raising, and the output still lands in deriv_root."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
         source_bp = _write_minimal_raw_to_bids(
@@ -386,12 +373,12 @@ class TestWriteRawBidsCustomStep:
         )
         er_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="noise")
 
-        cfg = _make_cfg(tmp_path)
-        # Should accept empty_room without raising
+        cfg = _make_cfg(tmp_path, custom_proc="init")
         output_bp = write_raw_bids_custom_step(
             raw_meg, cfg, source_bp, empty_room=er_bp
         )
         assert output_bp.fpath.exists()
+        assert str(output_bp.root) == cfg.deriv_root
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +420,7 @@ class TestBadChannelsRespectsCustomProc:
         deriv_file = (
             Path(cfg.deriv_root)
             / "sub-001" / "ses-01" / "meg"
-            / "sub-001_ses-01_task-restingstate_proc-init_meg.fif"
+            / "sub-001_ses-01_task-restingstate_proc-init_raw.fif"
         )
         assert deriv_file.exists()
 
@@ -464,10 +451,9 @@ class TestBadChannelsRespectsCustomProc:
                 assert "bad" in line.lower()
                 break
 
-    def test_save_overwrites_bids_when_custom_proc_unset(
-        self, tmp_path, raw_meg
-    ):
-        """Without custom_proc, save_results overwrites bids_root (legacy)."""
+    def test_save_raises_when_custom_proc_unset(self, tmp_path, raw_meg):
+        """Without custom_proc the save would overwrite bids_root, which is
+        now refused; the BIDS channels.tsv must stay untouched."""
         from custom.preprocessing.bad_channels import BadChannelsAnalysis
 
         bids_root = tmp_path / "bids"
@@ -490,29 +476,20 @@ class TestBadChannelsRespectsCustomProc:
 
         analysis = BadChannelsAnalysis(cfg)
         results = {cfg.task: raw_meg, "bads": ["MEG001"]}
-        analysis.save_results(results)
+        with pytest.raises(RuntimeError, match="raw BIDS"):
+            analysis.save_results(results)
 
-        # No deriv file should appear
-        deriv_file = (
-            Path(cfg.deriv_root)
-            / "sub-001" / "ses-01" / "meg"
-            / "sub-001_ses-01_task-restingstate_proc-init_meg.fif"
-        )
-        assert not deriv_file.exists()
-
-        # bids_root channels.tsv should now mark MEG001 as bad
+        # The refusal must happen before any mutation of the BIDS data, so
+        # MEG001 stays good in the raw BIDS channels.tsv.
         bids_channels_tsv = (
             Path(cfg.bids_root)
             / "sub-001" / "ses-01" / "meg"
             / "sub-001_ses-01_task-restingstate_channels.tsv"
         )
-        text = bids_channels_tsv.read_text()
-        marked_bad = False
-        for line in text.splitlines():
+        for line in bids_channels_tsv.read_text().splitlines():
             if line.startswith("MEG001\t"):
-                marked_bad = "bad" in line.lower()
+                assert "good" in line.lower()
                 break
-        assert marked_bad
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +534,7 @@ class TestBadSegmentsRespectsCustomProc:
         deriv_file = (
             Path(cfg.deriv_root)
             / "sub-001" / "ses-01" / "meg"
-            / "sub-001_ses-01_task-restingstate_proc-init_meg.fif"
+            / "sub-001_ses-01_task-restingstate_proc-init_raw.fif"
         )
         assert deriv_file.exists()
 
