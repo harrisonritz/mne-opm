@@ -55,33 +55,29 @@ Required:
 Optional:
     _auto_ica : bool
         Enable/disable automatic ICA labeling. Default: False.
-    _gesd_scores : list[str] | None
-        Which per-IC scores to feed into the unified GESD. Valid names are in
-        ``AVAILABLE_GESD_SCORES`` (the diagnostic metrics plus ``"eog"``,
-        ``"ecg"``, ``"reference"``, ``"corrmap_eog"``, ``"corrmap_ecg"``).
-        If ``None`` (default), the selection is derived for backward
-        compatibility from the legacy flags ``_gesd_metrics``, ``ref_bads``,
-        ``_corrmap_bads`` and ``_gesd_bads``.
-    _gesd_bads : bool
-        Legacy master switch. When ``False`` the unified GESD is a no-op
-        (only consulted when ``_gesd_scores`` is unset). Default: True.
-    ref_bads, _corrmap_bads : bool
-        Legacy per-method switches used only to derive ``_gesd_scores`` when it
-        is unset. Defaults: True / False.
+    _gesd_metrics : list[str] | None
+        The single list of per-IC scores to feed into the unified GESD. Valid
+        names are in ``AVAILABLE_GESD_SCORES`` — the diagnostic property metrics
+        plus the artifact-targeted scores ``"eog"``, ``"ecg"``, ``"reference"``,
+        ``"corrmap_eog"`` and ``"corrmap_ecg"``. ``None`` (default) selects all
+        available scores; an empty list disables the GESD entirely.
+    _corrmap_template_dir, _n_eog_templates, _n_ecg_templates :
+        Corrmap template location and per-type column counts, used when
+        ``"corrmap_eog"`` / ``"corrmap_ecg"`` are selected.
     _auto_ica_overlay : bool
         Save ``ica.plot_overlay`` PNGs (report-style evoked butterfly) after
-        each per-PC GESD step plus a final overlay, into the participant's
-        ``meg/ICA`` directory. Default: True.
+        each per-PC GESD step plus a final overlay, and the PCA diagnostic
+        figures, into the participant's ``meg/ICA`` directory. Default: True.
 
 Author: Harrison Ritz, 2025
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
@@ -182,7 +178,7 @@ class AutoICAAnalysis(BaseAnalysis):
     are z-scored, projected onto principal components, and a GESD test is run
     on each eigenscore with a single Šidák-controlled family-wise error rate.
     Available scores: diagnostic property metrics, EOG/ECG/reference
-    correlation, and corrmap template correlation (see ``_gesd_scores``).
+    correlation, and corrmap template correlation (see ``_gesd_metrics``).
 
     Components flagged by the unified GESD are added to ica.exclude
     and will be removed when ICA is applied to the data.
@@ -587,50 +583,33 @@ class AutoICAAnalysis(BaseAnalysis):
     def _resolve_gesd_scores(self) -> set:
         """Resolve which per-IC scores to feed into the unified GESD.
 
-        Uses ``cfg._gesd_scores`` when set (validated against
-        ``AVAILABLE_GESD_SCORES``).  Otherwise derives the selection for
-        backward compatibility from the legacy flags: the diagnostic metrics
-        from ``cfg._gesd_metrics`` (or all of them), plus ``"reference"`` when
-        ``cfg.ref_bads`` and the corrmap scores when ``cfg._corrmap_bads`` and
-        the corresponding template count is positive.  ``cfg._gesd_bads=False``
-        forces an empty selection (the GESD becomes a no-op).
+        Reads the single ``cfg._gesd_metrics`` list, which may contain any name
+        in ``AVAILABLE_GESD_SCORES`` — the diagnostic property metrics plus the
+        artifact-targeted scores ``"eog"``, ``"ecg"``, ``"reference"``,
+        ``"corrmap_eog"`` and ``"corrmap_ecg"``.
+
+        - ``None`` (or unset) selects every available score.
+        - An empty list disables the GESD entirely (no-op).
+        - Unknown names raise ``ValueError``.
 
         Returns
         -------
         selected : set of str
             Names of the scores to compute and test.
         """
-        selected = getattr(self.cfg, "_gesd_scores", None)
-        if selected is not None:
-            unknown = set(selected) - set(self.AVAILABLE_GESD_SCORES)
-            if unknown:
-                raise ValueError(
-                    f"Unknown GESD score names: {unknown}. "
-                    f"Available: {self.AVAILABLE_GESD_SCORES}"
-                )
-            self.log(f"Using configured _gesd_scores: {sorted(set(selected))}")
-            return set(selected)
+        selected = getattr(self.cfg, "_gesd_metrics", None)
+        if selected is None:
+            self.log("_gesd_metrics unset; using all available scores.")
+            return set(self.AVAILABLE_GESD_SCORES)
 
-        # Legacy master switch.
-        if not getattr(self.cfg, "_gesd_bads", True):
-            self.log("_gesd_bads=False and _gesd_scores unset; no scores selected.")
-            return set()
-
-        # Diagnostic metrics from the legacy _gesd_metrics (or all).
-        metrics = getattr(self.cfg, "_gesd_metrics", None)
-        sel = set(self.AVAILABLE_GESD_METRICS) if metrics is None else set(metrics)
-
-        # Reference / corrmap from legacy switches.
-        if getattr(self.cfg, "ref_bads", True):
-            sel.add("reference")
-        if getattr(self.cfg, "_corrmap_bads", False):
-            if getattr(self.cfg, "_n_eog_templates", 3) > 0:
-                sel.add("corrmap_eog")
-            if getattr(self.cfg, "_n_ecg_templates", 0) > 0:
-                sel.add("corrmap_ecg")
-
-        self.log(f"Derived _gesd_scores from legacy flags: {sorted(sel)}")
-        return sel
+        unknown = set(selected) - set(self.AVAILABLE_GESD_SCORES)
+        if unknown:
+            raise ValueError(
+                f"Unknown _gesd_metrics names: {unknown}. "
+                f"Available: {self.AVAILABLE_GESD_SCORES}"
+            )
+        self.log(f"Using configured _gesd_metrics: {sorted(set(selected))}")
+        return set(selected)
 
     @staticmethod
     def _reduce_multichannel_scores(scores) -> np.ndarray:
@@ -1433,7 +1412,7 @@ class AutoICAAnalysis(BaseAnalysis):
         "corrmap_ecg",
     ]
 
-    # Full set of per-IC scores selectable via ``cfg._gesd_scores``.
+    # Full set of per-IC scores selectable via ``cfg._gesd_metrics``.
     AVAILABLE_GESD_SCORES = AVAILABLE_GESD_METRICS + AVAILABLE_TARGETED_SCORES
 
     def _build_components_tsv(
@@ -1593,12 +1572,12 @@ class AutoICAAnalysis(BaseAnalysis):
     def _prepare_metrics_for_gesd(
         self, diagnostics: dict, names: "set | list | None" = None
     ) -> list:
-        """Transform metrics and specify outlier direction for GESD.
+        """Transform diagnostic metrics and specify outlier direction for GESD.
 
-        Which metrics are included can be controlled by passing ``names``
-        explicitly (used by the unified scoring layer) or, when ``names`` is
-        ``None``, by setting ``cfg._gesd_metrics`` to a list of metric name
-        strings.  When neither is given, all diagnostic metrics are used.
+        The diagnostic selection is resolved upstream by
+        :meth:`_resolve_gesd_scores` (from ``cfg._gesd_metrics``); the
+        diagnostic subset is passed here via ``names``.  When ``names`` is
+        ``None`` all diagnostic metrics are produced.
 
         Available metric names:
             ``log_hf_ratio``, ``log_line_ratio``,
@@ -1612,8 +1591,8 @@ class AutoICAAnalysis(BaseAnalysis):
         diagnostics : dict
             Dictionary from _ica_component_diagnostics.
         names : set | list | None
-            Explicit metric selection.  Overrides ``cfg._gesd_metrics`` when
-            provided.
+            Explicit diagnostic-metric selection.  ``None`` produces all of
+            them.
 
         Returns
         -------
@@ -1628,19 +1607,15 @@ class AutoICAAnalysis(BaseAnalysis):
         - Raw values when already approximately normal
         - Signed sqrt for kurtosis to preserve sign while reducing skew
         """
-        # Determine which metrics to compute.
+        # Determine which diagnostic metrics to compute.
         if names is not None:
-            selected = list(names)
-        else:
-            selected = getattr(self.cfg, "_gesd_metrics", None)
-        if selected is not None:
-            unknown = set(selected) - set(self.AVAILABLE_GESD_METRICS)
+            unknown = set(names) - set(self.AVAILABLE_GESD_METRICS)
             if unknown:
                 raise ValueError(
                     f"Unknown GESD metric names: {unknown}. "
                     f"Available: {self.AVAILABLE_GESD_METRICS}"
                 )
-            use = set(selected)
+            use = set(names)
             self.log(f"Using selected GESD metrics: {sorted(use)}")
         else:
             use = set(self.AVAILABLE_GESD_METRICS)

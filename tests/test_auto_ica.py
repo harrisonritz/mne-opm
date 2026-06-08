@@ -1,4 +1,4 @@
-"""Tests for auto_ica.py — ICA component diagnostics, metrics, and GESD logic.
+"""Tests for auto_ica.py — unified per-IC scoring, PCA-whitened GESD, figures.
 
 These tests focus on the computational methods that can be validated with
 synthetic data, without needing real BIDS or ICA files.
@@ -7,14 +7,12 @@ synthetic data, without needing real BIDS or ICA files.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import mne
 import numpy as np
 import pytest
-from scipy.stats import kurtosis
 
-from custom.preprocessing.auto_ica import AutoICAAnalysis
+from custom.preprocessing.auto_ica import AutoICAAnalysis, GesdResult
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +21,11 @@ from custom.preprocessing.auto_ica import AutoICAAnalysis
 
 @pytest.fixture()
 def ica_cfg():
-    """Config for auto ICA tests."""
+    """Config for auto ICA tests.
+
+    Defaults to diagnostic-only scores so the common tests stay deterministic;
+    individual tests override ``_gesd_metrics`` to exercise targeted scores.
+    """
     return SimpleNamespace(
         _auto_ica=True,
         spatial_filter="ica",
@@ -32,15 +34,15 @@ def ica_cfg():
         subjects=["001"],
         sessions=["01"],
         task="restingstate",
-        ref_bads=False,  # disable ref method by default
-        gesd_bads=True,
-        _auto_ica_overlay=False,  # skip overlay PNGs in unit tests
+        # Single unified selection list (diagnostics only here).
+        _gesd_metrics=list(AutoICAAnalysis.AVAILABLE_GESD_METRICS),
+        _auto_ica_overlay=False,  # skip figure PNGs in unit tests
     )
 
 
 @pytest.fixture()
 def synthetic_ica_and_raw():
-    """Create a synthetic ICA + Raw pair for testing diagnostics.
+    """Create a synthetic mag-only ICA + Raw pair for testing diagnostics.
 
     Returns (ica, raw) where ica has been fit on raw.
     """
@@ -49,7 +51,6 @@ def synthetic_ica_and_raw():
     sfreq = 300.0
     n_times = int(sfreq * 5)  # 5 seconds
 
-    # Create raw
     info = mne.create_info(
         [f"MEG{i:03d}" for i in range(n_ch)],
         sfreq, ["mag"] * n_ch,
@@ -57,11 +58,41 @@ def synthetic_ica_and_raw():
     data = rng.randn(n_ch, n_times) * 1e-13
     raw = mne.io.RawArray(data, info)
 
-    # Fit ICA
     ica = mne.preprocessing.ICA(
         n_components=10, method="fastica", random_state=42, max_iter=100
     )
     ica.fit(raw)
+
+    return ica, raw
+
+
+@pytest.fixture()
+def synthetic_ica_and_raw_full():
+    """Synthetic Raw with mag + ref_meg + EOG channels, ICA fit on mag.
+
+    Exercises the targeted-score paths (EOG / ECG / reference).
+    """
+    rng = np.random.RandomState(7)
+    n_mag, n_ref, n_eog = 20, 4, 3
+    sfreq = 300.0
+    n_times = int(sfreq * 6)
+
+    ch_names = (
+        [f"MEG{i:03d}" for i in range(n_mag)]
+        + [f"REF{i:03d}" for i in range(n_ref)]
+        + [f"eye_nmf{i + 1}" for i in range(n_eog)]
+    )
+    ch_types = ["mag"] * n_mag + ["ref_meg"] * n_ref + ["eog"] * n_eog
+    info = mne.create_info(ch_names, sfreq, ch_types)
+    data = rng.randn(len(ch_names), n_times) * 1e-13
+    raw = mne.io.RawArray(data, info)
+    with raw.info._unlock():
+        raw.info["line_freq"] = 60.0
+
+    ica = mne.preprocessing.ICA(
+        n_components=10, method="fastica", random_state=0, max_iter=200
+    )
+    ica.fit(raw, picks="mag")
 
     return ica, raw
 
@@ -152,102 +183,6 @@ class TestICAComponentDiagnostics:
         assert np.all(diag["line_ratio"] >= 0.0)
         assert np.all(diag["line_ratio"] <= 1.0)
 
-    def test_line_ratio_uses_info_line_freq(self, ica_cfg, synthetic_ica_and_raw):
-        """line_ratio is read from inst.info['line_freq'] and is highest for a
-        component whose power sits at that frequency."""
-        ica, raw = synthetic_ica_and_raw
-        sfreq = float(raw.info["sfreq"])
-        n_times = raw.n_times
-        t = np.arange(n_times) / sfreq
-
-        # Component 0: pure 50 Hz sinusoid; component 1: pure 10 Hz sinusoid.
-        rng = np.random.RandomState(1)
-        sources = np.vstack([
-            np.sin(2 * np.pi * 50 * t),
-            np.sin(2 * np.pi * 10 * t),
-        ])
-        sources = sources / sources.std(axis=1, keepdims=True)
-
-        ica2 = mne.preprocessing.ICA(
-            n_components=2, method="fastica", random_state=1, max_iter=200
-        )
-        ica2.fit(raw)
-        mock_src = MagicMock()
-        mock_src.get_data.return_value = sources
-        ica2.get_sources = MagicMock(return_value=mock_src)
-
-        # Tell the diagnostics the mains frequency is 50 Hz via info.
-        with raw.info._unlock():
-            raw.info["line_freq"] = 50.0
-
-        analysis = AutoICAAnalysis(ica_cfg)
-        diag = analysis._ica_component_diagnostics(ica2, raw)
-
-        # The 50 Hz component must carry far more line-band power.
-        assert diag["line_ratio"][0] > diag["line_ratio"][1]
-        assert diag["line_ratio"][0] > 0.5
-
-    def test_spectral_deriv_kurtosis_higher_for_narrow_band(self, ica_cfg):
-        """Narrow-band artifact should produce higher spectral derivative kurtosis.
-
-        A synthetic component with a boxcar power spectrum (sharp onset/offset at
-        a narrow band) should yield higher d(log_psd)/df kurtosis than a broadband
-        component with a smooth 1/f-like spectrum.
-        """
-        rng = np.random.RandomState(0)
-        n_ch = 20
-        sfreq = 300.0
-        n_times = int(sfreq * 10)  # 10 s for stable spectral estimates
-
-        # --- Broadband 1/f-like component ---
-        # Filter white noise through a 1/f filter in frequency domain
-        freqs_template = np.fft.rfftfreq(n_times, 1 / sfreq)
-        freqs_template[0] = 1.0  # avoid divide-by-zero at DC
-        amplitude = 1.0 / freqs_template  # 1/f amplitude
-        phase = rng.uniform(0, 2 * np.pi, size=len(freqs_template))
-        spectrum = amplitude * np.exp(1j * phase)
-        broadband = np.fft.irfft(spectrum, n=n_times)  # (n_times,)
-
-        # --- Narrow-band artifact: sinusoid at 20 Hz + low-amplitude broadband ---
-        t = np.arange(n_times) / sfreq
-        narrowband = np.sin(2 * np.pi * 20 * t) + 0.05 * rng.randn(n_times)
-
-        # Package as two-component ICA source matrix (n_components, n_times)
-        # We bypass fitting ICA by mocking the source extraction
-        sources = np.vstack([broadband, narrowband])
-        sources = sources / sources.std(axis=1, keepdims=True)  # normalize
-
-        # Build a minimal Raw + ICA mock so _ica_component_diagnostics can run
-        info = mne.create_info(
-            [f"MEG{i:03d}" for i in range(n_ch)], sfreq, ["mag"] * n_ch
-        )
-        data = rng.randn(n_ch, n_times) * 1e-13
-        raw = mne.io.RawArray(data, info)
-
-        ica = mne.preprocessing.ICA(n_components=2, method="fastica", random_state=0, max_iter=200)
-        ica.fit(raw)
-
-        # Monkey-patch get_sources to return our controlled sources
-        mock_src_obj = MagicMock()
-        mock_src_obj.get_data.return_value = sources
-        ica.get_sources = MagicMock(return_value=mock_src_obj)
-
-        analysis = AutoICAAnalysis(ica_cfg)
-        diag = analysis._ica_component_diagnostics(ica, raw)
-
-        deriv_kurt = diag["spectral_deriv_kurtosis"]
-        resid_kurt = diag["spectral_resid_kurtosis"]
-
-        # Narrow-band component (index 1) should have higher kurtosis on both metrics
-        assert deriv_kurt[1] > deriv_kurt[0], (
-            f"Expected narrow-band deriv kurtosis ({deriv_kurt[1]:.2f}) > "
-            f"broadband ({deriv_kurt[0]:.2f})"
-        )
-        assert resid_kurt[1] > resid_kurt[0], (
-            f"Expected narrow-band resid kurtosis ({resid_kurt[1]:.2f}) > "
-            f"broadband ({resid_kurt[0]:.2f})"
-        )
-
 
 # ---------------------------------------------------------------------------
 # _prepare_metrics_for_gesd
@@ -285,7 +220,8 @@ class TestPrepareMetricsForGESD:
             assert isinstance(vals, np.ndarray)
             assert side in (-1, 0, 1)
 
-    def test_seven_metrics_produced(self, ica_cfg, sample_diagnostics):
+    def test_nine_metrics_produced(self, ica_cfg, sample_diagnostics):
+        """With no explicit names, all diagnostic metrics are produced."""
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
         assert len(metrics) == 9
@@ -294,30 +230,23 @@ class TestPrepareMetricsForGESD:
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
         names = [m[0] for m in metrics]
-        assert "log_hf_ratio" in names
-        assert "log_line_ratio" in names
-        assert "temporal_kurtosis_sqrt" in names
-        assert "autocorr_fisher_z" in names
-        assert "spectral_slope" in names
-        assert "spatial_kurtosis_sqrt" in names
-        assert "spectral_deriv_kurtosis_sqrt" in names
-        assert "spectral_resid_kurtosis_sqrt" in names
-        assert "log_mean_abs_gradient" in names
+        for expected in AutoICAAnalysis.AVAILABLE_GESD_METRICS:
+            assert expected in names
 
     def test_directions(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
         direction_map = {name: side for name, _, side in metrics}
 
-        assert direction_map["log_hf_ratio"] == 1  # high = bad
-        assert direction_map["log_line_ratio"] == 1  # high = line-noise artifact
+        assert direction_map["log_hf_ratio"] == 1
+        assert direction_map["log_line_ratio"] == 1
         assert direction_map["temporal_kurtosis_sqrt"] == 1
         assert direction_map["autocorr_fisher_z"] == -1  # low = bad
         assert direction_map["spectral_slope"] == 1
         assert direction_map["spatial_kurtosis_sqrt"] == 1
-        assert direction_map["spectral_deriv_kurtosis_sqrt"] == 1  # high = bad (sharp transitions)
-        assert direction_map["spectral_resid_kurtosis_sqrt"] == 1  # high = bad (clustered deviation)
-        assert direction_map["log_mean_abs_gradient"] == 1  # high = temporally rough
+        assert direction_map["spectral_deriv_kurtosis_sqrt"] == 1
+        assert direction_map["spectral_resid_kurtosis_sqrt"] == 1
+        assert direction_map["log_mean_abs_gradient"] == 1
 
     def test_no_nans_in_output(self, ica_cfg, sample_diagnostics):
         analysis = AutoICAAnalysis(ica_cfg)
@@ -325,313 +254,382 @@ class TestPrepareMetricsForGESD:
         for name, vals, _ in metrics:
             assert not np.any(np.isnan(vals)), f"NaN found in {name}"
 
-    def test_fisher_z_handles_extreme_autocorr(self, ica_cfg):
-        """Autocorrelation near +/-1 should be clipped before arctanh."""
+    def test_names_param_overrides_selection(self, ica_cfg, sample_diagnostics):
+        """Passing ``names`` selects exactly those diagnostic metrics."""
         analysis = AutoICAAnalysis(ica_cfg)
-        diagnostics = {
-            "sensor_var": np.ones(5),
-            "mean_abs_gradient": np.ones(5),
-            "hf_ratio": np.ones(5),
-            "line_ratio": np.ones(5) * 0.01,
-            "source_kurtosis": np.zeros(5),
-            "autocorr_1lag": np.array([0.999, -0.999, 1.0, -1.0, 0.5]),
-            "spectral_slope": np.zeros(5),
-            "spatial_kurtosis": np.zeros(5),
-            "spectral_deriv_kurtosis": np.zeros(5),
-            "spectral_resid_kurtosis": np.zeros(5),
-        }
-        metrics = analysis._prepare_metrics_for_gesd(diagnostics)
-        fisher_z_vals = next(v for n, v, _ in metrics if n == "autocorr_fisher_z")
-        assert not np.any(np.isinf(fisher_z_vals)), "Fisher z should not be infinite"
+        metrics = analysis._prepare_metrics_for_gesd(
+            sample_diagnostics, names={"log_hf_ratio", "spectral_slope"}
+        )
+        names = {m[0] for m in metrics}
+        assert names == {"log_hf_ratio", "spectral_slope"}
+
+    def test_unknown_metric_name_raises(self, ica_cfg, sample_diagnostics):
+        analysis = AutoICAAnalysis(ica_cfg)
+        with pytest.raises(ValueError):
+            analysis._prepare_metrics_for_gesd(
+                sample_diagnostics, names={"not_a_metric"}
+            )
 
 
 # ---------------------------------------------------------------------------
-# _label_by_gesd_new (PCA-whitened GESD)
+# _resolve_gesd_scores  (single unified _gesd_metrics list)
 # ---------------------------------------------------------------------------
 
-class TestLabelByGESDNew:
-    """Test the PCA-whitened GESD method with synthetic ICA."""
+class TestResolveGesdScores:
+    def test_explicit_list_used_verbatim(self, ica_cfg):
+        ica_cfg._gesd_metrics = ["log_hf_ratio", "eog", "reference"]
+        sel = AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
+        assert sel == {"log_hf_ratio", "eog", "reference"}
 
-    def test_does_not_crash(self, ica_cfg, synthetic_ica_and_raw):
-        """Run the full pipeline on synthetic data without crashing."""
-        ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd(ica, raw)
-        assert isinstance(result, mne.preprocessing.ICA)
+    def test_unknown_token_raises(self, ica_cfg):
+        ica_cfg._gesd_metrics = ["not_a_score"]
+        with pytest.raises(ValueError):
+            AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
 
-    def test_exclude_list_is_sorted_unique(self, ica_cfg, synthetic_ica_and_raw):
-        ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd(ica, raw)
-        assert result.exclude == sorted(set(result.exclude))
+    def test_none_selects_all_available(self, ica_cfg):
+        ica_cfg._gesd_metrics = None
+        sel = AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
+        assert sel == set(AutoICAAnalysis.AVAILABLE_GESD_SCORES)
 
-    def test_exclude_indices_valid(self, ica_cfg, synthetic_ica_and_raw):
-        ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd(ica, raw)
-        for idx in result.exclude:
-            assert 0 <= idx < ica.n_components_
+    def test_empty_list_selects_nothing(self, ica_cfg):
+        ica_cfg._gesd_metrics = []
+        assert AutoICAAnalysis(ica_cfg)._resolve_gesd_scores() == set()
 
-    def test_skips_when_too_few_components(self, ica_cfg, synthetic_ica_and_raw):
-        """Should skip GESD when < 5 components remain."""
-        ica, raw = synthetic_ica_and_raw
-        # Exclude almost all components
-        ica.exclude = list(range(ica.n_components_ - 3))
-        n_excluded_before = len(ica.exclude)
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_gesd(ica, raw)
-        # Should not add any more (too few remaining)
-        assert len(result.exclude) == n_excluded_before
+    def test_targeted_tokens_allowed(self, ica_cfg):
+        ica_cfg._gesd_metrics = ["eog", "ecg", "reference", "corrmap_eog"]
+        sel = AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
+        assert sel == {"eog", "ecg", "reference", "corrmap_eog"}
 
 
 # ---------------------------------------------------------------------------
-# _label_by_corrmap (spatial template matching)
+# Score-reduction / sanitization helpers
 # ---------------------------------------------------------------------------
 
-class TestLabelByCorrmap:
-    """Tests for _label_by_corrmap template matching via corrmap."""
+class TestScoreHelpers:
+    def test_reduce_single_array_takes_abs(self):
+        scores = np.array([-2.0, 1.0, -0.5])
+        out = AutoICAAnalysis._reduce_multichannel_scores(scores)
+        np.testing.assert_allclose(out, [2.0, 1.0, 0.5])
 
-    # ---- graceful-skip cases ------------------------------------------------
+    def test_reduce_multichannel_max_abs(self):
+        # list of 2 arrays (2 channels) x 3 components
+        scores = [np.array([-3.0, 0.1, 0.2]), np.array([1.0, -2.0, 0.0])]
+        out = AutoICAAnalysis._reduce_multichannel_scores(scores)
+        np.testing.assert_allclose(out, [3.0, 2.0, 0.2])
 
-    def test_skips_when_no_template_dir_set(self, ica_cfg, synthetic_ica_and_raw):
-        """Returns ICA unchanged when _corrmap_template_dir is not configured."""
+    def test_sanitize_replaces_nan_with_median(self):
+        vals = np.array([1.0, np.nan, 3.0, np.inf, 5.0])
+        out = AutoICAAnalysis._sanitize_score(vals)
+        assert np.isfinite(out).all()
+        # median of finite {1,3,5} = 3
+        assert out[1] == 3.0 and out[3] == 3.0
+
+    def test_sanitize_all_nan_returns_zeros(self):
+        out = AutoICAAnalysis._sanitize_score(np.array([np.nan, np.nan]))
+        np.testing.assert_allclose(out, [0.0, 0.0])
+
+    def test_pearson_cols_self_is_one(self, synthetic_ica_and_raw):
+        ica, _ = synthetic_ica_and_raw
+        maps = ica.get_components()
+        corr = AutoICAAnalysis._pearson_cols(maps, maps[:, 0])
+        assert corr[0] == pytest.approx(1.0, abs=1e-6)
+        assert abs(corr[0]) == pytest.approx(np.abs(corr).max())
+
+
+# ---------------------------------------------------------------------------
+# Targeted score methods
+# ---------------------------------------------------------------------------
+
+class TestTargetedScores:
+    def test_score_eog_none_without_eog_channel(
+        self, ica_cfg, synthetic_ica_and_raw
+    ):
+        """mag-only raw has no EOG channel -> graceful None."""
         ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        # _corrmap_template_dir deliberately NOT set
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-        assert result.exclude == []
+        out = AutoICAAnalysis(ica_cfg)._score_eog(ica, raw)
+        assert out is None
 
-    def test_skips_when_dir_missing(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
-        """Returns ICA unchanged when the template directory does not exist."""
+    def test_score_eog_returns_vector_with_eog(
+        self, ica_cfg, synthetic_ica_and_raw_full
+    ):
+        ica, raw = synthetic_ica_and_raw_full
+        out = AutoICAAnalysis(ica_cfg)._score_eog(ica, raw)
+        assert out is not None
+        assert out.shape == (ica.n_components_,)
+        assert np.isfinite(out).all()
+        assert np.all(out >= 0)  # |correlation|
+
+    def test_score_ecg_no_raise(self, ica_cfg, synthetic_ica_and_raw_full):
+        """ECG is synthesized from mags; returns a finite vector or None."""
+        ica, raw = synthetic_ica_and_raw_full
+        out = AutoICAAnalysis(ica_cfg)._score_ecg(ica, raw)
+        assert out is None or (
+            out.shape == (ica.n_components_,) and np.isfinite(out).all()
+        )
+
+    def test_score_reference_no_mutation(
+        self, ica_cfg, synthetic_ica_and_raw_full
+    ):
+        ica, raw = synthetic_ica_and_raw_full
+        n_before = len(raw.ch_names)
+        out = AutoICAAnalysis(ica_cfg)._score_reference(ica, raw)
+        # raw must not gain REF_* channels
+        assert len(raw.ch_names) == n_before
+        assert not any(c.startswith("REF_") for c in raw.ch_names)
+        assert out is None or (
+            out.shape == (ica.n_components_,) and np.isfinite(out).all()
+        )
+
+    def test_score_reference_none_without_ref(
+        self, ica_cfg, synthetic_ica_and_raw
+    ):
+        """mag-only raw has no ref_meg -> graceful None."""
         ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        ica_cfg._corrmap_template_dir = str(tmp_path / "nonexistent")
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-        assert result.exclude == []
+        out = AutoICAAnalysis(ica_cfg)._score_reference(ica, raw)
+        assert out is None
 
-    def test_skips_when_channel_names_missing(
+
+# ---------------------------------------------------------------------------
+# _score_corrmap (direct template correlation)
+# ---------------------------------------------------------------------------
+
+class TestScoreCorrmap:
+    def test_none_when_no_template_dir(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        assert AutoICAAnalysis(ica_cfg)._score_corrmap(ica, raw) is None
+
+    def test_none_when_dir_missing(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
+        ica, raw = synthetic_ica_and_raw
+        ica_cfg._corrmap_template_dir = str(tmp_path / "nope")
+        assert AutoICAAnalysis(ica_cfg)._score_corrmap(ica, raw) is None
+
+    def test_none_when_template_files_missing(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """Returns ICA unchanged when {type}_channel_names.npy is absent."""
         ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        ica_cfg._corrmap_template_dir = str(tmp_path)  # dir exists but no .npy
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-        assert result.exclude == []
-
-    def test_skips_when_no_templates_file(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
-        """Skips gracefully when {type}_templates.npy is absent."""
-        ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
-        ica_cfg._corrmap_template_dir = str(tmp_path)
+        ica_cfg._corrmap_template_dir = str(tmp_path)  # dir exists, no .npy
         ica_cfg._n_eog_templates = 3
         ica_cfg._n_ecg_templates = 0
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-        assert result.exclude == []
+        assert AutoICAAnalysis(ica_cfg)._score_corrmap(ica, raw) is None
 
-    def test_skips_when_both_types_disabled(
+    def test_detects_self_topography(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """Returns ICA unchanged when _n_eog_templates and _n_ecg_templates are both 0."""
+        """Template == component 0's topography -> score[0] ~ 1.0."""
         ica, raw = synthetic_ica_and_raw
-        ica.exclude = []
-        ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._n_eog_templates = 0
-        ica_cfg._n_ecg_templates = 0
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-        assert result.exclude == []
-
-    # ---- detection tests ----------------------------------------------------
-
-    def test_detects_eog_matching_component(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
-        """A template built from an ICA component's own topography must be found."""
-        ica, raw = synthetic_ica_and_raw
-        components = ica.get_components()  # (n_channels, n_components)
-        target_idx = 0
-        target_topo = components[:, target_idx]
-
+        comps = ica.get_components()
+        target = 0
         np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
-        np.save(str(tmp_path / "eog_templates.npy"), target_topo[:, np.newaxis])
+        np.save(str(tmp_path / "eog_templates.npy"), comps[:, target][:, None])
 
-        ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 1
         ica_cfg._n_ecg_templates = 0
-        ica_cfg._corrmap_threshold = 0.9  # high threshold: only near-exact match
 
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-
-        assert target_idx in result.exclude, (
-            f"Expected component {target_idx} in exclude, got {result.exclude}"
-        )
-        assert target_idx in result.labels_.get("eog", [])
-
-    def test_detects_ecg_matching_component(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
-        """ECG template matching works the same way as EOG."""
-        ica, raw = synthetic_ica_and_raw
-        components = ica.get_components()
-        target_idx = 1
-        target_topo = components[:, target_idx]
-
-        np.save(str(tmp_path / "ecg_channel_names.npy"), np.array(ica.ch_names))
-        np.save(str(tmp_path / "ecg_templates.npy"), target_topo[:, np.newaxis])
-
-        ica.exclude = []
-        ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._n_eog_templates = 0
-        ica_cfg._n_ecg_templates = 1
-        ica_cfg._corrmap_threshold = 0.9
-
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-
-        assert target_idx in result.exclude
-        assert target_idx in result.labels_.get("ecg", [])
-
-    def test_labels_and_exclude_are_consistent(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
-        """Every component in ica.labels_['eog'] must also appear in ica.exclude."""
-        ica, raw = synthetic_ica_and_raw
-        components = ica.get_components()
-        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
-        np.save(str(tmp_path / "eog_templates.npy"), components[:, 0:1])
-
-        ica.exclude = []
-        ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._n_eog_templates = 1
-        ica_cfg._n_ecg_templates = 0
-        ica_cfg._corrmap_threshold = 0.9
-
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-
-        for idx in result.labels_.get("eog", []):
-            assert idx in result.exclude
-
-    def test_multiple_templates_accumulate(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
-        """Matches from multiple templates of the same type are unioned, not overwritten."""
-        ica, raw = synthetic_ica_and_raw
-        components = ica.get_components()
-        np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
-        # Two template columns targeting different components
-        np.save(
-            str(tmp_path / "eog_templates.npy"),
-            np.column_stack([components[:, 0], components[:, 1]]),
-        )
-
-        ica.exclude = []
-        ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._n_eog_templates = 2
-        ica_cfg._n_ecg_templates = 0
-        ica_cfg._corrmap_threshold = 0.9
-
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
-
-        # Both targets should be matched
-        assert 0 in result.exclude
-        assert 1 in result.exclude
-
-    # ---- channel alignment --------------------------------------------------
+        out = AutoICAAnalysis(ica_cfg)._score_corrmap(ica, raw)
+        assert out is not None and "corrmap_eog" in out
+        s = out["corrmap_eog"]
+        assert s.shape == (ica.n_components_,)
+        assert s[target] == pytest.approx(1.0, abs=1e-6)
+        assert s[target] == pytest.approx(s.max())
 
     def test_channel_subset_alignment(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """Reference with extra channels aligns correctly to the ICA's subset."""
+        """Reference with extra channels aligns to the ICA's channel subset."""
         ica, raw = synthetic_ica_and_raw
-        components = ica.get_components()
-        target_topo = components[:, 0]
-
-        # Reference = ICA channels + 5 phantom channels not in the ICA
-        ica_channels = list(ica.ch_names)
-        extra_channels = [f"EXTRA{i:03d}" for i in range(5)]
-        ref_channels = np.array(ica_channels + extra_channels)
-
-        # Template has values for all reference channels; extras are noise
-        rng = np.random.RandomState(42)
+        comps = ica.get_components()
+        target_topo = comps[:, 0]
+        extra = [f"EXTRA{i:03d}" for i in range(5)]
+        ref_channels = np.array(list(ica.ch_names) + extra)
+        rng = np.random.RandomState(1)
         full_template = np.concatenate([target_topo, rng.randn(5) * 0.01])
-
         np.save(str(tmp_path / "eog_channel_names.npy"), ref_channels)
-        np.save(str(tmp_path / "eog_templates.npy"), full_template[:, np.newaxis])
+        np.save(str(tmp_path / "eog_templates.npy"), full_template[:, None])
 
-        ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
         ica_cfg._n_eog_templates = 1
         ica_cfg._n_ecg_templates = 0
-        ica_cfg._corrmap_threshold = 0.9
 
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
+        out = AutoICAAnalysis(ica_cfg)._score_corrmap(ica, raw)
+        assert out is not None
+        assert out["corrmap_eog"][0] == pytest.approx(1.0, abs=1e-6)
 
-        # Should not crash, and should still identify the target component
-        assert isinstance(result, mne.preprocessing.ICA)
-        assert 0 in result.exclude
-
-    def test_n_templates_limits_columns_used(
+    def test_n_templates_limits_columns(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """_n_eog_templates=1 should only use the first template column."""
+        """_n_eog_templates=1 uses only the first template column."""
         ica, raw = synthetic_ica_and_raw
-        components = ica.get_components()
+        comps = ica.get_components()
         np.save(str(tmp_path / "eog_channel_names.npy"), np.array(ica.ch_names))
-        # Column 0 targets component 0 (will be used)
-        # Column 1 targets component 1 (should be ignored when _n_eog_templates=1)
         np.save(
             str(tmp_path / "eog_templates.npy"),
-            np.column_stack([components[:, 0], components[:, 1]]),
+            np.column_stack([comps[:, 0], comps[:, 1]]),
         )
-
-        ica.exclude = []
         ica_cfg._corrmap_template_dir = str(tmp_path)
-        ica_cfg._n_eog_templates = 1  # only use first column
+        ica_cfg._n_eog_templates = 1
         ica_cfg._n_ecg_templates = 0
-        ica_cfg._corrmap_threshold = 0.9
 
-        analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._label_by_corrmap(ica, raw)
+        out = AutoICAAnalysis(ica_cfg)._score_corrmap(ica, raw)
+        s = out["corrmap_eog"]
+        assert s[0] == pytest.approx(1.0, abs=1e-6)  # from column 0
+        assert s[1] < 0.99  # column 1 not used
 
-        assert 0 in result.exclude        # component from column 0
-        assert 1 not in result.exclude    # component from column 1 (ignored)
 
-    # ---- integration --------------------------------------------------------
+# ---------------------------------------------------------------------------
+# _compute_ic_scores
+# ---------------------------------------------------------------------------
 
-    def test__corrmap_bads_wired_into_auto_ica(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+class TestComputeICScores:
+    def test_filters_to_selected(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica_cfg._gesd_metrics = ["log_hf_ratio", "spectral_slope"]
+        specs = AutoICAAnalysis(ica_cfg)._compute_ic_scores(ica, raw)
+        names = {s.name for s in specs}
+        assert names == {"log_hf_ratio", "spectral_slope"}
+        for s in specs:
+            assert s.values.shape == (ica.n_components_,)
+            assert np.isfinite(s.values).all()
+
+    def test_empty_when_nothing_selected(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica_cfg._gesd_metrics = []
+        assert AutoICAAnalysis(ica_cfg)._compute_ic_scores(ica, raw) == []
+
+    def test_sanitizes_nan_from_targeted_score(
+        self, ica_cfg, synthetic_ica_and_raw
     ):
-        """_corrmap_bads=True calls _label_by_corrmap inside _auto_ica."""
+        ica, raw = synthetic_ica_and_raw
+        ica_cfg._gesd_metrics = ["log_hf_ratio", "eog"]
+        analysis = AutoICAAnalysis(ica_cfg)
+        bad = np.random.RandomState(0).randn(ica.n_components_)
+        bad[1] = np.nan
+        analysis._score_eog = lambda *a, **k: bad
+        specs = analysis._compute_ic_scores(ica, raw)
+        eog = next(s for s in specs if s.name == "eog")
+        assert np.isfinite(eog.values).all()
+
+    def test_drops_constant_score(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica_cfg._gesd_metrics = ["log_hf_ratio", "eog"]
+        analysis = AutoICAAnalysis(ica_cfg)
+        analysis._score_eog = lambda *a, **k: np.ones(ica.n_components_)
+        specs = analysis._compute_ic_scores(ica, raw)
+        assert "eog" not in {s.name for s in specs}
+        assert "log_hf_ratio" in {s.name for s in specs}
+
+
+# ---------------------------------------------------------------------------
+# _run_unified_gesd
+# ---------------------------------------------------------------------------
+
+class TestRunUnifiedGesd:
+    def _specs(self, analysis, ica, raw):
+        return analysis._compute_ic_scores(ica, raw)
+
+    def test_does_not_crash(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        ica_cfg.ref_bads = False
-        ica_cfg._gesd_bads = False
-        ica_cfg._corrmap_bads = True
-        # Point at a dir with no reference_channels.npy → graceful skip
-        ica_cfg._corrmap_template_dir = str(tmp_path)
-
         analysis = AutoICAAnalysis(ica_cfg)
-        result = analysis._auto_ica(ica, raw)
+        specs = self._specs(analysis, ica, raw)
+        ica2, gesd = analysis._run_unified_gesd(ica, raw, specs)
+        assert isinstance(ica2, mne.preprocessing.ICA)
+        assert isinstance(gesd, GesdResult)
+        assert gesd.n_pcs >= 1
 
-        # Should complete without error (skips due to missing reference file)
-        assert isinstance(result, mne.preprocessing.ICA)
-        assert result.exclude == []
+    def test_exclude_sorted_unique_valid(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        analysis = AutoICAAnalysis(ica_cfg)
+        specs = self._specs(analysis, ica, raw)
+        ica2, _ = analysis._run_unified_gesd(ica, raw, specs)
+        assert ica2.exclude == sorted(set(ica2.exclude))
+        for idx in ica2.exclude:
+            assert 0 <= idx < ica.n_components_
+
+    def test_single_score_one_pc(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg._gesd_metrics = ["log_hf_ratio"]
+        analysis = AutoICAAnalysis(ica_cfg)
+        specs = self._specs(analysis, ica, raw)
+        assert len(specs) == 1
+        ica2, gesd = analysis._run_unified_gesd(ica, raw, specs)
+        assert gesd.n_pcs == 1
+        assert gesd.alpha_per_pc == pytest.approx(gesd.alpha)
+        for idx in ica2.exclude:
+            assert 0 <= idx < ica.n_components_
+
+    def test_skips_when_too_few_components(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = list(range(ica.n_components_ - 3))
+        n_before = len(ica.exclude)
+        analysis = AutoICAAnalysis(ica_cfg)
+        specs = self._specs(analysis, ica, raw)
+        ica2, gesd = analysis._run_unified_gesd(ica, raw, specs)
+        assert len(ica2.exclude) == n_before
+        assert gesd.n_pcs == 0
+
+    def test_empty_specs_no_op(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        analysis = AutoICAAnalysis(ica_cfg)
+        ica2, gesd = analysis._run_unified_gesd(ica, raw, [])
+        assert gesd.n_pcs == 0
+        assert ica2.exclude == []
+
+    def test_result_shapes(self, ica_cfg, synthetic_ica_and_raw):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        analysis = AutoICAAnalysis(ica_cfg)
+        specs = self._specs(analysis, ica, raw)
+        _, gesd = analysis._run_unified_gesd(ica, raw, specs)
+        k = len(specs)
+        n = ica.n_components_
+        assert gesd.M.shape == (k, n)
+        assert gesd.M_std.shape == (k, n)
+        assert gesd.loadings.shape == (k, gesd.n_pcs)
+        assert gesd.eigenscores.shape == (gesd.n_pcs, n)
+        assert len(gesd.per_pc_flagged) == gesd.n_pcs
+        assert gesd.flagged.shape == (n,)
+
+
+# ---------------------------------------------------------------------------
+# _build_components_tsv
+# ---------------------------------------------------------------------------
+
+class TestBuildComponentsTSV:
+    def test_columns(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.deriv_root = str(tmp_path)
+        ica_cfg._auto_ica_overlay = False
+        analysis = AutoICAAnalysis(ica_cfg)
+        analysis._auto_ica(ica, raw)
+        df = analysis._build_components_tsv(ica)
+
+        cols = set(df.columns)
+        assert {
+            "component",
+            "type",
+            "description",
+            "status",
+            "status_description",
+            "method_gesd",
+            "method_pipeline_icalabel",
+        } <= cols
+        assert any(c.startswith("score_") for c in cols)
+        assert any(c.startswith("gesd_score_PC") for c in cols)
+        assert "gesd_pc_loadings" in cols
+        assert "gesd_var_explained" in cols
+        # Removed legacy columns
+        assert "method_reference" not in cols
+        assert "method_corrmap_eog" not in cols
+        assert "method_corrmap_ecg" not in cols
+        assert "method_pipeline_ecg" not in cols
+        assert "method_pipeline_eog" not in cols
+        assert not any(c.startswith("metric_") for c in cols)
+        assert len(df) == ica.n_components_
 
 
 # ---------------------------------------------------------------------------
@@ -639,62 +637,62 @@ class TestLabelByCorrmap:
 # ---------------------------------------------------------------------------
 
 class TestAutoICAIntegration:
-    """Test the full _auto_ica method."""
-
-    def test_gesd_only(self, ica_cfg, synthetic_ica_and_raw):
-        """With ref_bads=False, only GESD should run."""
+    def test_runs_and_sorts(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        ica_cfg.ref_bads = False
-        ica_cfg.gesd_bads = True
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._auto_ica(ica, raw)
         assert isinstance(result, mne.preprocessing.ICA)
-        # Exclude list should be sorted and deduplicated
         assert result.exclude == sorted(set(result.exclude))
 
-    def test_no_methods_enabled(self, ica_cfg, synthetic_ica_and_raw):
-        """With both methods disabled, no components should be excluded."""
+    def test_no_scores_no_exclude(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        ica_cfg.ref_bads = False
-        ica_cfg._gesd_bads = False
+        ica_cfg._gesd_metrics = []
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._auto_ica(ica, raw)
         assert result.exclude == []
 
 
 # ---------------------------------------------------------------------------
-# ICA overlay plots
+# Overlay
 # ---------------------------------------------------------------------------
 
-class TestICAOverlay:
-    """Tests for the cumulative ICA overlay PNGs written during _auto_ica."""
+class TestMakeOverlayEvoked:
+    def test_builds_mag_evoked_from_raw(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        _, raw = synthetic_ica_and_raw
+        ica_cfg.deriv_root = str(tmp_path)  # no icafit file -> fallback
+        ev = AutoICAAnalysis(ica_cfg)._make_overlay_evoked(raw)
+        assert isinstance(ev, mne.Evoked)
+        assert set(ev.get_channel_types()) == {"mag"}
 
-    def test_overlay_basepath(self, ica_cfg, tmp_path):
-        """Output dir is the meg derivatives dir; basename carries proc-ica."""
+
+class TestICAOverlay:
+    """Tests for the report-style ICA overlay PNGs written during _auto_ica."""
+
+    def test_overlay_basepath_in_ica_folder(self, ica_cfg, tmp_path):
         ica_cfg.deriv_root = str(tmp_path)
-        analysis = AutoICAAnalysis(ica_cfg)
-        out_dir, basename = analysis._overlay_basepath()
-        assert out_dir.name == "meg"
+        out_dir, basename = AutoICAAnalysis(ica_cfg)._overlay_basepath()
+        assert out_dir.name == "ICA"
+        assert out_dir.parent.name == "meg"
         assert "sub-001" in str(out_dir) and "ses-01" in str(out_dir)
         assert basename == "sub-001_ses-01_task-restingstate_proc-ica"
 
     def test_overlay_disabled_writes_nothing(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """With _auto_ica_overlay=False, no PNG is written."""
         ica, raw = synthetic_ica_and_raw
         ica_cfg.deriv_root = str(tmp_path)
         ica_cfg._auto_ica_overlay = False
         analysis = AutoICAAnalysis(ica_cfg)
-        analysis._save_ica_overlay(ica, raw, 1, "pre-custom")
+        analysis._save_ica_overlay(ica, None, 0, "pre-custom")
         assert list(tmp_path.rglob("*.png")) == []
 
     def test_overlay_writes_named_png(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """A single labelled overlay PNG is created with the expected name."""
         import matplotlib
         matplotlib.use("Agg")
 
@@ -703,18 +701,18 @@ class TestICAOverlay:
         ica_cfg.deriv_root = str(tmp_path)
         ica_cfg._auto_ica_overlay = True
         analysis = AutoICAAnalysis(ica_cfg)
-        analysis._save_ica_overlay(ica, raw, 2, "ref-bads")
+        evoked = analysis._make_overlay_evoked(raw)
+        analysis._save_ica_overlay(ica, evoked, 1, "gesd-PC1")
 
         expected = (
-            tmp_path / "sub-001" / "ses-01" / "meg"
-            / "sub-001_ses-01_task-restingstate_proc-ica_icaOverlay_02_ref-bads.png"
+            tmp_path / "sub-001" / "ses-01" / "meg" / "ICA"
+            / "sub-001_ses-01_task-restingstate_proc-ica_icaOverlay_01_gesd-PC1.png"
         )
         assert expected.exists()
 
-    def test_overlay_cumulative_steps_during_auto_ica(
+    def test_overlay_steps_during_auto_ica(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
-        """_auto_ica writes the pre-custom and gesd-bads overlays (ref disabled)."""
         import matplotlib
         matplotlib.use("Agg")
 
@@ -722,12 +720,56 @@ class TestICAOverlay:
         ica.exclude = []
         ica_cfg.deriv_root = str(tmp_path)
         ica_cfg._auto_ica_overlay = True
-        ica_cfg.ref_bads = False
         analysis = AutoICAAnalysis(ica_cfg)
         analysis._auto_ica(ica, raw)
 
         pngs = sorted(p.name for p in tmp_path.rglob("*icaOverlay*.png"))
-        assert any("_01_pre-custom.png" in p for p in pngs)
-        assert any("_03_gesd-bads.png" in p for p in pngs)
-        # ref-bads step was disabled, so no step 02 overlay.
-        assert not any("_02_ref-bads.png" in p for p in pngs)
+        assert any("_00_pre-custom.png" in p for p in pngs)
+        assert any("gesd-PC" in p for p in pngs)
+        assert any("final.png" in p for p in pngs)
+        # all overlays land in the meg/ICA folder
+        for p in tmp_path.rglob("*icaOverlay*.png"):
+            assert p.parent.name == "ICA"
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic figures
+# ---------------------------------------------------------------------------
+
+class TestGesdFigures:
+    def test_figures_written(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
+        import matplotlib
+        matplotlib.use("Agg")
+
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.deriv_root = str(tmp_path)
+        ica_cfg._auto_ica_overlay = True
+        analysis = AutoICAAnalysis(ica_cfg)
+        analysis._auto_ica(ica, raw)
+
+        names = sorted(p.name for p in tmp_path.rglob("*.png"))
+        assert any("gesdLoadings" in n for n in names)
+        assert any("gesdEigenscores" in n for n in names)
+        assert any("gesdScree" in n for n in names)
+        assert any("gesdOutliers" in n for n in names)
+
+    def test_figure_failure_does_not_abort(
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+    ):
+        import matplotlib
+        matplotlib.use("Agg")
+
+        ica, raw = synthetic_ica_and_raw
+        ica.exclude = []
+        ica_cfg.deriv_root = str(tmp_path)
+        ica_cfg._auto_ica_overlay = True
+        analysis = AutoICAAnalysis(ica_cfg)
+
+        def _boom(_gesd):
+            raise RuntimeError("boom")
+
+        analysis._fig_scree = _boom
+        # Should still complete and return the ICA.
+        result = analysis._auto_ica(ica, raw)
+        assert isinstance(result, mne.preprocessing.ICA)
