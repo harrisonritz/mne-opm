@@ -55,9 +55,9 @@ Required:
 Optional:
     _auto_ica : bool
         Enable/disable automatic ICA labeling. Default: False.
-    _gesd_metrics : list[str] | None
+    _ica_metrics : list[str] | None
         The single list of per-IC scores to feed into the unified GESD. Valid
-        names are in ``AVAILABLE_GESD_SCORES`` — the diagnostic property metrics
+        names are in ``AVAILABLE_ICA_SCORES`` — the diagnostic property metrics
         plus the artifact-targeted scores ``"eog"``, ``"ecg"``, ``"reference"``,
         ``"corrmap_eog"`` and ``"corrmap_ecg"``. ``None`` (default) selects all
         available scores; an empty list disables the GESD entirely.
@@ -74,101 +74,29 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 from scipy.stats import kurtosis
 from scipy.signal import welch
-from sklearn.preprocessing import StandardScaler
 
 import mne
 import mne_bids
 from mne_bids import BIDSPath, find_matching_paths
-from osl_ephys.preprocessing.osl_wrappers import gesd as osl_gesd
 
 from ._base import BaseAnalysis
 from ._io import save_ica_bids
-
-
-@dataclass
-class ScoreSpec:
-    """A single per-IC score fed into the unified GESD procedure.
-
-    Parameters
-    ----------
-    name : str
-        Identifier for the score (e.g. ``"log_hf_ratio"``, ``"eog"``).
-    values : np.ndarray
-        Per-IC score values, shape ``(n_components_,)``.
-    side : int
-        Outlier direction for GESD: ``1`` = high values are bad,
-        ``-1`` = low values are bad, ``0`` = both tails.
-    group : str
-        ``"diagnostic"`` (signed property metric) or ``"targeted"``
-        (artifact-correlation score; stored as ``|value|`` with ``side=1``).
-    """
-
-    name: str
-    values: np.ndarray
-    side: int
-    group: str
-
-
-@dataclass
-class GesdResult:
-    """Outputs of the unified PCA→GESD procedure, used by the TSV and figures.
-
-    Attributes
-    ----------
-    score_names : list of str
-        Names of the input scores, in row order of ``M``.
-    sides : np.ndarray
-        Outlier side per input score, shape ``(k,)``.
-    M : np.ndarray
-        Raw (pre-standardization) score matrix, shape ``(k, n)``.
-    M_std : np.ndarray
-        Standardized score matrix, shape ``(k, n)``.
-    loadings : np.ndarray
-        PC loadings (how each score weights each PC), shape ``(k, n_pcs)``.
-    eigenscores : np.ndarray
-        PC scores (how each IC loads on each PC), shape ``(n_pcs, n)``.
-    var_explained : np.ndarray
-        Variance fraction explained by each retained PC, shape ``(n_pcs,)``.
-    var_explained_all : np.ndarray
-        Variance fraction for the full singular spectrum (for the scree plot).
-    n_pcs : int
-        Number of retained principal components.
-    pc_sides : np.ndarray
-        Outlier side used for GESD on each PC, shape ``(n_pcs,)``.
-    alpha : float
-        Overall family-wise significance level.
-    alpha_per_pc : float
-        Šidák-corrected per-PC significance level.
-    per_pc_flagged : list of np.ndarray
-        Boolean mask of flagged ICs for each PC, each shape ``(n,)``.
-    flagged : np.ndarray
-        Union boolean mask of flagged ICs, shape ``(n,)``.
-    """
-
-    score_names: List[str]
-    sides: np.ndarray
-    M: np.ndarray
-    M_std: np.ndarray
-    loadings: np.ndarray
-    eigenscores: np.ndarray
-    var_explained: np.ndarray
-    var_explained_all: np.ndarray
-    n_pcs: int
-    pc_sides: np.ndarray
-    alpha: float
-    alpha_per_pc: float
-    per_pc_flagged: List[np.ndarray]
-    flagged: np.ndarray
+from .pca_gesd import (
+    MetricSpec,
+    PCAGesdResult,
+    empty_result,
+    fisher_z,
+    run_pca_gesd,
+    save_pca_gesd_figures,
+)
 
 
 class AutoICAAnalysis(BaseAnalysis):
@@ -178,7 +106,7 @@ class AutoICAAnalysis(BaseAnalysis):
     are z-scored, projected onto principal components, and a GESD test is run
     on each eigenscore with a single Šidák-controlled family-wise error rate.
     Available scores: diagnostic property metrics, EOG/ECG/reference
-    correlation, and corrmap template correlation (see ``_gesd_metrics``).
+    correlation, and corrmap template correlation (see ``_ica_metrics``).
 
     Components flagged by the unified GESD are added to ica.exclude
     and will be removed when ICA is applied to the data.
@@ -347,7 +275,7 @@ class AutoICAAnalysis(BaseAnalysis):
         """
         # Initialize per-component label tracking for TSV attribution
         self._component_labels = {i: [] for i in range(ica.n_components_)}
-        self._gesd_result: GesdResult | None = None
+        self._gesd_result: PCAGesdResult | None = None
 
         # Evoked used for the report-style overlays (built once, only if needed).
         evoked = (
@@ -583,8 +511,8 @@ class AutoICAAnalysis(BaseAnalysis):
     def _resolve_gesd_scores(self) -> set:
         """Resolve which per-IC scores to feed into the unified GESD.
 
-        Reads the single ``cfg._gesd_metrics`` list, which may contain any name
-        in ``AVAILABLE_GESD_SCORES`` — the diagnostic property metrics plus the
+        Reads the single ``cfg._ica_metrics`` list, which may contain any name
+        in ``AVAILABLE_ICA_SCORES`` — the diagnostic property metrics plus the
         artifact-targeted scores ``"eog"``, ``"ecg"``, ``"reference"``,
         ``"corrmap_eog"`` and ``"corrmap_ecg"``.
 
@@ -597,18 +525,18 @@ class AutoICAAnalysis(BaseAnalysis):
         selected : set of str
             Names of the scores to compute and test.
         """
-        selected = getattr(self.cfg, "_gesd_metrics", None)
+        selected = getattr(self.cfg, "_ica_metrics", None)
         if selected is None:
-            self.log("_gesd_metrics unset; using all available scores.")
-            return set(self.AVAILABLE_GESD_SCORES)
+            self.log("_ica_metrics unset; using all available scores.")
+            return set(self.AVAILABLE_ICA_SCORES)
 
-        unknown = set(selected) - set(self.AVAILABLE_GESD_SCORES)
+        unknown = set(selected) - set(self.AVAILABLE_ICA_SCORES)
         if unknown:
             raise ValueError(
-                f"Unknown _gesd_metrics names: {unknown}. "
-                f"Available: {self.AVAILABLE_GESD_SCORES}"
+                f"Unknown _ica_metrics names: {unknown}. "
+                f"Available: {self.AVAILABLE_ICA_SCORES}"
             )
-        self.log(f"Using configured _gesd_metrics: {sorted(set(selected))}")
+        self.log(f"Using configured _ica_metrics: {sorted(set(selected))}")
         return set(selected)
 
     @staticmethod
@@ -626,25 +554,18 @@ class AutoICAAnalysis(BaseAnalysis):
             arr = arr.max(axis=0)
         return arr.ravel()
 
-    @staticmethod
-    def _sanitize_score(values: np.ndarray) -> np.ndarray:
-        """Replace non-finite score entries with the finite median (or 0)."""
-        vals = np.asarray(values, dtype=float).copy()
-        finite = np.isfinite(vals)
-        if not finite.all():
-            fill = float(np.median(vals[finite])) if finite.any() else 0.0
-            vals[~finite] = fill
-        return vals
-
     def _compute_ic_scores(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
     ) -> list:
         """Compute every selected per-IC score for the unified GESD.
 
-        Combines the diagnostic property metrics with the artifact-targeted
-        correlation scores (EOG, ECG, reference, corrmap), filtered by
-        :meth:`_resolve_gesd_scores`.  Each returned score is finite (NaNs
-        imputed) and has positive variance; constant scores are dropped.
+        Combines the diagnostic property metrics (already transformed by
+        :meth:`_prepare_metrics_for_gesd`) with the artifact-targeted
+        correlation scores (EOG, ECG, reference, corrmap).  The targeted scores
+        are maximum-absolute correlations, Fisher z-transformed (``arctanh``)
+        for normality before z-scoring, with ``side=+1`` (high = artifact).
+        Sanitization and dropping of constant/degenerate metrics happen inside
+        :func:`pca_gesd.run_pca_gesd`.
 
         Parameters
         ----------
@@ -655,39 +576,37 @@ class AutoICAAnalysis(BaseAnalysis):
 
         Returns
         -------
-        specs : list of ScoreSpec
+        specs : list of MetricSpec
             Per-IC scores to feed into the GESD.
         """
         selected = self._resolve_gesd_scores()
         if not selected:
             return []
 
-        specs: list[ScoreSpec] = []
+        specs: list[MetricSpec] = []
 
-        # --- Diagnostic property metrics ---
-        diag_names = selected & set(self.AVAILABLE_GESD_METRICS)
+        # --- Diagnostic property metrics (each carries its own transform) ---
+        diag_names = selected & set(self.AVAILABLE_ICA_METRICS)
         if diag_names:
             diagnostics = self._ica_component_diagnostics(ica, raw)
             for name, vals, side in self._prepare_metrics_for_gesd(
                 diagnostics, names=diag_names
             ):
-                specs.append(
-                    ScoreSpec(name, np.asarray(vals, float), side, "diagnostic")
-                )
+                specs.append(MetricSpec(name, np.asarray(vals, float), side))
 
-        # --- Targeted artifact-correlation scores (|value|, side=+1) ---
+        # --- Targeted artifact-correlation scores: atanh(|r|), side=+1 ---
         if "eog" in selected:
             vals = self._score_eog(ica, raw)
             if vals is not None:
-                specs.append(ScoreSpec("eog", vals, 1, "targeted"))
+                specs.append(MetricSpec("eog", fisher_z(vals), 1))
         if "ecg" in selected:
             vals = self._score_ecg(ica, raw)
             if vals is not None:
-                specs.append(ScoreSpec("ecg", vals, 1, "targeted"))
+                specs.append(MetricSpec("ecg", fisher_z(vals), 1))
         if "reference" in selected:
             vals = self._score_reference(ica, raw)
             if vals is not None:
-                specs.append(ScoreSpec("reference", vals, 1, "targeted"))
+                specs.append(MetricSpec("reference", fisher_z(vals), 1))
         if "corrmap_eog" in selected or "corrmap_ecg" in selected:
             corr = self._score_corrmap(ica, raw)
             for key in ("corrmap_eog", "corrmap_ecg"):
@@ -696,38 +615,25 @@ class AutoICAAnalysis(BaseAnalysis):
                     and corr is not None
                     and corr.get(key) is not None
                 ):
-                    specs.append(ScoreSpec(key, corr[key], 1, "targeted"))
-
-        # Sanitize and drop zero-variance / wrong-length scores.
-        clean: list[ScoreSpec] = []
-        for spec in specs:
-            vals = self._sanitize_score(spec.values)
-            if vals.size != ica.n_components_:
-                self.log(
-                    f"Score '{spec.name}' has length {vals.size} != "
-                    f"{ica.n_components_}; dropping."
-                )
-                continue
-            if np.std(vals) == 0:
-                self.log(f"Score '{spec.name}' is constant; dropping.")
-                continue
-            clean.append(ScoreSpec(spec.name, vals, spec.side, spec.group))
+                    specs.append(MetricSpec(key, fisher_z(corr[key]), 1))
 
         self.log(
-            f"Computed {len(clean)} per-IC scores: {[s.name for s in clean]}"
+            f"Computed {len(specs)} per-IC scores: {[s.name for s in specs]}"
         )
-        return clean
+        return specs
 
     def _score_eog(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
     ) -> "np.ndarray | None":
         """Per-IC EOG correlation score via ``find_bads_eog``.
 
-        Returns ``None`` (logged) when no EOG channel is present or detection
-        fails — typical when virtual EOG channels are absent.
+        Uses ``measure="correlation"`` so the scores are Pearson correlations
+        (reduced to max ``|r|`` per IC), suitable for the Fisher z-transform
+        applied in :meth:`_compute_ic_scores`.  Returns ``None`` (logged) when
+        no EOG channel is present or detection fails.
         """
         try:
-            _, scores = ica.find_bads_eog(raw)
+            _, scores = ica.find_bads_eog(raw, measure="correlation")
         except Exception as exc:
             self.log(f"EOG scoring skipped ({type(exc).__name__}: {exc}).")
             return None
@@ -736,13 +642,18 @@ class AutoICAAnalysis(BaseAnalysis):
     def _score_ecg(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
     ) -> "np.ndarray | None":
-        """Per-IC ECG correlation score via ``find_bads_ecg`` (CTPS).
+        """Per-IC ECG correlation score via ``find_bads_ecg``.
 
         Synthesizes an ECG signal from the magnetometers when no ECG channel is
-        present.  Returns ``None`` (logged) on failure.
+        present, and uses ``method="correlation"`` so the scores are Pearson
+        correlations (reduced to max ``|r|`` per IC) for the Fisher z-transform
+        applied in :meth:`_compute_ic_scores`.  Returns ``None`` (logged) on
+        failure.
         """
         try:
-            _, scores = ica.find_bads_ecg(raw, method="ctps")
+            _, scores = ica.find_bads_ecg(
+                raw, method="correlation", measure="correlation"
+            )
         except Exception as exc:
             self.log(f"ECG scoring skipped ({type(exc).__name__}: {exc}).")
             return None
@@ -776,7 +687,9 @@ class AutoICAAnalysis(BaseAnalysis):
             ref_src = ref_ica.get_sources(ref_raw)
             ref_src.rename_channels(lambda x: f"REF_{x}")
             work.add_channels([ref_src], force_update_info=True)
-            _, scores = ica.find_bads_ref(inst=work, method="separate")
+            _, scores = ica.find_bads_ref(
+                inst=work, method="separate", measure="correlation"
+            )
         except Exception as exc:
             self.log(f"Reference scoring skipped ({type(exc).__name__}: {exc}).")
             return None
@@ -871,9 +784,8 @@ class AutoICAAnalysis(BaseAnalysis):
         num = m.T @ t
         den = np.linalg.norm(m, axis=0) * np.linalg.norm(t)
         return num / (den + 1e-30)
-
     # ------------------------------------------------------------------
-    # Unified PCA-whitened GESD
+    # Unified PCA-whitened GESD (delegates to the generic pca_gesd utility)
     # ------------------------------------------------------------------
 
     def _run_unified_gesd(
@@ -887,14 +799,10 @@ class AutoICAAnalysis(BaseAnalysis):
     ) -> tuple:
         """Run the unified PCA-whitened GESD over all per-IC scores.
 
-        Steps:
-            1. Build the score matrix (k scores x n components); targeted scores
-               use ``|value|`` so high = artifact.
-            2. Standardize each score (row-wise).
-            3. PCA via SVD; keep enough PCs for 99% of the variance.
-            4. GESD on each eigenscore with a Šidák-corrected alpha, the tail
-               direction taken from the loadings and per-score sides.
-            5. Union of flagged components -> ``ica.exclude``.
+        Thin wrapper around :func:`custom.preprocessing.pca_gesd.run_pca_gesd`
+        that adds the ICA-specific bookkeeping: skipping when too few components
+        remain, recording which PC flagged each component (for the TSV), and
+        extending ``ica.exclude``.
 
         Parameters
         ----------
@@ -902,7 +810,7 @@ class AutoICAAnalysis(BaseAnalysis):
             ICA solution.
         raw : mne.io.BaseRaw
             Unused directly (scores are precomputed); kept for symmetry/testing.
-        score_specs : list of ScoreSpec
+        score_specs : list of MetricSpec
             Per-IC scores to test.
         alpha : float
             Overall family-wise significance level (default 0.05).
@@ -915,163 +823,53 @@ class AutoICAAnalysis(BaseAnalysis):
         -------
         ica : mne.preprocessing.ICA
             ICA with flagged components added to ``exclude``.
-        result : GesdResult
+        result : PCAGesdResult
             Detailed PCA/GESD outputs for the TSV and figures.
         """
-        self.log("Running unified PCA-whitened GESD...")
-
         # Lazy-init tracking dict so the method can be tested stand-alone.
         if not hasattr(self, "_component_labels"):
             self._component_labels = {i: [] for i in range(ica.n_components_)}
 
-        names = [s.name for s in score_specs]
-        sides = np.array([s.side for s in score_specs], dtype=float)
         n_comps = ica.n_components_
+        names = [s.name for s in score_specs]
+        sides = [s.side for s in score_specs]
 
-        def _empty_result(n_pcs_val: int = 0) -> GesdResult:
-            return GesdResult(
-                score_names=names,
-                sides=sides,
-                M=np.empty((len(score_specs), n_comps)),
-                M_std=np.empty((len(score_specs), n_comps)),
-                loadings=np.empty((len(score_specs), 0)),
-                eigenscores=np.empty((0, n_comps)),
-                var_explained=np.empty(0),
-                var_explained_all=np.empty(0),
-                n_pcs=n_pcs_val,
-                pc_sides=np.empty(0),
-                alpha=alpha,
-                alpha_per_pc=alpha,
-                per_pc_flagged=[],
-                flagged=np.zeros(n_comps, dtype=bool),
-            )
-
-        if not score_specs:
-            self.log("No scores provided to GESD; skipping.")
-            return ica, _empty_result()
-
+        # Skip when too few components remain after existing exclusions.
         n_remaining = n_comps - len(ica.exclude)
         if n_remaining < 5:
             self.log(
                 f"Too few components remaining ({n_remaining}) for PCA-GESD; skipping"
             )
-            return ica, _empty_result()
+            return ica, empty_result(names, sides, n_comps, alpha)
 
-        # Build score matrix: targeted scores use |value| so high = artifact.
-        rows = [
-            np.abs(s.values) if s.group == "targeted" else s.values
-            for s in score_specs
-        ]
-        M = np.vstack(rows)  # (k, n)
-        k, n = M.shape
-        self.log(f"Score matrix shape: {k} scores x {n} components")
-
-        self.log("=== Score Summary ===")
-        for i, s in enumerate(score_specs):
-            direction = {1: "high=bad", -1: "low=bad", 0: "both tails"}[s.side]
-            self.log(
-                f"  {s.name}: mean={np.mean(M[i]):.3f}, "
-                f"std={np.std(M[i]):.3f} ({direction})"
-            )
-
-        # Standardize each score (row-wise).
-        M_std = StandardScaler().fit_transform(M.T).T  # (k, n)
-
-        # PCA via SVD of the standardized matrix.
-        U, sv, Vt = np.linalg.svd(M_std, full_matrices=False)
-        var_explained_all = (sv**2) / (sv**2).sum()
-
-        if n_pcs is None:
-            cumvar = np.cumsum(var_explained_all)
-            n_pcs = int(np.searchsorted(cumvar, 0.99) + 1)
-        n_pcs = max(1, min(n_pcs, k))
-
-        loadings = U[:, :n_pcs]  # (k, n_pcs)
-        eigenscores = loadings.T @ M_std  # (n_pcs, n)
-        var_explained = var_explained_all[:n_pcs]
-
-        self.log("=== PCA Variance Explained ===")
-        for p in range(n_pcs):
-            self.log(f"  PC{p + 1}: {var_explained[p] * 100:.1f}%")
-        self.log(f"  Total ({n_pcs} PCs): {var_explained.sum() * 100:.1f}%")
-
-        self.log("=== PC Loadings (score weights) ===")
-        for p in range(n_pcs):
-            loading_strs = [f"{names[i]}={loadings[i, p]:.2f}" for i in range(k)]
-            self.log(f"  PC{p + 1}: {', '.join(loading_strs)}")
-
-        # Per-PC tail direction from loadings . sides.
-        pc_sides = np.sign(loadings.T @ sides)
-
-        # Šidák correction (exact under independence).
-        alpha_per_pc = 1 - (1 - alpha) ** (1 / n_pcs)
-        self.log(f"Šidák-corrected alpha: {alpha:.3f} -> {alpha_per_pc:.4f} per PC")
-
-        flagged = np.zeros(n, dtype=bool)
-        per_pc_flagged: list = []
-        self.log("=== GESD Results per PC ===")
-        for p in range(n_pcs):
-            side = int(pc_sides[p])
-            side_str = {1: "upper", -1: "lower", 0: "both"}.get(side, "both")
-            flags, _ = osl_gesd(
-                eigenscores[p, :],
-                alpha=alpha_per_pc,
-                p_out=p_out,
-                outlier_side=side,
-            )
-            flags = np.asarray(flags, dtype=bool)
-            per_pc_flagged.append(flags)
-            flagged |= flags
-            if flags.any():
-                idx = np.where(flags)[0].tolist()
-                for i in idx:
-                    self._component_labels[i].append(f"GESD_PC{p + 1}")
-                self.log(
-                    f"  PC{p + 1} ({side_str} tail): {flags.sum()} outliers -> {idx}"
-                )
-            else:
-                self.log(f"  PC{p + 1} ({side_str} tail): no outliers")
-
-        outlier_idx = np.where(flagged)[0].tolist()
-        if outlier_idx:
-            self.log(f"=== Total flagged components: {outlier_idx} ===")
-            ica.exclude.extend(outlier_idx)
-        else:
-            self.log("=== No components flagged by unified GESD ===")
-
-        result = GesdResult(
-            score_names=names,
-            sides=sides,
-            M=M,
-            M_std=M_std,
-            loadings=loadings,
-            eigenscores=eigenscores,
-            var_explained=var_explained,
-            var_explained_all=var_explained_all,
-            n_pcs=n_pcs,
-            pc_sides=pc_sides,
+        result = run_pca_gesd(
+            score_specs,
             alpha=alpha,
-            alpha_per_pc=alpha_per_pc,
-            per_pc_flagged=per_pc_flagged,
-            flagged=flagged,
+            p_out=p_out,
+            n_pcs=n_pcs,
+            min_items=5,
+            log=self.log,
         )
+
+        # Record per-PC attribution and extend the exclude list.
+        for p in range(result.n_pcs):
+            for i in np.where(result.per_pc_flagged[p])[0].tolist():
+                self._component_labels[i].append(f"GESD_PC{p + 1}")
+        outlier_idx = np.where(result.flagged)[0].tolist()
+        if outlier_idx:
+            ica.exclude.extend(outlier_idx)
+
         self.log(
             f"After unified GESD: {len(set(ica.exclude))} excluded components"
         )
         return ica, result
 
-    # ------------------------------------------------------------------
-    # PCA / GESD diagnostic figures
-    # ------------------------------------------------------------------
+    def _save_gesd_figures(self, gesd: "PCAGesdResult | None") -> None:
+        """Save the PCA/GESD diagnostic figures into the participant's ICA folder.
 
-    def _save_gesd_figures(self, gesd: "GesdResult | None") -> None:
-        """Save PCA/GESD diagnostic figures into the participant's ICA folder.
-
-        Figures: score-loadings heatmap (how each score loads on each PC),
-        IC-eigenscore heatmap (how each IC loads on each PC), scree plot,
-        standardized-score correlation matrix, standardized-score heatmap, and
-        per-PC outlier scatter.  Disabled by ``cfg._auto_ica_overlay=False``;
-        each figure is isolated so a failure never aborts labelling.
+        Delegates to :func:`custom.preprocessing.pca_gesd.save_pca_gesd_figures`.
+        Disabled by ``cfg._auto_ica_overlay=False``; each figure is isolated so a
+        failure never aborts labelling.
         """
         if not getattr(self.cfg, "_auto_ica_overlay", True):
             return
@@ -1079,170 +877,16 @@ class AutoICAAnalysis(BaseAnalysis):
             self.log("No GESD result/PCs; skipping diagnostic figures.")
             return
 
-        self._save_fig(self._fig_score_loadings, gesd, "gesdLoadings")
-        self._save_fig(self._fig_ic_eigenscores, gesd, "gesdEigenscores")
-        self._save_fig(self._fig_scree, gesd, "gesdScree")
-        self._save_fig(self._fig_score_corr, gesd, "gesdScoreCorr")
-        self._save_fig(self._fig_standardized_scores, gesd, "gesdStdScores")
-        self._save_fig(self._fig_pc_outliers, gesd, "gesdOutliers")
-
-    def _save_fig(self, builder, gesd: GesdResult, suffix: str) -> None:
-        """Build a figure via ``builder(gesd)`` and save it to the ICA folder."""
-        import matplotlib.pyplot as plt
-
         out_dir, basename = self._overlay_basepath()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        fname = out_dir / f"{basename}_{suffix}.png"
-        try:
-            fig = builder(gesd)
-        except Exception as exc:  # figures must never break labelling
-            self.log(f"Figure '{suffix}' failed: {type(exc).__name__}: {exc}")
-            return
-        if fig is None:
-            return
-        try:
-            fig.savefig(fname, dpi=150, bbox_inches="tight")
-            self.log(f"Saved figure: {fname.name}")
-        finally:
-            plt.close(fig)
-
-    def _fig_score_loadings(self, gesd: GesdResult):
-        """Heatmap of PC loadings (scores x PCs)."""
-        import matplotlib.pyplot as plt
-
-        k, n_pcs = gesd.loadings.shape
-        fig, ax = plt.subplots(
-            figsize=(max(4, 0.6 * n_pcs + 2), max(3, 0.35 * k + 1))
+        item_names = [f"IC{i:03d}" for i in range(gesd.n_items)]
+        save_pca_gesd_figures(
+            gesd,
+            out_dir,
+            basename,
+            item_label="IC",
+            item_names=item_names,
+            log=self.log,
         )
-        vmax = float(np.abs(gesd.loadings).max()) or 1.0
-        im = ax.imshow(
-            gesd.loadings, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax
-        )
-        ax.set_xticks(range(n_pcs))
-        ax.set_xticklabels([f"PC{p + 1}" for p in range(n_pcs)])
-        ax.set_yticks(range(k))
-        ax.set_yticklabels(gesd.score_names, fontsize=8)
-        ax.set_xlabel("Principal component")
-        ax.set_title("Score loadings on PCs")
-        fig.colorbar(im, ax=ax, shrink=0.8, label="loading")
-        fig.tight_layout()
-        return fig
-
-    def _fig_ic_eigenscores(self, gesd: GesdResult):
-        """Heatmap of IC eigenscores (ICs x PCs), flagged ICs labelled red."""
-        import matplotlib.pyplot as plt
-
-        data = gesd.eigenscores.T  # (n, n_pcs)
-        n, n_pcs = data.shape
-        fig, ax = plt.subplots(
-            figsize=(max(4, 0.6 * n_pcs + 2), max(3, 0.18 * n + 1))
-        )
-        vmax = float(np.abs(data).max()) or 1.0
-        im = ax.imshow(data, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
-        ax.set_xticks(range(n_pcs))
-        ax.set_xticklabels([f"PC{p + 1}" for p in range(n_pcs)])
-        ax.set_ylabel("Independent component")
-        ax.set_xlabel("Principal component")
-        ax.set_title("IC eigenscores (flagged ICs in red)")
-        flagged_idx = np.where(gesd.flagged)[0]
-        if flagged_idx.size:
-            ax.set_yticks(flagged_idx)
-            ax.set_yticklabels(
-                [f"IC{i}" for i in flagged_idx], fontsize=7, color="red"
-            )
-        fig.colorbar(im, ax=ax, shrink=0.8, label="eigenscore")
-        fig.tight_layout()
-        return fig
-
-    def _fig_scree(self, gesd: GesdResult):
-        """Scree plot: variance explained per PC and cumulative."""
-        import matplotlib.pyplot as plt
-
-        ve = gesd.var_explained_all
-        x = np.arange(1, len(ve) + 1)
-        fig, ax = plt.subplots(figsize=(5, 3.5))
-        ax.plot(x, ve * 100, "o-", color="steelblue", label="per PC")
-        ax.plot(x, np.cumsum(ve) * 100, "s--", color="gray", label="cumulative")
-        ax.axvline(
-            gesd.n_pcs + 0.5, color="red", ls=":", label=f"kept {gesd.n_pcs} PCs"
-        )
-        ax.set_xlabel("Principal component")
-        ax.set_ylabel("Variance explained (%)")
-        ax.set_title("PCA scree")
-        ax.legend(fontsize=8)
-        fig.tight_layout()
-        return fig
-
-    def _fig_score_corr(self, gesd: GesdResult):
-        """Correlation matrix of the standardized scores."""
-        import matplotlib.pyplot as plt
-
-        if gesd.M_std.shape[0] < 2:
-            return None
-        corr = np.corrcoef(gesd.M_std)
-        k = corr.shape[0]
-        fig, ax = plt.subplots(
-            figsize=(max(4, 0.4 * k + 2), max(4, 0.4 * k + 2))
-        )
-        im = ax.imshow(corr, cmap="RdBu_r", vmin=-1, vmax=1)
-        ax.set_xticks(range(k))
-        ax.set_xticklabels(gesd.score_names, rotation=90, fontsize=7)
-        ax.set_yticks(range(k))
-        ax.set_yticklabels(gesd.score_names, fontsize=7)
-        ax.set_title("Score correlation (standardized)")
-        fig.colorbar(im, ax=ax, shrink=0.8, label="r")
-        fig.tight_layout()
-        return fig
-
-    def _fig_standardized_scores(self, gesd: GesdResult):
-        """Heatmap of the standardized scores (scores x ICs)."""
-        import matplotlib.pyplot as plt
-
-        data = gesd.M_std  # (k, n)
-        k, n = data.shape
-        fig, ax = plt.subplots(
-            figsize=(max(5, 0.18 * n + 2), max(3, 0.35 * k + 1))
-        )
-        vmax = float(np.abs(data).max()) or 1.0
-        im = ax.imshow(data, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
-        ax.set_yticks(range(k))
-        ax.set_yticklabels(gesd.score_names, fontsize=8)
-        ax.set_xlabel("Independent component")
-        ax.set_title("Standardized scores")
-        fig.colorbar(im, ax=ax, shrink=0.8, label="z")
-        fig.tight_layout()
-        return fig
-
-    def _fig_pc_outliers(self, gesd: GesdResult):
-        """Per-PC scatter of eigenscore vs IC index; flagged ICs in red."""
-        import matplotlib.pyplot as plt
-
-        n_pcs = gesd.n_pcs
-        ncol = min(3, n_pcs)
-        nrow = int(np.ceil(n_pcs / ncol))
-        fig, axes = plt.subplots(
-            nrow, ncol, figsize=(4 * ncol, 3 * nrow), squeeze=False
-        )
-        n = gesd.eigenscores.shape[1]
-        x = np.arange(n)
-        for p in range(n_pcs):
-            ax = axes[p // ncol][p % ncol]
-            y = gesd.eigenscores[p]
-            flags = gesd.per_pc_flagged[p]
-            ax.scatter(x[~flags], y[~flags], s=12, color="steelblue", label="kept")
-            if flags.any():
-                ax.scatter(x[flags], y[flags], s=24, color="red", label="flagged")
-            ax.set_title(
-                f"PC{p + 1} (α/PC={gesd.alpha_per_pc:.4f})", fontsize=9
-            )
-            ax.set_xlabel("IC")
-            ax.set_ylabel("eigenscore")
-            ax.legend(fontsize=7)
-        for j in range(n_pcs, nrow * ncol):
-            fig.delaxes(axes[j // ncol][j % ncol])
-        fig.suptitle("Per-PC GESD outliers")
-        fig.tight_layout()
-        return fig
 
     def _ica_component_diagnostics(
         self,
@@ -1391,7 +1035,7 @@ class AutoICAAnalysis(BaseAnalysis):
         }
 
     # All available diagnostic GESD metric names (used for validation).
-    AVAILABLE_GESD_METRICS = [
+    AVAILABLE_ICA_METRICS = [
         "log_hf_ratio",
         "log_line_ratio",
         "temporal_kurtosis_sqrt",
@@ -1404,7 +1048,7 @@ class AutoICAAnalysis(BaseAnalysis):
     ]
 
     # Targeted artifact-correlation scores (in addition to the diagnostics).
-    AVAILABLE_TARGETED_SCORES = [
+    AVAILABLE_ICA_TARGETED = [
         "eog",
         "ecg",
         "reference",
@@ -1412,8 +1056,8 @@ class AutoICAAnalysis(BaseAnalysis):
         "corrmap_ecg",
     ]
 
-    # Full set of per-IC scores selectable via ``cfg._gesd_metrics``.
-    AVAILABLE_GESD_SCORES = AVAILABLE_GESD_METRICS + AVAILABLE_TARGETED_SCORES
+    # Full set of per-IC scores selectable via ``cfg._ica_metrics``.
+    AVAILABLE_ICA_SCORES = AVAILABLE_ICA_METRICS + AVAILABLE_ICA_TARGETED
 
     def _build_components_tsv(
         self, ica: mne.preprocessing.ICA
@@ -1526,7 +1170,7 @@ class AutoICAAnalysis(BaseAnalysis):
         gesd = getattr(self, "_gesd_result", None)
         if gesd is not None and gesd.n_pcs > 0:
             n_pcs = gesd.n_pcs
-            score_names = gesd.score_names
+            metric_names = gesd.metric_names
 
             # Which PCs flagged each component
             data["gesd_pcs_flagged"] = [
@@ -1546,7 +1190,7 @@ class AutoICAAnalysis(BaseAnalysis):
                 ).tolist()
 
             # Raw (pre-standardization) value per input score per component
-            for j, sname in enumerate(score_names):
+            for j, sname in enumerate(metric_names):
                 data[f"score_{sname}"] = np.round(gesd.M[j], 6).tolist()
 
             # PC loadings (shared across components, stored once per row
@@ -1554,8 +1198,8 @@ class AutoICAAnalysis(BaseAnalysis):
             loading_strs = []
             for p in range(n_pcs):
                 parts = [
-                    f"{score_names[j]}:{gesd.loadings[j, p]:.3f}"
-                    for j in range(len(score_names))
+                    f"{metric_names[j]}:{gesd.loadings[j, p]:.3f}"
+                    for j in range(len(metric_names))
                 ]
                 loading_strs.append(f"PC{p + 1}({','.join(parts)})")
             data["gesd_pc_loadings"] = [";".join(loading_strs)] * n_comps
@@ -1575,7 +1219,7 @@ class AutoICAAnalysis(BaseAnalysis):
         """Transform diagnostic metrics and specify outlier direction for GESD.
 
         The diagnostic selection is resolved upstream by
-        :meth:`_resolve_gesd_scores` (from ``cfg._gesd_metrics``); the
+        :meth:`_resolve_gesd_scores` (from ``cfg._ica_metrics``); the
         diagnostic subset is passed here via ``names``.  When ``names`` is
         ``None`` all diagnostic metrics are produced.
 
@@ -1609,16 +1253,16 @@ class AutoICAAnalysis(BaseAnalysis):
         """
         # Determine which diagnostic metrics to compute.
         if names is not None:
-            unknown = set(names) - set(self.AVAILABLE_GESD_METRICS)
+            unknown = set(names) - set(self.AVAILABLE_ICA_METRICS)
             if unknown:
                 raise ValueError(
                     f"Unknown GESD metric names: {unknown}. "
-                    f"Available: {self.AVAILABLE_GESD_METRICS}"
+                    f"Available: {self.AVAILABLE_ICA_METRICS}"
                 )
             use = set(names)
             self.log(f"Using selected GESD metrics: {sorted(use)}")
         else:
-            use = set(self.AVAILABLE_GESD_METRICS)
+            use = set(self.AVAILABLE_ICA_METRICS)
 
         metrics = []
 

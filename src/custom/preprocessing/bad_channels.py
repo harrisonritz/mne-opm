@@ -1,36 +1,36 @@
 """Bad channel detection for OPM-MEG data.
 
-This module detects bad channels in raw MEG data by combining several
-complementary detectors and a configurable consensus vote.  The available
-detectors are:
+This module detects bad channels by computing several complementary *per-channel
+metrics*, combining them with PCA, and flagging outliers with a Šidák-corrected
+generalized ESD (GESD) test — the same unified PCA→GESD procedure used for ICA
+component selection (see :mod:`custom.preprocessing.pca_gesd`).
 
-* **gesd** (full-recording): the Generalized Extreme Studentized Deviate
-  (GESD) test from OSL-ephys, applied to each channel's standard deviation
-  computed over the whole recording.  Catches channels that are bad for the
-  entire session.
-* **timeresolved**: a windowed GESD test that flags channels which are
-  variance outliers in a sufficiently large *fraction* of short time windows.
-  This catches **intermittent** bad channels — channels that are only
-  disruptive for part of the recording and therefore have a near-normal
-  whole-recording standard deviation (these are typically what surface later
-  as single-channel ICA components).
-* **psd**: OSL-ephys' PSD/noise-floor detector, flagging channels with
-  abnormal spectra.
-* **lof**: MNE's Local Outlier Factor detector, flagging channels that are
-  anomalous relative to their spatial neighbours.
+Available per-channel metrics (each selectable via ``cfg._channel_metrics``):
 
-Each enabled detector contributes a *vote* for a channel.  A channel is
-confirmed bad (marked ``status="bad"`` in ``channels.tsv`` and added to
-``raw.info['bads']``) when its vote count reaches ``_bad_channel_consensus_n``.
-Channels with at least one vote but fewer than the consensus threshold are
-written to a ``*_badchannel-candidates.tsv`` sidecar for manual confirmation
-in the ``manual_channel`` step, but are **not** removed automatically.
+* **log_std** — log of the per-channel standard deviation over the recording
+  (broadband power / variance).  Catches channels that are bad for the whole
+  session.  ``side=+1`` (high = bad).
+* **logit_outlier_frac** — logit of the *fraction of short time windows* in which
+  a channel is an upper-tail variance outlier (a windowed GESD).  Catches
+  **intermittent** bad channels with a near-normal whole-recording std.
+  ``side=+1``.
+* **kurtosis** — signed square root of the per-channel temporal kurtosis;
+  transient/spiky channels have heavy-tailed amplitude distributions.
+  ``side=+1``.
+* **lof** — log of the Local Outlier Factor (MNE), flagging channels anomalous
+  relative to their spatial neighbours.  ``side=+1``.
+* **psd** — per-channel mean log10 power over ``[psd_fmin, psd_fmax]``;
+  two-tailed (``side=0``) so both dead/low-power and noisy/high-power channels
+  are caught.
 
-Detection is performed on bandpass-filtered data (using the global
-``l_freq``/``h_freq``) to focus on the frequency range of interest and avoid
-contamination from low-frequency drifts or high-frequency noise.  The PSD
-detector runs on the unfiltered data so it can see the full spectrum / noise
-floor.
+Each selected metric becomes one row of a (metrics × channels) matrix that is
+z-scored, projected onto principal components, and GESD-tested per eigenscore
+under a single family-wise error rate.  Channels flagged on any component are
+marked ``status="bad"`` in ``channels.tsv`` and added to ``raw.info['bads']``.
+
+Detection runs on bandpass-filtered data (using the global ``l_freq``/``h_freq``)
+for the variance/kurtosis/spatial metrics; the PSD metric runs on the unfiltered
+data so it sees the full spectrum / noise floor.
 
 Usage
 -----
@@ -46,44 +46,28 @@ Configuration Attributes
 Required:
     ch_types : list
         Channel types to process (e.g., ['mag']).
-    l_freq : float
-        High-pass filter frequency for detection.
-    h_freq : float
-        Low-pass filter frequency for detection.
-    bids_root : str
-        Root directory of BIDS dataset.
-    subjects : list
-        Subject IDs to process.
-    sessions : list
-        Session IDs to process.
-    task : str
-        Task name.
+    l_freq, h_freq : float
+        Bandpass filter band for detection.
+    bids_root, subjects, sessions, task : see other steps.
 
 Optional (with conservative defaults):
     process_empty_room : bool
-        Also process empty room noise recording. Default: False.
-    _bad_channel_methods : list of str
-        Detectors to run. Default: ['gesd', 'timeresolved', 'psd', 'lof'].
-    _bad_channel_consensus_n : int
-        Number of detectors that must agree to auto-mark a channel bad.
-        Default: 2.  When set to 1, *any* flag marks a channel bad (and no
-        candidates are produced).
+        Also process the empty-room noise recording. Default: False.
+    _channel_metrics : list of str | None
+        Which per-channel metrics to feed into the PCA→GESD. Valid names are in
+        ``AVAILABLE_CHANNEL_METRICS``. ``None`` (default) uses all of them; an
+        empty list disables detection.
     _bad_channel_significance_level : float
-        GESD significance level for the full-recording and time-resolved
-        detectors. Default: 0.05.
+        Family-wise GESD significance level (also the per-window alpha for the
+        outlier-fraction metric). Default: 0.05.
     _bad_channel_window_sec : float
-        Window length (seconds) for the time-resolved detector. Default: 2.0.
-    _bad_channel_frac_threshold : float
-        Fraction of windows in which a channel must be an outlier for the
-        time-resolved detector to flag it. Default: 0.20.
+        Window length (seconds) for the outlier-fraction metric. Default: 2.0.
     _bad_channel_psd_fmin, _bad_channel_psd_fmax : float
-        Frequency band (Hz) for the PSD detector. Defaults: 1.0, 100.0.
+        Frequency band (Hz) for the PSD metric. Defaults: 1.0, 100.0.
     _bad_channel_psd_nfft : int
-        FFT length for the PSD detector. Default: 2000.
+        FFT length for the PSD metric. Default: 2000.
     _bad_channel_lof_neighbors : int
-        Number of neighbours for the LOF detector. Default: 20.
-    _bad_channel_lof_threshold : float
-        LOF threshold. Default: 1.5.
+        Number of neighbours for the LOF metric. Default: 20.
 
 Author: Harrison Ritz, 2025
 """
@@ -92,17 +76,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Tuple
 
 import mne
 import numpy as np
 import pandas as pd
+from scipy.stats import kurtosis as scipy_kurtosis
 
-from osl_ephys.preprocessing.osl_wrappers import (
-    bad_channels as osl_bad_channels,
-    detect_bad_channels_psd as osl_detect_bad_channels_psd,
-    gesd as osl_gesd,
-)
+from osl_ephys.preprocessing.osl_wrappers import gesd as osl_gesd
 
 import mne_bids
 
@@ -112,35 +93,43 @@ from ._io import (
     read_raw_bids_with_retry,
     write_raw_bids_custom_step,
 )
+from .pca_gesd import (
+    MetricSpec,
+    log_transform,
+    logit,
+    run_pca_gesd,
+    save_pca_gesd_figures,
+    signed_sqrt,
+)
 
 
-# Default detectors and consensus parameters.
-_DEFAULT_METHODS: List[str] = ["gesd", "timeresolved", "psd", "lof"]
-_DEFAULT_CONSENSUS_N: int = 2
+# Default parameters.
 _DEFAULT_SIGNIFICANCE: float = 0.05
 _DEFAULT_WINDOW_SEC: float = 2.0
-_DEFAULT_FRAC_THRESHOLD: float = 0.20
 _DEFAULT_PSD_FMIN: float = 1.0
 _DEFAULT_PSD_FMAX: float = 100.0
 _DEFAULT_PSD_NFFT: int = 2000
 _DEFAULT_LOF_NEIGHBORS: int = 20
-_DEFAULT_LOF_THRESHOLD: float = 1.5
 
-# Suffix used for the per-recording candidates sidecar.
+# Fraction of outliers cap passed to GESD (channels are rarely >50% bad).
+_GESD_P_OUT: float = 0.5
+
+# Suffix used for the (legacy) per-recording candidates sidecar. The PCA→GESD
+# procedure no longer writes candidates, but the path helper is retained so the
+# manual_channel step can look one up (and gracefully find none).
 _CANDIDATES_SUFFIX = "_badchannel-candidates.tsv"
 
 
 def candidates_sidecar_path(bids_path: mne_bids.BIDSPath) -> Path:
     """Return the candidates-TSV path that pairs with a given BIDSPath.
 
-    The sidecar lives next to the (output) data file and is named after the
-    BIDS basename so that downstream steps (e.g. ``manual_channel``) can locate
-    it from their own input path.
+    Retained for compatibility with the ``manual_channel`` step, which looks for
+    such a sidecar.  The PCA→GESD bad-channel detector does not write one.
 
     Parameters
     ----------
     bids_path : mne_bids.BIDSPath
-        Path of the data file the candidates relate to.
+        Path of the data file the candidates would relate to.
 
     Returns
     -------
@@ -151,19 +140,16 @@ def candidates_sidecar_path(bids_path: mne_bids.BIDSPath) -> Path:
 
 
 class BadChannelsAnalysis(BaseAnalysis):
-    """Detect bad channels via a consensus of complementary detectors.
+    """Detect bad channels via PCA-whitened, Šidák-corrected GESD.
 
-    Runs the enabled detectors (full-recording GESD, time-resolved GESD, PSD
-    noise-floor, and LOF), tallies a vote per channel, and splits the result
-    into *confirmed* bad channels (vote count >= consensus threshold) and
-    *candidate* bad channels (>= 1 vote but below the threshold).  Confirmed
-    channels are marked bad in BIDS; candidates are written to a sidecar for
-    manual review.
+    Computes per-channel metrics (variance, intermittent-outlier fraction,
+    kurtosis, LOF, PSD power), combines them with PCA, and flags outlier
+    channels with a GESD test whose family-wise error rate is controlled by a
+    Šidák correction across the retained principal components.  Flagged channels
+    are marked bad in BIDS.
 
-    When processing multiple tasks (e.g. main task + noise), votes are tallied
-    per recording and the union of confirmed channels is marked in all
-    recordings; the union of candidates (excluding confirmed) is written to the
-    sidecar.
+    When processing multiple tasks (e.g. main task + noise), channels are scored
+    per recording and the union of flagged channels is marked in all recordings.
 
     Attributes
     ----------
@@ -174,36 +160,29 @@ class BadChannelsAnalysis(BaseAnalysis):
 
     See Also
     --------
-    osl_ephys.preprocessing.osl_wrappers.bad_channels : OSL GESD detection.
-    osl_ephys.preprocessing.osl_wrappers.detect_bad_channels_psd : PSD detector.
-    mne.preprocessing.find_bad_channels_lof : Local Outlier Factor detector.
+    custom.preprocessing.pca_gesd.run_pca_gesd : the shared PCA→GESD procedure.
+    mne.preprocessing.find_bad_channels_lof : Local Outlier Factor scores.
     """
 
     ANALYSIS_KEY = "badchannels"
     ANALYSIS_NAME = "bad_channels"
 
-    def is_enabled(self) -> bool:
-        """Check if bad channel detection is enabled.
+    # All available per-channel metric names (used for validation / defaults).
+    AVAILABLE_CHANNEL_METRICS = [
+        "log_std",
+        "logit_outlier_frac",
+        "kurtosis",
+        "lof",
+        "psd",
+    ]
 
-        Returns
-        -------
-        enabled : bool
-            Always True (no config flag required for this analysis).
-        """
+    def is_enabled(self) -> bool:
+        """Always enabled (no config flag required for this analysis)."""
         return True
 
     # ------------------------------------------------------------------
     # Parameter helpers
     # ------------------------------------------------------------------
-
-    def _methods(self) -> List[str]:
-        """Return the list of enabled detectors (lower-cased)."""
-        methods = getattr(self.cfg, "_bad_channel_methods", None) or _DEFAULT_METHODS
-        return [str(m).lower() for m in methods]
-
-    def _consensus_n(self) -> int:
-        """Return the consensus vote threshold (>= 1)."""
-        return max(1, int(getattr(self.cfg, "_bad_channel_consensus_n", _DEFAULT_CONSENSUS_N)))
 
     def _significance(self) -> float:
         """Return the GESD significance level."""
@@ -211,33 +190,40 @@ class BadChannelsAnalysis(BaseAnalysis):
             getattr(self.cfg, "_bad_channel_significance_level", _DEFAULT_SIGNIFICANCE)
         )
 
+    def _channel_metrics(self) -> set:
+        """Resolve which per-channel metrics to use.
+
+        Reads ``cfg._channel_metrics``; ``None`` selects all available metrics,
+        an empty list disables detection, and unknown names raise ``ValueError``.
+        """
+        selected = getattr(self.cfg, "_channel_metrics", None)
+        if selected is None:
+            return set(self.AVAILABLE_CHANNEL_METRICS)
+        unknown = set(selected) - set(self.AVAILABLE_CHANNEL_METRICS)
+        if unknown:
+            raise ValueError(
+                f"Unknown _channel_metrics names: {unknown}. "
+                f"Available: {self.AVAILABLE_CHANNEL_METRICS}"
+            )
+        return set(selected)
+
     # ------------------------------------------------------------------
     # BaseAnalysis interface
     # ------------------------------------------------------------------
 
     def load_data(self) -> Dict[str, Any]:
-        """Load raw data for bad channel detection.
-
-        Returns
-        -------
-        data : dict
-            Dictionary with raw data per task.
-        """
+        """Load raw data for bad channel detection (one entry per task)."""
         self.log("Loading data...")
         data: Dict[str, Any] = {}
 
-        # Determine which tasks to load
         tasks = [self.cfg.task]
         if getattr(self.cfg, "process_empty_room", False):
             tasks.insert(0, "noise")
 
         for task in tasks:
-            # Search for raw files (handles runs, splits, etc.); honours
-            # cfg.custom_proc so subsequent custom steps read from deriv.
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No raw data found for task={task}")
-
             raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
             data[task] = raw
             self.log(f"Loaded raw data for task={task} at {paths[0].fpath}")
@@ -245,7 +231,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         return data
 
     def run(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Run all detectors on each task and combine via consensus voting.
+        """Score each task with PCA→GESD and union the flagged channels.
 
         Parameters
         ----------
@@ -255,76 +241,51 @@ class BadChannelsAnalysis(BaseAnalysis):
         Returns
         -------
         results : dict
-            Dictionary with raw data per task plus:
-              * ``bads`` : sorted list of confirmed bad channels (union).
-              * ``bad_methods`` : {channel -> sorted method list} for confirmed.
-              * ``candidates`` : {channel -> sorted method list} for candidates.
+            Raw data per task plus ``bads`` : sorted list of flagged channels.
         """
-        consensus_n = self._consensus_n()
-        self.log(
-            f"Detectors={self._methods()} | consensus_n={consensus_n} | "
-            f"significance={self._significance()}"
-        )
+        metrics = sorted(self._channel_metrics())
+        alpha = self._significance()
+        self.log(f"Channel metrics={metrics} | alpha={alpha}")
 
         results: Dict[str, Any] = {}
-        confirmed_methods: Dict[str, Set[str]] = {}
-        candidate_methods: Dict[str, Set[str]] = {}
+        confirmed: set = set()
+        # Stored per-task (ch_names, PCAGesdResult) for figure generation.
+        self._metric_results: Dict[str, Tuple[List[str], Any]] = {}
 
         for task, raw in data.items():
             self.log(f"Processing task={task}")
-            method_results = self._detect_all_methods(raw)
-            confirmed, candidates = self._combine_votes(method_results, consensus_n)
+            ch_names, specs = self._compute_channel_metrics(raw)
+            if not specs:
+                self.log(f"  no channel metrics computed; skipping task={task}")
+                results[task] = raw
+                continue
 
-            for ch, methods in confirmed.items():
-                confirmed_methods.setdefault(ch, set()).update(methods)
-            for ch, methods in candidates.items():
-                candidate_methods.setdefault(ch, set()).update(methods)
+            result = run_pca_gesd(
+                specs, alpha=alpha, p_out=_GESD_P_OUT, log=self.log
+            )
+            flagged = [
+                ch_names[i] for i in np.where(result.flagged)[0].tolist()
+            ]
+            self.log(f"  flagged {len(flagged)}: {sorted(flagged)}")
 
+            confirmed.update(flagged)
+            self._metric_results[task] = (ch_names, result)
             results[task] = raw
 
-        # A channel confirmed in any recording outranks a candidacy elsewhere.
-        for ch in confirmed_methods:
-            candidate_methods.pop(ch, None)
-
-        results["bads"] = sorted(confirmed_methods)
-        results["bad_methods"] = {
-            ch: sorted(m) for ch, m in confirmed_methods.items()
-        }
-        results["candidates"] = {
-            ch: sorted(m) for ch, m in candidate_methods.items()
-        }
-
+        results["bads"] = sorted(confirmed)
         self.log(
-            f"Confirmed bad channels: {len(results['bads'])} "
-            f"({results['bads']}); candidates: {len(results['candidates'])} "
-            f"({sorted(results['candidates'])})"
+            f"Flagged bad channels: {len(results['bads'])} ({results['bads']})"
         )
-
         return results
 
     def save_results(self, results: Dict[str, Any]) -> None:
-        """Save results: mark confirmed bads in BIDS, write candidates sidecar.
-
-        Parameters
-        ----------
-        results : dict
-            Output of :meth:`run`.
-        """
+        """Mark flagged channels bad in BIDS and save the diagnostic figures."""
         self.log("Saving results...")
 
         confirmed = sorted(set(results.get("bads", []) or []))
-        bad_methods: Dict[str, List[str]] = results.get("bad_methods", {}) or {}
-        candidates: Dict[str, List[str]] = results.get("candidates", {}) or {}
+        tasks = {k: v for k, v in results.items() if k != "bads"}
 
-        # Separate task data from metadata
-        tasks = {
-            k: v
-            for k, v in results.items()
-            if k not in {"bads", "bad_methods", "candidates"}
-        }
-
-        # Process noise FIRST (when present) so the task save can use the
-        # already-written noise as its empty-room association.
+        # Process noise first so the task save can reference it as empty-room.
         ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
 
         er_output_bp = None
@@ -332,11 +293,8 @@ class BadChannelsAnalysis(BaseAnalysis):
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
-
             source_bp = paths[0]
 
-            # Merge existing and newly confirmed bad channels into raw.info,
-            # which write_raw_bids will reflect in the output channels.tsv.
             if confirmed:
                 existing_bads = raw.info.get("bads", [])
                 merged_bads = sorted(set(existing_bads) | set(confirmed))
@@ -348,22 +306,15 @@ class BadChannelsAnalysis(BaseAnalysis):
                 raw, self.cfg, source_bp, empty_room=empty_room
             )
 
-            # Tag the confirmed bad channels in channels.tsv with a per-channel
-            # description recording which detectors agreed (e.g. "auto:gesd+lof").
             if confirmed:
-                descriptions = [
-                    "auto:" + "+".join(bad_methods.get(ch, ["auto"]))
-                    for ch in confirmed
-                ]
                 mne_bids.mark_channels(
                     bids_path=output_bp,
                     ch_names=confirmed,
                     status="bad",
-                    descriptions=descriptions,
+                    descriptions=["auto:pca-gesd"] * len(confirmed),
                 )
 
-            # Write the candidates sidecar next to the output for manual review.
-            self._write_candidates_sidecar(output_bp, candidates)
+            self._save_channel_figures(task, output_bp)
 
             if task == "noise":
                 er_output_bp = output_bp
@@ -371,85 +322,13 @@ class BadChannelsAnalysis(BaseAnalysis):
             self.log(f"Saved task={task} → {output_bp.fpath}")
 
     # ------------------------------------------------------------------
-    # Consensus combination
+    # Per-channel metric computation
     # ------------------------------------------------------------------
 
-    def _combine_votes(
-        self, method_results: Dict[str, Set[str]], consensus_n: int
-    ) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
-        """Tally per-channel votes and split confirmed vs candidate channels.
-
-        Parameters
-        ----------
-        method_results : dict
-            {method_name -> set of flagged channel names}.
-        consensus_n : int
-            Number of agreeing detectors required to confirm a channel.
-
-        Returns
-        -------
-        confirmed : dict
-            {channel -> set of methods} for channels with >= consensus_n votes.
-        candidates : dict
-            {channel -> set of methods} for channels with 1 <= votes < consensus_n.
-        """
-        votes: Dict[str, Set[str]] = {}
-        for method, chans in method_results.items():
-            for ch in chans:
-                votes.setdefault(ch, set()).add(method)
-
-        confirmed: Dict[str, Set[str]] = {}
-        candidates: Dict[str, Set[str]] = {}
-        for ch, methods in votes.items():
-            if len(methods) >= consensus_n:
-                confirmed[ch] = methods
-            else:
-                candidates[ch] = methods
-
-        return confirmed, candidates
-
-    def _write_candidates_sidecar(
-        self, output_bp: mne_bids.BIDSPath, candidates: Dict[str, List[str]]
-    ) -> None:
-        """Write (or clear) the candidates TSV sidecar for one recording.
-
-        Parameters
-        ----------
-        output_bp : mne_bids.BIDSPath
-            Path the recording was written to.
-        candidates : dict
-            {channel -> list of methods} for candidate channels.
-        """
-        try:
-            sidecar = candidates_sidecar_path(output_bp)
-        except (TypeError, ValueError):  # e.g. non-filesystem BIDSPath in tests
-            return
-
-        if not candidates:
-            # Remove any stale sidecar from a previous run so it doesn't mislead.
-            if sidecar.exists():
-                sidecar.unlink()
-            return
-
-        rows = [
-            {
-                "channel": ch,
-                "n_votes": len(methods),
-                "methods": "+".join(sorted(methods)),
-            }
-            for ch, methods in sorted(candidates.items())
-        ]
-        pd.DataFrame(rows).to_csv(sidecar, sep="\t", index=False)
-        self.log(
-            f"Wrote {len(rows)} candidate channel(s) for manual review → {sidecar}"
-        )
-
-    # ------------------------------------------------------------------
-    # Detectors
-    # ------------------------------------------------------------------
-
-    def _detect_all_methods(self, raw: mne.io.BaseRaw) -> Dict[str, Set[str]]:
-        """Run all enabled detectors on a single recording.
+    def _compute_channel_metrics(
+        self, raw: mne.io.BaseRaw
+    ) -> Tuple[List[str], List[MetricSpec]]:
+        """Compute the selected per-channel metrics for one recording.
 
         Parameters
         ----------
@@ -458,163 +337,178 @@ class BadChannelsAnalysis(BaseAnalysis):
 
         Returns
         -------
-        method_results : dict
-            {method_name -> set of flagged channel names}.  Detectors that are
-            disabled, unavailable, or error out contribute an empty set.
+        ch_names : list of str
+            Names of the (good) channels scored, in metric-array order.
+        specs : list of MetricSpec
+            One metric per selected, transformed entry.
         """
         picks = self.cfg.ch_types[0]
-        methods = self._methods()
+        selected = self._channel_metrics()
 
-        # report the initial number of bad channels so the user can see how many new ones are added by the detectors.
-        initial_bads = set(raw.info.get("bads", []))
-        self.log(f"  Initial bad channels: {len(initial_bads)} ({sorted(initial_bads)})")
+        ch_idx = np.array(
+            mne.pick_types(raw.info, meg=picks, ref_meg=False, exclude="bads")
+        )
+        ch_names = [raw.ch_names[i] for i in ch_idx]
+        if not selected:
+            self.log("  no channel metrics selected; nothing to compute")
+            return ch_names, []
+        if ch_idx.size < 3:
+            self.log("  too few channels; skipping channel metrics")
+            return ch_names, []
 
-        # Bandpass-filtered copy for the variance/spatial detectors (the PSD
-        # detector deliberately runs on the unfiltered data, see below).
+        # Bandpass-filtered copy for variance/kurtosis/spatial metrics.
         filt = raw.copy().filter(
             l_freq=self.cfg.l_freq, h_freq=self.cfg.h_freq, method="iir"
         )
+        data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")
 
-        results: Dict[str, Set[str]] = {}
-        if "gesd" in methods:
-            results["gesd"] = self._detect_gesd_full(filt, picks)
-        if "timeresolved" in methods:
-            results["timeresolved"] = self._detect_timeresolved(filt, picks)
-        if "psd" in methods:
-            results["psd"] = self._detect_psd(raw)
-        if "lof" in methods:
-            results["lof"] = self._detect_lof(filt, picks)
+        specs: List[MetricSpec] = []
+
+        if "log_std" in selected:
+            std = data.std(axis=1)
+            specs.append(MetricSpec("log_std", log_transform(std), 1))
+
+        if "logit_outlier_frac" in selected:
+            frac = self._outlier_fraction(data, float(filt.info["sfreq"]))
+            specs.append(MetricSpec("logit_outlier_frac", logit(frac), 1))
+
+        if "kurtosis" in selected:
+            kurt = scipy_kurtosis(data, axis=1, fisher=True)
+            specs.append(MetricSpec("kurtosis", signed_sqrt(kurt), 1))
+
+        if "lof" in selected:
+            lof = self._lof_scores(filt, ch_idx)
+            if lof is not None:
+                specs.append(MetricSpec("lof", log_transform(lof), 1))
+
+        if "psd" in selected:
+            psd = self._psd_logpower(raw, ch_idx)
+            if psd is not None:
+                # Two-tailed: dead (low) and noisy (high) channels both flagged.
+                specs.append(MetricSpec("psd", psd, 0))
 
         del filt
-
-        # Channels already marked bad upstream stay bad regardless (preserved in
-        # save_results); exclude them so the vote tally reflects only newly
-        # detected channels.
-        existing = set(raw.info.get("bads", []))
-        results = {m: (chans - existing) for m, chans in results.items()}
-
-        for method, chans in results.items():
-            self.log(f"  [{method}] flagged {len(chans)}: {sorted(chans)}")
-
-        return results
-
-    def _detect_gesd_full(self, filt: mne.io.BaseRaw, picks: str) -> Set[str]:
-        """Full-recording GESD on per-channel std (OSL-ephys)."""
-        try:
-            detected = osl_bad_channels(
-                filt.copy(),
-                picks=picks,
-                significance_level=self._significance(),
+        for s in specs:
+            self.log(
+                f"  metric {s.name}: mean={np.nanmean(s.values):.3f}, "
+                f"std={np.nanstd(s.values):.3f}"
             )
-            return set(detected.info["bads"])
-        except Exception as exc:  # pragma: no cover - defensive
-            self.log(f"  [gesd] skipped ({exc})")
-            return set()
+        return ch_names, specs
 
-    def _detect_timeresolved(self, filt: mne.io.BaseRaw, picks: str) -> Set[str]:
-        """Windowed GESD: flag channels that are variance outliers in many windows.
+    def _outlier_fraction(self, data: np.ndarray, sfreq: float) -> np.ndarray:
+        """Fraction of windows in which each channel is a variance outlier.
 
-        The recording is split into non-overlapping windows.  Within each
-        window we GESD the per-channel standard deviation (upper tail only —
-        only abnormally *high* variance counts as bad) and tally how often each
-        channel is flagged.  Channels flagged in more than
-        ``_bad_channel_frac_threshold`` of windows are returned.
+        The recording is split into non-overlapping windows; within each window
+        a one-sided GESD on the per-channel std flags abnormally high-variance
+        channels.  Returns the per-channel flag fraction in [0, 1].
         """
         window_sec = float(
             getattr(self.cfg, "_bad_channel_window_sec", _DEFAULT_WINDOW_SEC)
         )
-        frac_threshold = float(
-            getattr(self.cfg, "_bad_channel_frac_threshold", _DEFAULT_FRAC_THRESHOLD)
-        )
         alpha = self._significance()
-
-        ch_idx = np.array(
-            mne.pick_types(filt.info, meg=picks, ref_meg=False, exclude="bads")
-        )
-        if ch_idx.size < 3:
-            self.log("  [timeresolved] too few channels; skipping")
-            return set()
-        names = np.array(filt.ch_names)[ch_idx]
-
-        # Drop already-annotated bad spans so they don't dominate the metric.
-        data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")
         n_ch, n_times = data.shape
 
-        win = max(1, int(round(filt.info["sfreq"] * window_sec)))
+        win = max(1, int(round(sfreq * window_sec)))
         n_windows = n_times // win
         if n_windows < 2:
             self.log(
-                f"  [timeresolved] only {n_windows} full window(s); skipping"
+                f"  [outlier_frac] only {n_windows} full window(s); returning zeros"
             )
-            return set()
+            return np.zeros(n_ch)
 
-        # Per-channel std in each full window → (n_ch, n_windows).
         trimmed = data[:, : n_windows * win].reshape(n_ch, n_windows, win)
         win_std = trimmed.std(axis=2)
 
-        flag_counts = np.zeros(n_ch, dtype=int)
+        counts = np.zeros(n_ch, dtype=float)
         for w in range(n_windows):
             mask, _ = osl_gesd(win_std[:, w], alpha=alpha, p_out=0.5, outlier_side=1)
-            flag_counts += np.asarray(mask, dtype=int)
+            counts += np.asarray(mask, dtype=float)
+        return counts / n_windows
 
-        frac = flag_counts / n_windows
-        bad = set(names[frac > frac_threshold].tolist())
-        if bad:
-            for ch in sorted(bad):
-                idx = int(np.where(names == ch)[0][0])
-                self.log(
-                    f"    {ch}: outlier in {frac[idx] * 100:.0f}% of "
-                    f"{n_windows} windows"
-                )
-        return bad
+    def _lof_scores(
+        self, filt: mne.io.BaseRaw, ch_idx: np.ndarray
+    ) -> "np.ndarray | None":
+        """Per-channel Local Outlier Factor (higher = more outlying).
 
-    def _detect_psd(self, raw: mne.io.BaseRaw) -> Set[str]:
-        """PSD / noise-floor detector (OSL-ephys), run on unfiltered data."""
+        MNE returns *negative* outlier factors (≈ -1 for inliers, more negative
+        for outliers); we negate so high = bad.  Returns ``None`` on failure.
+        """
+        n_neighbors = int(
+            getattr(self.cfg, "_bad_channel_lof_neighbors", _DEFAULT_LOF_NEIGHBORS)
+        )
+        n_good = int(ch_idx.size)
+        if n_good < 3:
+            return None
+        n_neighbors = min(n_neighbors, n_good - 1)
+        try:
+            _, scores = mne.preprocessing.find_bad_channels_lof(
+                filt,
+                n_neighbors=n_neighbors,
+                picks=ch_idx,
+                return_scores=True,
+            )
+        except Exception as exc:
+            self.log(f"  [lof] skipped ({exc})")
+            return None
+        scores = np.asarray(scores, dtype=float)
+        if scores.shape[0] != n_good:
+            self.log(
+                f"  [lof] score length {scores.shape[0]} != {n_good}; skipping"
+            )
+            return None
+        # Negate so larger = more outlying; shift to stay positive for the log.
+        lof = -scores
+        return lof - lof.min() + 1.0
+
+    def _psd_logpower(
+        self, raw: mne.io.BaseRaw, ch_idx: np.ndarray
+    ) -> "np.ndarray | None":
+        """Per-channel mean log10 PSD power over the configured band."""
         fmin = float(getattr(self.cfg, "_bad_channel_psd_fmin", _DEFAULT_PSD_FMIN))
         fmax = float(getattr(self.cfg, "_bad_channel_psd_fmax", _DEFAULT_PSD_FMAX))
         n_fft = int(getattr(self.cfg, "_bad_channel_psd_nfft", _DEFAULT_PSD_NFFT))
         try:
-            raw_data = raw.copy().pick("mag", exclude=["bads", "ref_meg"])
-            bads = osl_detect_bad_channels_psd(
-                raw_data,
+            psd = raw.compute_psd(
+                picks=ch_idx,
                 fmin=fmin,
                 fmax=fmax,
                 n_fft=n_fft,
-                alpha=self._significance(),
+                reject_by_annotation=True,
+                verbose=False,
             )
-            del raw_data
-            return set(bads)
+            pow_data = psd.get_data()  # (n_ch, n_freqs)
         except Exception as exc:
             self.log(f"  [psd] skipped ({exc})")
-            return set()
+            return None
+        return np.log10(pow_data + 1e-30).mean(axis=1)
 
-    def _detect_lof(self, filt: mne.io.BaseRaw, picks: str) -> Set[str]:
-        """Local Outlier Factor detector (MNE), comparing spatial neighbours."""
-        n_neighbors = int(
-            getattr(self.cfg, "_bad_channel_lof_neighbors", _DEFAULT_LOF_NEIGHBORS)
-        )
-        threshold = float(
-            getattr(self.cfg, "_bad_channel_lof_threshold", _DEFAULT_LOF_THRESHOLD)
-        )
-        n_good = len(
-            mne.pick_types(filt.info, meg=picks, ref_meg=False, exclude="bads")
-        )
-        if n_good < 3:
-            self.log("  [lof] too few channels; skipping")
-            return set()
-        # n_neighbors must be < number of channels considered.
-        n_neighbors = min(n_neighbors, n_good - 1)
+    # ------------------------------------------------------------------
+    # Figures
+    # ------------------------------------------------------------------
+
+    def _save_channel_figures(
+        self, task: str, output_bp: mne_bids.BIDSPath
+    ) -> None:
+        """Save the PCA→GESD diagnostic figures for one recording."""
+        res = getattr(self, "_metric_results", {}).get(task)
+        if res is None:
+            return
+        ch_names, result = res
+        if result is None or result.n_pcs == 0:
+            return
         try:
-            bads = mne.preprocessing.find_bad_channels_lof(
-                filt,
-                n_neighbors=n_neighbors,
-                picks=picks,
-                threshold=threshold,
-            )
-            return set(bads)
-        except Exception as exc:
-            self.log(f"  [lof] skipped ({exc})")
-            return set()
+            out_dir = Path(output_bp.directory) / "badchannels"
+            basename = output_bp.basename
+        except (TypeError, ValueError):  # e.g. non-filesystem BIDSPath in tests
+            return
+        save_pca_gesd_figures(
+            result,
+            out_dir,
+            basename,
+            item_label="channel",
+            item_names=ch_names,
+            log=self.log,
+        )
 
 
 def run(cfg: SimpleNamespace) -> None:

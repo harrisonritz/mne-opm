@@ -12,7 +12,7 @@ import mne
 import numpy as np
 import pytest
 
-from custom.preprocessing.auto_ica import AutoICAAnalysis, GesdResult
+from custom.preprocessing.auto_ica import AutoICAAnalysis, PCAGesdResult
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ def ica_cfg():
     """Config for auto ICA tests.
 
     Defaults to diagnostic-only scores so the common tests stay deterministic;
-    individual tests override ``_gesd_metrics`` to exercise targeted scores.
+    individual tests override ``_ica_metrics`` to exercise targeted scores.
     """
     return SimpleNamespace(
         _auto_ica=True,
@@ -35,7 +35,7 @@ def ica_cfg():
         sessions=["01"],
         task="restingstate",
         # Single unified selection list (diagnostics only here).
-        _gesd_metrics=list(AutoICAAnalysis.AVAILABLE_GESD_METRICS),
+        _ica_metrics=list(AutoICAAnalysis.AVAILABLE_ICA_METRICS),
         _auto_ica_overlay=False,  # skip figure PNGs in unit tests
     )
 
@@ -230,7 +230,7 @@ class TestPrepareMetricsForGESD:
         analysis = AutoICAAnalysis(ica_cfg)
         metrics = analysis._prepare_metrics_for_gesd(sample_diagnostics)
         names = [m[0] for m in metrics]
-        for expected in AutoICAAnalysis.AVAILABLE_GESD_METRICS:
+        for expected in AutoICAAnalysis.AVAILABLE_ICA_METRICS:
             assert expected in names
 
     def test_directions(self, ica_cfg, sample_diagnostics):
@@ -272,31 +272,31 @@ class TestPrepareMetricsForGESD:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_gesd_scores  (single unified _gesd_metrics list)
+# _resolve_gesd_scores  (single unified _ica_metrics list)
 # ---------------------------------------------------------------------------
 
 class TestResolveGesdScores:
     def test_explicit_list_used_verbatim(self, ica_cfg):
-        ica_cfg._gesd_metrics = ["log_hf_ratio", "eog", "reference"]
+        ica_cfg._ica_metrics = ["log_hf_ratio", "eog", "reference"]
         sel = AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
         assert sel == {"log_hf_ratio", "eog", "reference"}
 
     def test_unknown_token_raises(self, ica_cfg):
-        ica_cfg._gesd_metrics = ["not_a_score"]
+        ica_cfg._ica_metrics = ["not_a_score"]
         with pytest.raises(ValueError):
             AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
 
     def test_none_selects_all_available(self, ica_cfg):
-        ica_cfg._gesd_metrics = None
+        ica_cfg._ica_metrics = None
         sel = AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
-        assert sel == set(AutoICAAnalysis.AVAILABLE_GESD_SCORES)
+        assert sel == set(AutoICAAnalysis.AVAILABLE_ICA_SCORES)
 
     def test_empty_list_selects_nothing(self, ica_cfg):
-        ica_cfg._gesd_metrics = []
+        ica_cfg._ica_metrics = []
         assert AutoICAAnalysis(ica_cfg)._resolve_gesd_scores() == set()
 
     def test_targeted_tokens_allowed(self, ica_cfg):
-        ica_cfg._gesd_metrics = ["eog", "ecg", "reference", "corrmap_eog"]
+        ica_cfg._ica_metrics = ["eog", "ecg", "reference", "corrmap_eog"]
         sel = AutoICAAnalysis(ica_cfg)._resolve_gesd_scores()
         assert sel == {"eog", "ecg", "reference", "corrmap_eog"}
 
@@ -316,17 +316,6 @@ class TestScoreHelpers:
         scores = [np.array([-3.0, 0.1, 0.2]), np.array([1.0, -2.0, 0.0])]
         out = AutoICAAnalysis._reduce_multichannel_scores(scores)
         np.testing.assert_allclose(out, [3.0, 2.0, 0.2])
-
-    def test_sanitize_replaces_nan_with_median(self):
-        vals = np.array([1.0, np.nan, 3.0, np.inf, 5.0])
-        out = AutoICAAnalysis._sanitize_score(vals)
-        assert np.isfinite(out).all()
-        # median of finite {1,3,5} = 3
-        assert out[1] == 3.0 and out[3] == 3.0
-
-    def test_sanitize_all_nan_returns_zeros(self):
-        out = AutoICAAnalysis._sanitize_score(np.array([np.nan, np.nan]))
-        np.testing.assert_allclose(out, [0.0, 0.0])
 
     def test_pearson_cols_self_is_one(self, synthetic_ica_and_raw):
         ica, _ = synthetic_ica_and_raw
@@ -483,7 +472,7 @@ class TestScoreCorrmap:
 class TestComputeICScores:
     def test_filters_to_selected(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
-        ica_cfg._gesd_metrics = ["log_hf_ratio", "spectral_slope"]
+        ica_cfg._ica_metrics = ["log_hf_ratio", "spectral_slope"]
         specs = AutoICAAnalysis(ica_cfg)._compute_ic_scores(ica, raw)
         names = {s.name for s in specs}
         assert names == {"log_hf_ratio", "spectral_slope"}
@@ -493,30 +482,24 @@ class TestComputeICScores:
 
     def test_empty_when_nothing_selected(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
-        ica_cfg._gesd_metrics = []
+        ica_cfg._ica_metrics = []
         assert AutoICAAnalysis(ica_cfg)._compute_ic_scores(ica, raw) == []
 
-    def test_sanitizes_nan_from_targeted_score(
+    def test_targeted_scores_fisher_z_transformed(
         self, ica_cfg, synthetic_ica_and_raw
     ):
+        """Targeted correlation scores are atanh-transformed, side=+1."""
+        from custom.preprocessing.pca_gesd import fisher_z
+
         ica, raw = synthetic_ica_and_raw
-        ica_cfg._gesd_metrics = ["log_hf_ratio", "eog"]
+        ica_cfg._ica_metrics = ["eog"]
         analysis = AutoICAAnalysis(ica_cfg)
-        bad = np.random.RandomState(0).randn(ica.n_components_)
-        bad[1] = np.nan
-        analysis._score_eog = lambda *a, **k: bad
+        corr = np.linspace(0.1, 0.9, ica.n_components_)
+        analysis._score_eog = lambda *a, **k: corr
         specs = analysis._compute_ic_scores(ica, raw)
         eog = next(s for s in specs if s.name == "eog")
-        assert np.isfinite(eog.values).all()
-
-    def test_drops_constant_score(self, ica_cfg, synthetic_ica_and_raw):
-        ica, raw = synthetic_ica_and_raw
-        ica_cfg._gesd_metrics = ["log_hf_ratio", "eog"]
-        analysis = AutoICAAnalysis(ica_cfg)
-        analysis._score_eog = lambda *a, **k: np.ones(ica.n_components_)
-        specs = analysis._compute_ic_scores(ica, raw)
-        assert "eog" not in {s.name for s in specs}
-        assert "log_hf_ratio" in {s.name for s in specs}
+        np.testing.assert_allclose(eog.values, fisher_z(corr))
+        assert eog.side == 1
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +517,7 @@ class TestRunUnifiedGesd:
         specs = self._specs(analysis, ica, raw)
         ica2, gesd = analysis._run_unified_gesd(ica, raw, specs)
         assert isinstance(ica2, mne.preprocessing.ICA)
-        assert isinstance(gesd, GesdResult)
+        assert isinstance(gesd, PCAGesdResult)
         assert gesd.n_pcs >= 1
 
     def test_exclude_sorted_unique_valid(self, ica_cfg, synthetic_ica_and_raw):
@@ -550,7 +533,7 @@ class TestRunUnifiedGesd:
     def test_single_score_one_pc(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        ica_cfg._gesd_metrics = ["log_hf_ratio"]
+        ica_cfg._ica_metrics = ["log_hf_ratio"]
         analysis = AutoICAAnalysis(ica_cfg)
         specs = self._specs(analysis, ica, raw)
         assert len(specs) == 1
@@ -648,7 +631,7 @@ class TestAutoICAIntegration:
     def test_no_scores_no_exclude(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
-        ica_cfg._gesd_metrics = []
+        ica_cfg._ica_metrics = []
         analysis = AutoICAAnalysis(ica_cfg)
         result = analysis._auto_ica(ica, raw)
         assert result.exclude == []
@@ -755,7 +738,7 @@ class TestGesdFigures:
         assert any("gesdOutliers" in n for n in names)
 
     def test_figure_failure_does_not_abort(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
+        self, ica_cfg, synthetic_ica_and_raw, tmp_path, monkeypatch
     ):
         import matplotlib
         matplotlib.use("Agg")
@@ -766,10 +749,12 @@ class TestGesdFigures:
         ica_cfg._auto_ica_overlay = True
         analysis = AutoICAAnalysis(ica_cfg)
 
-        def _boom(_gesd):
+        def _boom(_result):
             raise RuntimeError("boom")
 
-        analysis._fig_scree = _boom
-        # Should still complete and return the ICA.
+        # A single failing figure builder must not abort labelling.
+        monkeypatch.setattr(
+            "custom.preprocessing.pca_gesd._fig_scree", _boom
+        )
         result = analysis._auto_ica(ica, raw)
         assert isinstance(result, mne.preprocessing.ICA)
