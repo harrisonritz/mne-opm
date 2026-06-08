@@ -353,8 +353,12 @@ class AutoICAAnalysis(BaseAnalysis):
         self._component_labels = {i: [] for i in range(ica.n_components_)}
         self._gesd_result: GesdResult | None = None
 
-        # Evoked used for the report-style overlays (built once).
-        evoked = self._make_overlay_evoked(raw)
+        # Evoked used for the report-style overlays (built once, only if needed).
+        evoked = (
+            self._make_overlay_evoked(raw)
+            if getattr(self.cfg, "_auto_ica_overlay", True)
+            else None
+        )
 
         # Any exclusions already on the loaded ICA (e.g. ICALabel) are preserved.
         cumulative = set(ica.exclude)
@@ -1435,25 +1439,22 @@ class AutoICAAnalysis(BaseAnalysis):
     def _build_components_tsv(
         self, ica: mne.preprocessing.ICA
     ) -> "pd.DataFrame":
-        """Build a detailed components TSV with per-method attribution.
+        """Build a detailed components TSV from the unified GESD result.
 
         Reads the existing pipeline-generated TSV (from
-        ``_06a2_find_ica_artifacts``) to preserve ECG/EOG/ICALabel
-        attributions, then adds columns for every detection method
-        used by ``auto_ica``.
+        ``_06a2_find_ica_artifacts``) only to preserve any ICALabel
+        attributions, then adds the unified-GESD attribution and per-score
+        columns.
 
         Columns produced
         ----------------
         Standard BIDS:
             component, type, description, status, status_description
-        Method flags (0/1):
-            method_reference, method_gesd, method_corrmap_eog,
-            method_corrmap_ecg, method_pipeline_ecg, method_pipeline_eog
-        Pipeline ICALabel:
-            method_pipeline_icalabel (class label or "n/a")
+        Attribution:
+            method_gesd (0/1), method_pipeline_icalabel (class label or "n/a")
         GESD detail (only when GESD ran):
-            gesd_pcs_flagged, gesd_score_PC1..N, metric_<name> per
-            metric, gesd_pc_loadings, gesd_var_explained
+            gesd_pcs_flagged, gesd_score_PC1..N, score_<name> per input score,
+            gesd_pc_loadings, gesd_var_explained
 
         Parameters
         ----------
@@ -1467,7 +1468,7 @@ class AutoICAAnalysis(BaseAnalysis):
         """
         n_comps = ica.n_components_
 
-        # --- Read existing pipeline TSV for ECG / EOG / ICALabel attributions ---
+        # --- Read existing pipeline TSV for ICALabel attributions only ---
         subject = (
             self.cfg.subjects[0]
             if isinstance(self.cfg.subjects, list)
@@ -1491,8 +1492,6 @@ class AutoICAAnalysis(BaseAnalysis):
             check=False,
         )
 
-        pipeline_ecg = np.zeros(n_comps, dtype=int)
-        pipeline_eog = np.zeros(n_comps, dtype=int)
         pipeline_icalabel = ["n/a"] * n_comps
 
         if tsv_path.fpath.exists():
@@ -1502,24 +1501,16 @@ class AutoICAAnalysis(BaseAnalysis):
                 if comp >= n_comps:
                     continue
                 desc = str(row.get("status_description", "n/a"))
-                if "ECG artifact (MNE)" in desc:
-                    pipeline_ecg[comp] = 1
-                    self._component_labels[comp].append("pipeline_ecg")
-                if "EOG artifact (MNE)" in desc:
-                    pipeline_eog[comp] = 1
-                    self._component_labels[comp].append("pipeline_eog")
                 if "(MNE-ICALabel)" in desc:
                     label = (
                         desc.replace("Auto-detected ", "")
                         .replace(" (MNE-ICALabel)", "")
                     )
                     pipeline_icalabel[comp] = label
-                    self._component_labels[comp].append(
-                        f"icalabel_{label}"
-                    )
+                    self._component_labels[comp].append(f"icalabel_{label}")
         else:
             self.log(
-                "No existing components TSV found; pipeline attributions "
+                "No existing components TSV found; ICALabel attributions "
                 "will not be available."
             )
 
@@ -1539,13 +1530,7 @@ class AutoICAAnalysis(BaseAnalysis):
                 for i in range(n_comps)
             ],
             "status_description": status_descriptions,
-            # --- Per-method flags ---
-            "method_reference": [
-                int(
-                    any(lbl == "reference" for lbl in self._component_labels[i])
-                )
-                for i in range(n_comps)
-            ],
+            # --- Attribution ---
             "method_gesd": [
                 int(
                     any(
@@ -1555,36 +1540,14 @@ class AutoICAAnalysis(BaseAnalysis):
                 )
                 for i in range(n_comps)
             ],
-            "method_corrmap_eog": [
-                int(
-                    any(
-                        lbl == "corrmap_eog"
-                        for lbl in self._component_labels[i]
-                    )
-                )
-                for i in range(n_comps)
-            ],
-            "method_corrmap_ecg": [
-                int(
-                    any(
-                        lbl == "corrmap_ecg"
-                        for lbl in self._component_labels[i]
-                    )
-                )
-                for i in range(n_comps)
-            ],
-            "method_pipeline_ecg": pipeline_ecg.tolist(),
-            "method_pipeline_eog": pipeline_eog.tolist(),
             "method_pipeline_icalabel": pipeline_icalabel,
         }
 
-        # --- GESD detail columns (only if GESD ran) ---
-        if self._gesd_info:
-            n_pcs = self._gesd_info["n_pcs"]
-            metric_names = self._gesd_info["metric_names"]
-            scores = self._gesd_info["pc_scores"]
-            loadings = self._gesd_info["pc_loadings"]
-            var_explained = self._gesd_info["var_explained"]
+        # --- GESD detail columns (only if the unified GESD produced PCs) ---
+        gesd = getattr(self, "_gesd_result", None)
+        if gesd is not None and gesd.n_pcs > 0:
+            n_pcs = gesd.n_pcs
+            score_names = gesd.score_names
 
             # Which PCs flagged each component
             data["gesd_pcs_flagged"] = [
@@ -1597,44 +1560,45 @@ class AutoICAAnalysis(BaseAnalysis):
                 for i in range(n_comps)
             ]
 
-            # PC scores per component
+            # Eigenscore per component per PC
             for p in range(n_pcs):
                 data[f"gesd_score_PC{p + 1}"] = np.round(
-                    scores[p], 4
+                    gesd.eigenscores[p], 4
                 ).tolist()
 
-            # Metric values per component
-            for mname in metric_names:
-                data[f"metric_{mname}"] = np.round(
-                    self._gesd_info["metric_values"][mname], 6
-                ).tolist()
+            # Raw (pre-standardization) value per input score per component
+            for j, sname in enumerate(score_names):
+                data[f"score_{sname}"] = np.round(gesd.M[j], 6).tolist()
 
             # PC loadings (shared across components, stored once per row
             # for self-contained CSV analysis)
             loading_strs = []
             for p in range(n_pcs):
                 parts = [
-                    f"{metric_names[j]}:{loadings[j, p]:.3f}"
-                    for j in range(len(metric_names))
+                    f"{score_names[j]}:{gesd.loadings[j, p]:.3f}"
+                    for j in range(len(score_names))
                 ]
                 loading_strs.append(f"PC{p + 1}({','.join(parts)})")
             data["gesd_pc_loadings"] = [";".join(loading_strs)] * n_comps
 
             # Variance explained
             var_str = ";".join(
-                f"PC{p + 1}:{var_explained[p]:.4f}" for p in range(n_pcs)
+                f"PC{p + 1}:{gesd.var_explained[p]:.4f}" for p in range(n_pcs)
             )
             data["gesd_var_explained"] = [var_str] * n_comps
 
         df = pd.DataFrame(data)
         return df
 
-    def _prepare_metrics_for_gesd(self, diagnostics: dict) -> list:
+    def _prepare_metrics_for_gesd(
+        self, diagnostics: dict, names: "set | list | None" = None
+    ) -> list:
         """Transform metrics and specify outlier direction for GESD.
 
-        Which metrics are included can be controlled by setting
-        ``cfg._gesd_metrics`` to a list of metric name strings.  When the
-        attribute is absent or ``None``, all metrics are used.
+        Which metrics are included can be controlled by passing ``names``
+        explicitly (used by the unified scoring layer) or, when ``names`` is
+        ``None``, by setting ``cfg._gesd_metrics`` to a list of metric name
+        strings.  When neither is given, all diagnostic metrics are used.
 
         Available metric names:
             ``log_hf_ratio``, ``log_line_ratio``,
@@ -1647,6 +1611,9 @@ class AutoICAAnalysis(BaseAnalysis):
         ----------
         diagnostics : dict
             Dictionary from _ica_component_diagnostics.
+        names : set | list | None
+            Explicit metric selection.  Overrides ``cfg._gesd_metrics`` when
+            provided.
 
         Returns
         -------
@@ -1661,8 +1628,11 @@ class AutoICAAnalysis(BaseAnalysis):
         - Raw values when already approximately normal
         - Signed sqrt for kurtosis to preserve sign while reducing skew
         """
-        # Determine which metrics the user wants
-        selected = getattr(self.cfg, "_gesd_metrics", None)
+        # Determine which metrics to compute.
+        if names is not None:
+            selected = list(names)
+        else:
+            selected = getattr(self.cfg, "_gesd_metrics", None)
         if selected is not None:
             unknown = set(selected) - set(self.AVAILABLE_GESD_METRICS)
             if unknown:
