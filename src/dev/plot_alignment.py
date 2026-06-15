@@ -16,10 +16,11 @@ import mne
 # 034: medium
 
 
-sub_id = "sub-036"
+sub_id = "sub-021"
 
+model = "response__new-coreg__hfc-3_ica-96"
 fs_dir = "/Volumes/fileset-NDAW/harrison_ritz/TSX/data/TSX/freesurfer"
-data_dir = "/Volumes/fileset-NDAW/harrison_ritz/TSX/data/TSX/bids/derivatives/trial__PrePost_maxwell-8-3-95_ica-96_gesd-99"
+data_dir = f"/Volumes/fileset-NDAW/harrison_ritz/TSX/data/TSX/bids/derivatives/{model}"
 
 subject = f"{sub_id}_ses-01"
 trans = f"{data_dir}/{sub_id}/ses-01/meg/{sub_id}_ses-01_task-TSX_trans.fif"
@@ -27,14 +28,16 @@ epo_fname = f"{data_dir}/{sub_id}/ses-01/meg/{sub_id}_ses-01_task-TSX_epo.fif"
 fwd_fname = f"{data_dir}/{sub_id}/ses-01/meg/{sub_id}_ses-01_task-TSX_fwd.fif"
 
 info = mne.io.read_info(epo_fname)
-
+with info._unlock():
+    info["device_info"] = dict(type="Cerca_adult_large")
+    
 
 plot_kwargs = dict(
     subject=subject,
     subjects_dir=fs_dir,
-    surfaces=dict(seghead=0.67),
+    surfaces=dict(seghead=0.50, brain=0.80),
     dig=True,
-    meg=dict(sensors=0.67),
+    meg=dict(sensors=0.85, helmet=0.15),
     show_axes=True,
     coord_frame="meg",
     mri_fiducials=True,

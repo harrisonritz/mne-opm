@@ -47,9 +47,6 @@ echo ""
 # input directory
 dcm2niix -a y -z y -f %p -o "$NIFTI_PATH" "$DICOM_PATH"
 
-
-
-
 # append '_t1w' to any files containing 'T1w' in the name -----------
 # convert nii           
 for file in "$NIFTI_PATH"/*T1w*.nii.gz; do
