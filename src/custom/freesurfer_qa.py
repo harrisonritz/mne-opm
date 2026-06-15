@@ -53,8 +53,9 @@ import traceback
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
-
+import mne
 import numpy as np
+import numba
 
 # Headless plotting.
 import matplotlib
@@ -64,6 +65,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 # ----------------------------------------------------------------------------
 # Status / severity vocabulary
 # ----------------------------------------------------------------------------
+
+# which analyses
+DO_CORTICAL = True
+DO_BEM = True
+
+
 # status: outcome of a test.  severity: how much a non-PASS outcome matters.
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
@@ -186,34 +193,67 @@ def surface_topology(verts: np.ndarray, faces: np.ndarray) -> dict:
     )
 
 
-def _solid_angle_sum(points: np.ndarray, verts: np.ndarray, faces: np.ndarray,
-                     chunk: int = 128) -> np.ndarray:
-    """Total signed solid angle subtended by a closed triangle mesh at each
-    query point (Van Oosterom & Strackee formula).
+# def _solid_angle_sum(points: np.ndarray, verts: np.ndarray, faces: np.ndarray,
+#                      chunk: int = 4096) -> np.ndarray:
+#     """Total signed solid angle subtended by a closed triangle mesh at each
+#     query point (Van Oosterom & Strackee formula).
 
-    For a closed surface the sum is +-4*pi at interior points and ~0 at
-    exterior points (the generalized winding number x 4*pi). This is the same
-    solid-angle construction MNE uses to test surface completeness, so it needs
-    no external spatial index. Chunked over points to bound memory.
-    """
-    tris = verts[faces]                      # (F, 3, 3)
-    ta, tb, tc = tris[:, 0], tris[:, 1], tris[:, 2]
-    out = np.empty(len(points), dtype=np.float64)
-    for i in range(0, len(points), chunk):
-        p = points[i:i + chunk][:, None, :]  # (P, 1, 3)
-        a = ta[None] - p                     # (P, F, 3)
-        b = tb[None] - p
-        c = tc[None] - p
-        la = np.sqrt(np.einsum("pfk,pfk->pf", a, a))
-        lb = np.sqrt(np.einsum("pfk,pfk->pf", b, b))
-        lc = np.sqrt(np.einsum("pfk,pfk->pf", c, c))
-        numer = np.einsum("pfk,pfk->pf", a, np.cross(b, c))
-        denom = (la * lb * lc
-                 + np.einsum("pfk,pfk->pf", a, b) * lc
-                 + np.einsum("pfk,pfk->pf", a, c) * lb
-                 + np.einsum("pfk,pfk->pf", b, c) * la)
-        out[i:i + chunk] = (2.0 * np.arctan2(numer, denom)).sum(axis=1)
+#     For a closed surface the sum is +-4*pi at interior points and ~0 at
+#     exterior points (the generalized winding number x 4*pi). This is the same
+#     solid-angle construction MNE uses to test surface completeness, so it needs
+#     no external spatial index. Chunked over points to bound memory.
+#     """
+#     tris = verts[faces]                      # (F, 3, 3)
+#     ta, tb, tc = tris[:, 0], tris[:, 1], tris[:, 2]
+#     out = np.empty(len(points), dtype=np.float64)
+#     for i in range(0, len(points), chunk):
+#         p = points[i:i + chunk][:, None, :]  # (P, 1, 3)
+#         a = ta[None] - p                     # (P, F, 3)
+#         b = tb[None] - p
+#         c = tc[None] - p
+#         la = np.sqrt(np.einsum("pfk,pfk->pf", a, a))
+#         lb = np.sqrt(np.einsum("pfk,pfk->pf", b, b))
+#         lc = np.sqrt(np.einsum("pfk,pfk->pf", c, c))
+#         numer = np.einsum("pfk,pfk->pf", a, np.cross(b, c))
+#         denom = (la * lb * lc
+#                  + np.einsum("pfk,pfk->pf", a, b) * lc
+#                  + np.einsum("pfk,pfk->pf", a, c) * lb
+#                  + np.einsum("pfk,pfk->pf", b, c) * la)
+#         out[i:i + chunk] = (2.0 * np.arctan2(numer, denom)).sum(axis=1)
+#     return out
+
+
+def _solid_angle_sum(points, verts, faces, chunk=4096):
+    tris = verts[faces]  # (F, 3, 3)
+    return mne.surface._get_solids(tris, points)
+
+
+
+@numba.njit(parallel=True, fastmath=True)
+def _solid_angle_sum_numba(points, ta, tb, tc):
+    P = points.shape[0]
+    F = ta.shape[0]
+    out = np.zeros(P)
+    for p in numba.prange(P):  # parallel over points
+        s = 0.0
+        for f in range(F):
+            a = ta[f] - points[p]
+            b = tb[f] - points[p]
+            c = tc[f] - points[p]
+            la = np.sqrt(a[0]**2 + a[1]**2 + a[2]**2)
+            lb = np.sqrt(b[0]**2 + b[1]**2 + b[2]**2)
+            lc = np.sqrt(c[0]**2 + c[1]**2 + c[2]**2)
+            numer = (a[0]*(b[1]*c[2]-b[2]*c[1])
+                   + a[1]*(b[2]*c[0]-b[0]*c[2])
+                   + a[2]*(b[0]*c[1]-b[1]*c[0]))
+            denom = (la*lb*lc
+                   + (a[0]*b[0]+a[1]*b[1]+a[2]*b[2])*lc
+                   + (a[0]*c[0]+a[1]*c[1]+a[2]*c[2])*lb
+                   + (b[0]*c[0]+b[1]*c[1]+b[2]*c[2])*la)
+            s += 2.0 * np.arctan2(numer, denom)
+        out[p] = s
     return out
+
 
 
 def fraction_inside(points: np.ndarray, verts: np.ndarray,
@@ -224,8 +264,11 @@ def fraction_inside(points: np.ndarray, verts: np.ndarray,
     globally flipped normal orientation. Returns (fraction_inside, bool mask).
     """
     points = np.asarray(points, dtype=np.float64)
-    sa = _solid_angle_sum(points, np.asarray(verts, dtype=np.float64),
-                          np.asarray(faces))
+    # sa = _solid_angle_sum(points, np.asarray(verts, dtype=np.float64),
+    #                       np.asarray(faces))
+    sa = _solid_angle_sum_numba(points, np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 0]],
+                                np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 1]],
+                                np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 2]])
     inside = np.abs(sa) > 2.0 * np.pi
     return float(inside.mean()), inside
 
@@ -248,6 +291,9 @@ _SOFT_LOG_PATTERNS = ("warning", "talairach failed", "defect", "skipping")
 
 
 def test_recon_log(subj_dir: Path, qa_dir: Path) -> TestResult:
+
+    print(f"    Running recon log test")
+
     log = _find_first(subj_dir / "scripts" / "recon-all.log")
     status_log = _find_first(subj_dir / "scripts" / "recon-all-status.log")
     if log is None:
@@ -302,6 +348,7 @@ def test_euler_nofix(subj_dir: Path, qa_dir: Path, cfg: Config):
     The fixed surfaces are topology-corrected (chi == 2) so they carry no signal;
     the nofix surface counts how many defects the corrector had to repair.
     """
+    print(f"    Running Euler number test")
     surf = subj_dir / "surf"
     lines = [f"# Euler / defect summary for {subj_dir.name}",
              "# chi = V - E + F ; defects n = (2 - chi)/2 (genus of nofix surf)"]
@@ -341,6 +388,7 @@ def test_fixed_surface_topology(subj_dir: Path) -> list[TestResult]:
     edges (no holes) and no non-manifold edges. Any deviation indicates a
     corrupt/truncated surface file.
     """
+    print(f"    Running fixed surface topology test")
     surf = subj_dir / "surf"
     results = []
     for hemi in ("lh", "rh"):
@@ -377,6 +425,7 @@ _GLOBAL_MEASURES = ("BrainSegVol", "BrainSegVolNotVent", "lhCortexVol",
 
 def parse_global_stats(subj_dir: Path) -> dict:
     """Pull global volume measures from stats/aseg.stats for outlier screening."""
+    print(f"    Parsing global stats from {subj_dir / 'stats' / 'aseg.stats'}")
     p = subj_dir / "stats" / "aseg.stats"
     out = {}
     if not p.exists():
@@ -395,6 +444,7 @@ def parse_global_stats(subj_dir: Path) -> dict:
 
 def test_cnr(subj_dir: Path, cfg: Config) -> TestResult:
     """Gray/white CNR via mri_cnr if available (needs FreeSurfer on PATH)."""
+    print(f"    Running gray/white CNR test")
     import shutil
     import subprocess
     if not cfg.do_cnr or shutil.which("mri_cnr") is None:
@@ -434,6 +484,7 @@ _BEM_NAMES = ("inner_skull", "outer_skull", "outer_skin")
 def locate_bem_surfaces(subj_dir: Path) -> dict:
     """Return {name: Path} for the three BEM surfaces, searching bem/ then
     bem/watershed/. Returns None for any that are missing."""
+    print(f"    Locating BEM surfaces")
     bem = subj_dir / "bem"
     ws = bem / "watershed"
     subj = subj_dir.name
@@ -448,6 +499,7 @@ def locate_bem_surfaces(subj_dir: Path) -> dict:
 
 
 def test_bem_surface_topology(name: str, path: Path) -> tuple[TestResult, dict]:
+    print(f"    Running BEM surface topology test for {name}")
     v, f = _read_geometry(path)
     t = surface_topology(v, f)
     problems, sev = [], SEV_NONE
@@ -477,9 +529,11 @@ def test_bem_surface_topology(name: str, path: Path) -> tuple[TestResult, dict]:
 
 def test_bem_nesting(meshes: dict, cfg: Config) -> list[TestResult]:
     """inner_skull subset of outer_skull subset of outer_skin (no crossings)."""
+    print(f"    Running BEM nesting test")
     results = []
     pairs = [("inner_skull", "outer_skull"), ("outer_skull", "outer_skin")]
     for inner, outer in pairs:
+        print(f"        {inner} in {outer}")
         if inner not in meshes or outer not in meshes:
             results.append(TestResult("bem", f"nest_{inner}_in_{outer}",
                                       STATUS_SKIP, SEV_NONE, "n/a",
@@ -510,6 +564,7 @@ def test_bem_nesting(meshes: dict, cfg: Config) -> list[TestResult]:
 def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
         -> TestResult:
     """Every cortical (pial) vertex must lie inside the inner_skull surface."""
+    print(f"    Running pial in inner skull test")
     if "inner_skull" not in meshes or \
             not meshes["inner_skull"]["topo"]["watertight"]:
         return TestResult("bem", "pial_in_inner_skull", STATUS_SKIP, SEV_MAJOR,
@@ -517,6 +572,7 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
     surf = subj_dir / "surf"
     pial = []
     for hemi in ("lh", "rh"):
+        print(f"      Reading {hemi} pial surface")
         p = surf / f"{hemi}.pial"
         if p.exists():
             v, _ = _read_geometry(p)
@@ -525,8 +581,10 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
         return TestResult("bem", "pial_in_inner_skull", STATUS_SKIP, SEV_NONE,
                           "n/a", "pial surfaces not found")
     pial = np.vstack(pial)
+    print(f"      Reading inner skull surface")
     inner_v = meshes["inner_skull"]["verts"]
     inner_f = meshes["inner_skull"]["faces"]
+    print(f"      Computing fraction of pial inside inner skull")
     frac, mask = fraction_inside(pial, inner_v, inner_f)
     n_out = int((~mask).sum())
     out_frac = 1.0 - frac
@@ -536,8 +594,9 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
     # approximate protrusion depth: distance from outside pial verts to the
     # nearest inner_skull vertex (KDTree; an upper bound on true signed depth)
     try:
-        from scipy.spatial import cKDTree
-        d, _ = cKDTree(inner_v).query(pial[~mask], k=1)
+        from scipy.spatial import KDTree
+        print(f"      Computing distances from outside pial verts to inner skull")
+        d, _ = KDTree(inner_v).query(pial[~mask], k=1, workers=-1)
         max_out = float(d.max())
     except Exception:
         max_out = float("nan")
@@ -553,6 +612,7 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
 
 
 def test_bem_gaps(meshes: dict, cfg: Config) -> list[TestResult]:
+    print(f"    Running BEM gaps test")
     results = []
     pairs = [("inner_skull", "outer_skull"), ("outer_skull", "outer_skin")]
     for a, b in pairs:
@@ -583,7 +643,7 @@ def test_make_bem_model(subj_dir: Path, cfg: Config) -> list[TestResult]:
     the nesting / solid-angle completeness / manifold checks before assembling
     the model. We try both a 3-layer (EEG) and 1-layer (MEG) configuration.
     """
-    import mne
+    print(f"    Running make BEM model test")
     results = []
     subjects_dir = str(cfg.subjects_dir)
     subject = subj_dir.name
@@ -607,7 +667,7 @@ def plot_bem_images(subj_dir: Path, qa_dir: Path, cfg: Config,
                     meshes: dict) -> TestResult:
     """Save BEM-on-T1 overlays. Try mne.viz.plot_bem; fall back to a manual
     nibabel + matplotlib scatter overlay if that fails."""
-    import mne
+    print(f"    Running BEM image plotting")
     saved = []
     try:
         for orientation in ("axial", "coronal", "sagittal"):
@@ -635,6 +695,7 @@ def plot_bem_images(subj_dir: Path, qa_dir: Path, cfg: Config,
 
 def _manual_bem_plot(subj_dir: Path, qa_dir: Path, meshes: dict) -> list[str]:
     """Overlay BEM surface vertices (surface RAS) on T1 slices."""
+    print(f"    Running manual BEM plot")
     import nibabel as nib
     t1 = _find_first(subj_dir / "mri" / "T1.mgz",
                      subj_dir / "mri" / "brain.mgz")
@@ -679,8 +740,8 @@ def _manual_bem_plot(subj_dir: Path, qa_dir: Path, meshes: dict) -> list[str]:
 
 def plot_alignment_3d(subj_dir: Path, qa_dir: Path, cfg: Config) -> TestResult:
     """Best-effort 3D alignment snapshot (off by default; headless-fragile)."""
+    print(f"    Running 3D alignment snapshot")
     try:
-        import mne
         mne.viz.set_3d_backend("pyvista")
         import pyvista
         pyvista.OFF_SCREEN = True
@@ -723,54 +784,56 @@ def run_subject(subject: str, cfg: Config) -> dict:
         return out if isinstance(out, list) else [out]
 
     # ---- cortical / log ----
-    results.append(safe(test_recon_log, subj_dir, qa_dir))
-    eul = safe(test_euler_nofix, subj_dir, qa_dir, cfg)
-    if isinstance(eul, tuple):
-        res_eul, lh_holes, rh_holes = eul
-        results.append(res_eul)
-        extras["lh_holes"] = lh_holes
-        extras["rh_holes"] = rh_holes
-    else:  # harness error
-        results.append(eul)
-        extras["lh_holes"] = extras["rh_holes"] = None
-    for r in safe_list(test_fixed_surface_topology, subj_dir):
-        results.append(r)
-    results.append(safe(test_cnr, subj_dir, cfg))
-    extras["global_stats"] = safe_call(parse_global_stats, subj_dir) or {}
+    if DO_CORTICAL:
+        results.append(safe(test_recon_log, subj_dir, qa_dir))
+        eul = safe(test_euler_nofix, subj_dir, qa_dir, cfg)
+        if isinstance(eul, tuple):
+            res_eul, lh_holes, rh_holes = eul
+            results.append(res_eul)
+            extras["lh_holes"] = lh_holes
+            extras["rh_holes"] = rh_holes
+        else:  # harness error
+            results.append(eul)
+            extras["lh_holes"] = extras["rh_holes"] = None
+        for r in safe_list(test_fixed_surface_topology, subj_dir):
+            results.append(r)
+        results.append(safe(test_cnr, subj_dir, cfg))
+        extras["global_stats"] = safe_call(parse_global_stats, subj_dir) or {}
 
     # ---- BEM ----
-    surfaces = locate_bem_surfaces(subj_dir)
-    missing = [n for n, p in surfaces.items() if p is None]
-    if set(missing) == set(_BEM_NAMES):
-        results.append(TestResult("bem", "watershed_present", STATUS_FAIL,
-                                  SEV_CRIT, "missing",
-                                  "no watershed BEM surfaces found in bem/ or "
-                                  "bem/watershed/"))
-    else:
-        if missing:
-            results.append(TestResult("bem", "watershed_present", STATUS_WARN,
-                                      SEV_MAJOR, f"missing {missing}",
-                                      "some BEM surfaces absent"))
+    if DO_BEM:
+        surfaces = locate_bem_surfaces(subj_dir)
+        missing = [n for n, p in surfaces.items() if p is None]
+        if set(missing) == set(_BEM_NAMES):
+            results.append(TestResult("bem", "watershed_present", STATUS_FAIL,
+                                    SEV_CRIT, "missing",
+                                    "no watershed BEM surfaces found in bem/ or "
+                                    "bem/watershed/"))
         else:
-            results.append(TestResult("bem", "watershed_present", STATUS_PASS,
-                                      SEV_NONE, "ok", "3 BEM surfaces present"))
-        meshes = {}
-        for name, path in surfaces.items():
-            if path is None:
-                continue
-            r, m = safe_topology(name, path)
-            results.append(r)
-            meshes[name] = m
-        for r in safe_list(test_bem_nesting, meshes, cfg):
-            results.append(r)
-        results.append(safe(test_pial_in_inner_skull, subj_dir, meshes, cfg))
-        for r in safe_list(test_bem_gaps, meshes, cfg):
-            results.append(r)
-        for r in safe_list(test_make_bem_model, subj_dir, cfg):
-            results.append(r)
-        results.append(safe(plot_bem_images, subj_dir, qa_dir, cfg, meshes))
-        if cfg.do_3d:
-            results.append(safe(plot_alignment_3d, subj_dir, qa_dir, cfg))
+            if missing:
+                results.append(TestResult("bem", "watershed_present", STATUS_WARN,
+                                        SEV_MAJOR, f"missing {missing}",
+                                        "some BEM surfaces absent"))
+            else:
+                results.append(TestResult("bem", "watershed_present", STATUS_PASS,
+                                        SEV_NONE, "ok", "3 BEM surfaces present"))
+            meshes = {}
+            for name, path in surfaces.items():
+                if path is None:
+                    continue
+                r, m = safe_topology(name, path)
+                results.append(r)
+                meshes[name] = m
+            for r in safe_list(test_bem_nesting, meshes, cfg):
+                results.append(r)
+            results.append(safe(test_pial_in_inner_skull, subj_dir, meshes, cfg))
+            for r in safe_list(test_bem_gaps, meshes, cfg):
+                results.append(r)
+            for r in safe_list(test_make_bem_model, subj_dir, cfg):
+                results.append(r)
+            results.append(safe(plot_bem_images, subj_dir, qa_dir, cfg, meshes))
+            if cfg.do_3d:
+                results.append(safe(plot_alignment_3d, subj_dir, qa_dir, cfg))
 
     # ---- write per-subject outputs ----
     _write_subject_outputs(subject, qa_dir, results, extras)
@@ -802,6 +865,7 @@ def _overall(results: list[TestResult]) -> str:
 
 
 def _write_subject_outputs(subject, qa_dir, results, extras):
+    print(f"    Writing subject outputs for {subject} to {qa_dir}")
     import pandas as pd
     df = pd.DataFrame([r.row(subject) for r in results])
     df.to_csv(qa_dir / f"{subject}_qa.csv", index=False)

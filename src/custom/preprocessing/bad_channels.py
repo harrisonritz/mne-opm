@@ -346,7 +346,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         selected = self._channel_metrics()
 
         ch_idx = np.array(
-            mne.pick_types(raw.info, meg=picks, ref_meg=False, exclude="bads")
+            mne.pick_types(raw.info, meg=picks, ref_meg=False, exclude="")
         )
         ch_names = [raw.ch_names[i] for i in ch_idx]
         if not selected:
@@ -366,7 +366,8 @@ class BadChannelsAnalysis(BaseAnalysis):
 
         if "log_std" in selected:
             std = data.std(axis=1)
-            specs.append(MetricSpec("log_std", log_transform(std), 1))
+            # Two-tailed: dead (low) and noisy (high) channels both flagged.
+            specs.append(MetricSpec("log_std", log_transform(std), 0))
 
         if "logit_outlier_frac" in selected:
             frac = self._outlier_fraction(data, float(filt.info["sfreq"]))
