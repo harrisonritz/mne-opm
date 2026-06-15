@@ -5,6 +5,7 @@ src/custom/__init__.py
 src/custom/coreg_diagnostics.py
 src/custom/custom_preproc.py
 src/custom/format_bids.py
+src/custom/freesurfer_qa.py
 src/custom/manual_coreg.py
 src/custom/run_beamformer.py
 src/custom/run_decoding.py
@@ -20,8 +21,10 @@ src/custom/preprocessing/bad_channels.py
 src/custom/preprocessing/bad_epochs.py
 src/custom/preprocessing/bad_segments.py
 src/custom/preprocessing/coreg.py
+src/custom/preprocessing/init_derivatives.py
 src/custom/preprocessing/manual_channel.py
 src/custom/preprocessing/manual_ica.py
+src/custom/preprocessing/pca_gesd.py
 src/custom/preprocessing/regress.py
 src/custom/preprocessing/zca_filter.py
 src/dev/cMEG_mne.py
@@ -54,6 +57,7 @@ tests/test_docs.py
 tests/test_event_alignment.py
 tests/test_format_bids.py
 tests/test_format_bids_extended.py
+tests/test_init_derivatives.py
 tests/test_io_and_bids_utils.py
 tests/test_io_save_ica.py
 tests/test_preprocessing_analyses.py

@@ -354,8 +354,31 @@ def run_pca_gesd(
         parts = [f"{names[i]}={loadings[i, p]:.2f}" for i in range(k)]
         _log(f"  PC{p + 1}: {', '.join(parts)}")
 
-    # Per-PC tail direction from loadings . sides.
-    pc_sides = np.sign(loadings.T @ sides)
+    # dot product approach
+    # pc_sides = np.sign(loadings.T @ sides)
+    
+    # Per-PC tail direction: product of sign(loading * side) across metrics.
+    # If any metric has side=0 (both tails), the product is 0 → test both tails.
+    # pc_sides = np.prod(np.sign(loadings * sides[:, np.newaxis]), axis=0)
+    
+    # Voting approach: sum of absolute loadings per side.
+    # print("calculating vote per side")
+    # vote = {s: np.sum(np.abs(loadings[sides == s, :]), axis=0) for s in [-1, 0, 1]}
+    # _log(f"Vote per side: {vote}")
+    # print("get pc_sides")
+    # pc_sides = max(vote, key=lambda s: vote[s])  # vectorised with np.argmax
+    # print(f"pc_sides: {pc_sides}")
+    
+    # Per-PC tail direction: weighted plurality vote across metrics.
+    # For each PC, sum |loading| separately for side={-1, 0, 1}; the winning
+    # side becomes pc_side.  side=0 (both-tails) only wins if two-tailed metrics
+    # collectively carry more loading weight on that PC than either directed group.
+    vote_matrix = np.stack(
+        [np.sum(np.abs(loadings[sides == s, :]), axis=0) for s in [-1, 0, 1]],
+        axis=0,
+    )  # (3, n_pcs); rows correspond to sides [-1, 0, 1]
+    pc_sides = np.array([-1, 0, 1])[np.argmax(vote_matrix, axis=0)]
+    _log(f"PC sides (vote): {pc_sides.tolist()}")
 
     # Šidák correction across PCs, then GESD per eigenscore.
     alpha_per_pc = sidak_alpha(alpha, n_pcs)
@@ -515,7 +538,7 @@ def _fig_pc_outliers(result: PCAGesdResult, item_label: str):
     import matplotlib.pyplot as plt
 
     n_pcs = result.n_pcs
-    ncol = min(3, n_pcs)
+    ncol = min(4, n_pcs)
     nrow = int(np.ceil(n_pcs / ncol))
     fig, axes = plt.subplots(nrow, ncol, figsize=(4 * ncol, 3 * nrow), squeeze=False)
     n_items = result.eigenscores.shape[1]
@@ -534,6 +557,34 @@ def _fig_pc_outliers(result: PCAGesdResult, item_label: str):
     for j in range(n_pcs, nrow * ncol):
         fig.delaxes(axes[j // ncol][j % ncol])
     fig.suptitle("Per-PC GESD outliers")
+    fig.tight_layout()
+    return fig
+
+def _fig_pc_outliers_histogram(result: PCAGesdResult, item_label: str):
+    """Per-PC overlaid histograms of kept vs flagged eigenscores."""
+    import matplotlib.pyplot as plt
+
+    n_pcs = result.n_pcs
+    ncol = min(4, n_pcs)
+    nrow = int(np.ceil(n_pcs / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4 * ncol, 3 * nrow), squeeze=False)
+    for p in range(n_pcs):
+        ax = axes[p // ncol][p % ncol]
+        y = result.eigenscores[p]
+        flags = result.per_pc_flagged[p]
+        # Shared bin edges so flagged and kept bars align.
+        n_bins = max(10, int(np.sqrt(len(y))))
+        bins = np.linspace(y.min(), y.max(), n_bins + 1)
+        ax.hist(y[~flags], bins=bins, color="steelblue", alpha=0.7, label="kept")
+        if flags.any():
+            ax.hist(y[flags], bins=bins, color="red", alpha=0.7, label="flagged")
+        ax.set_title(f"PC{p + 1} (α/PC={result.alpha_per_pc:.4f})", fontsize=9)
+        ax.set_xlabel("eigenscore")
+        ax.set_ylabel("count")
+        ax.legend(fontsize=7)
+    for j in range(n_pcs, nrow * ncol):
+        fig.delaxes(axes[j // ncol][j % ncol])
+    fig.suptitle("Per-PC GESD outliers (histogram)")
     fig.tight_layout()
     return fig
 
@@ -589,6 +640,7 @@ def save_pca_gesd_figures(
         "MetricCorr": lambda: _fig_metric_corr(result),
         "StdScores": lambda: _fig_standardized(result, item_label),
         "Outliers": lambda: _fig_pc_outliers(result, item_label),
+        "OutliersHist": lambda: _fig_pc_outliers_histogram(result, item_label),
     }
 
     for name, builder in builders.items():

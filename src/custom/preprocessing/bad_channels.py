@@ -9,7 +9,7 @@ Available per-channel metrics (each selectable via ``cfg._channel_metrics``):
 
 * **log_std** — log of the per-channel standard deviation over the recording
   (broadband power / variance).  Catches channels that are bad for the whole
-  session.  ``side=+1`` (high = bad).
+  session.  ``side=+1`` (side=0 for two-tailed).
 * **logit_outlier_frac** — logit of the *fraction of short time windows* in which
   a channel is an upper-tail variance outlier (a windowed GESD).  Catches
   **intermittent** bad channels with a near-normal whole-recording std.
@@ -253,7 +253,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         self._metric_results: Dict[str, Tuple[List[str], Any]] = {}
 
         for task, raw in data.items():
-            self.log(f"Processing task={task}")
+            self.log(f"\nProcessing task={task}")
             ch_names, specs = self._compute_channel_metrics(raw)
             if not specs:
                 self.log(f"  no channel metrics computed; skipping task={task}")
@@ -346,7 +346,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         selected = self._channel_metrics()
 
         ch_idx = np.array(
-            mne.pick_types(raw.info, meg=picks, ref_meg=False, exclude="")
+            mne.pick_types(raw.info, meg=picks, ref_meg=False, eyetrack=False, exclude=[""])
         )
         ch_names = [raw.ch_names[i] for i in ch_idx]
         if not selected:
@@ -355,6 +355,10 @@ class BadChannelsAnalysis(BaseAnalysis):
         if ch_idx.size < 3:
             self.log("  too few channels; skipping channel metrics")
             return ch_names, []
+        
+        self.log(f"initial bad channels ({len(raw.info["bads"])}): {raw.info["bads"]}")
+        self.log(f"number of channels to test: {ch_idx.size}")
+
 
         # Bandpass-filtered copy for variance/kurtosis/spatial metrics.
         filt = raw.copy().filter(
@@ -471,13 +475,14 @@ class BadChannelsAnalysis(BaseAnalysis):
         try:
             psd = raw.compute_psd(
                 picks=ch_idx,
+                exclude=[""],
                 fmin=fmin,
                 fmax=fmax,
                 n_fft=n_fft,
                 reject_by_annotation=True,
                 verbose=False,
             )
-            pow_data = psd.get_data()  # (n_ch, n_freqs)
+            pow_data = psd.get_data(picks="all", exclude=[""])  # (n_ch, n_freqs)
         except Exception as exc:
             self.log(f"  [psd] skipped ({exc})")
             return None
