@@ -217,7 +217,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         data: Dict[str, Any] = {}
 
         tasks = [self.cfg.task]
-        if getattr(self.cfg, "process_empty_room", False):
+        if getattr(self.cfg, "process_empty_room", False) and getattr(self.cfg, "_bad_channel_emptyroom", False):
             tasks.insert(0, "noise")
 
         for task in tasks:

@@ -20,7 +20,7 @@ from custom.preprocessing.manual_channel import ManualChannelAnalysis
 from custom.preprocessing.regress import RegressAnalysis
 from custom.preprocessing.apply_hfc import ApplyHFCAnalysis
 from custom.preprocessing.zca_filter import ZCAFilterAnalysis
-from custom.preprocessing.auto_ica import AutoICAAnalysis
+from custom.preprocessing.bad_ICs import AutoICAAnalysis
 from custom.preprocessing.manual_ica import ManualICAAnalysis
 from custom.preprocessing.coreg import CoregAnalysis
 

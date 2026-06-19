@@ -30,10 +30,10 @@ while keeping each score individually selectable through configuration.
 Usage
 -----
 CLI:
-    python src/custom/custom_preproc.py --analysis=auto_ica --config=/path/to/config.py
+    python src/custom/custom_preproc.py --analysis=bad_ICs --config=/path/to/config.py
 
 Programmatic:
-    >>> from preprocessing.auto_ica import run
+    >>> from preprocessing.bad_ICs import run
     >>> run(cfg)
 
 Configuration Attributes
@@ -53,7 +53,7 @@ Required:
         Must be 'ica' to enable ICA analyses.
 
 Optional:
-    _auto_ica : bool
+    _bad_ICs : bool
         Enable/disable automatic ICA labeling. Default: False.
     _ica_metrics : list[str] | None
         The single list of per-IC scores to feed into the unified GESD. Valid
@@ -64,7 +64,7 @@ Optional:
     _corrmap_template_dir, _n_eog_templates, _n_ecg_templates :
         Corrmap template location and per-type column counts, used when
         ``"corrmap_eog"`` / ``"corrmap_ecg"`` are selected.
-    _auto_ica_overlay : bool
+    _bad_ICs_overlay : bool
         Save ``ica.plot_overlay`` PNGs (report-style evoked butterfly) after
         each per-PC GESD step plus a final overlay, and the PCA diagnostic
         figures, into the participant's ``meg/ICA`` directory. Default: True.
@@ -99,7 +99,7 @@ from .pca_gesd import (
 )
 
 
-class AutoICAAnalysis(BaseAnalysis):
+class BadICAnalysis(BaseAnalysis):
     """Automatic ICA component labeling.
 
     Every detection strategy contributes a per-IC score; the selected scores
@@ -114,9 +114,9 @@ class AutoICAAnalysis(BaseAnalysis):
     Attributes
     ----------
     ANALYSIS_KEY : str
-        'autoica'
+        'badICs'
     ANALYSIS_NAME : str
-        'auto_ica'
+        'bad_ICs'
 
     See Also
     --------
@@ -124,20 +124,20 @@ class AutoICAAnalysis(BaseAnalysis):
     osl_ephys.preprocessing.osl_wrappers.gesd : GESD outlier detection.
     """
 
-    ANALYSIS_KEY = "autoica"
-    ANALYSIS_NAME = "auto_ica"
+    ANALYSIS_KEY = "badICs"
+    ANALYSIS_NAME = "bad_ICs"
 
     def is_enabled(self) -> bool:
         """Check if automatic ICA is enabled.
 
-        Requires both _auto_ica=True and spatial_filter='ica'.
+        Requires both _bad_ICs=True and spatial_filter='ica'.
 
         Returns
         -------
         enabled : bool
             True if both conditions are met.
         """
-        auto_enabled = getattr(self.cfg, "_auto_ica", False)
+        auto_enabled = getattr(self.cfg, "_bad_ICs", False)
         ica_enabled = getattr(self.cfg, "spatial_filter", None) == "ica"
         return auto_enabled and ica_enabled
 
@@ -225,7 +225,7 @@ class AutoICAAnalysis(BaseAnalysis):
         self.log("Running automatic ICA component labeling...")
 
         # Apply labeling methods
-        ica = self._auto_ica(ica, raw)
+        ica = self._bad_ICs(ica, raw)
 
         return {self.cfg.task: raw, "ica": ica}
 
@@ -250,7 +250,7 @@ class AutoICAAnalysis(BaseAnalysis):
             f"Components TSV columns: {list(components_df.columns)}"
         )
 
-    def _auto_ica(
+    def _bad_ICs(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
     ) -> mne.preprocessing.ICA:
         """Apply the unified PCA→GESD ICA component labeling.
@@ -280,7 +280,7 @@ class AutoICAAnalysis(BaseAnalysis):
         # Evoked used for the report-style overlays (built once, only if needed).
         evoked = (
             self._make_overlay_evoked(raw)
-            if getattr(self.cfg, "_auto_ica_overlay", True)
+            if getattr(self.cfg, "_bad_ICs_overlay", True)
             else None
         )
 
@@ -299,7 +299,10 @@ class AutoICAAnalysis(BaseAnalysis):
             return ica
 
         # Unified PCA-whitened GESD across all scores.
-        ica, gesd = self._run_unified_gesd(ica, raw, score_specs)
+        ica, gesd = self._run_unified_gesd(ica, 
+                                           raw, 
+                                           score_specs, 
+                                           alpha = getattr(self.cfg, "_bad_ICs_alpha", 0.05))
         self._gesd_result = gesd
 
         # (b) Cumulative per-PC (per-eigenscore) overlays.
@@ -455,7 +458,7 @@ class AutoICAAnalysis(BaseAnalysis):
         e.g. ``sub-009_ses-01_task-TSX_proc-ica_icaOverlay_01_gesd-PC1.png`` in the
         participant's ``meg/ICA`` folder.
 
-        Disabled by setting ``cfg._auto_ica_overlay = False``.  A missing Evoked
+        Disabled by setting ``cfg._bad_ICs_overlay = False``.  A missing Evoked
         or any plotting failure is logged and swallowed so it never aborts
         labelling.
 
@@ -470,7 +473,7 @@ class AutoICAAnalysis(BaseAnalysis):
         step_label : str
             Short human-readable step label (e.g. ``"gesd-PC1"``).
         """
-        if not getattr(self.cfg, "_auto_ica_overlay", True):
+        if not getattr(self.cfg, "_bad_ICs_overlay", True):
             return
         if evoked is None:
             return
@@ -794,7 +797,7 @@ class AutoICAAnalysis(BaseAnalysis):
         raw: mne.io.BaseRaw,
         score_specs: list,
         alpha: float = 0.05,
-        p_out: float = 1.0,
+        p_out: float = 0.5,
         n_pcs: "int | None" = None,
     ) -> tuple:
         """Run the unified PCA-whitened GESD over all per-IC scores.
@@ -868,10 +871,10 @@ class AutoICAAnalysis(BaseAnalysis):
         """Save the PCA/GESD diagnostic figures into the participant's ICA folder.
 
         Delegates to :func:`custom.preprocessing.pca_gesd.save_pca_gesd_figures`.
-        Disabled by ``cfg._auto_ica_overlay=False``; each figure is isolated so a
+        Disabled by ``cfg._bad_ICs_overlay=False``; each figure is isolated so a
         failure never aborts labelling.
         """
-        if not getattr(self.cfg, "_auto_ica_overlay", True):
+        if not getattr(self.cfg, "_bad_ICs_overlay", True):
             return
         if gesd is None or gesd.n_pcs == 0:
             self.log("No GESD result/PCs; skipping diagnostic figures.")
@@ -1336,7 +1339,7 @@ def run(cfg: SimpleNamespace) -> None:
     cfg : SimpleNamespace
         Loaded configuration object.
     """
-    analysis = AutoICAAnalysis(cfg)
+    analysis = BadICAnalysis(cfg)
 
     if not analysis.is_enabled():
         print(f"\n[{analysis.ANALYSIS_NAME}] Disabled in configuration; exiting")

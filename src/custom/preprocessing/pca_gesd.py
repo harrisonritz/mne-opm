@@ -374,7 +374,7 @@ def run_pca_gesd(
     # side becomes pc_side.  side=0 (both-tails) only wins if two-tailed metrics
     # collectively carry more loading weight on that PC than either directed group.
     vote_matrix = np.stack(
-        [np.sum(np.abs(loadings[sides == s, :]), axis=0) for s in [-1, 0, 1]],
+        [np.abs(np.sum(loadings[sides == s, :], axis=0)) for s in [-1, 0, 1]],
         axis=0,
     )  # (3, n_pcs); rows correspond to sides [-1, 0, 1]
     pc_sides = np.array([-1, 0, 1])[np.argmax(vote_matrix, axis=0)]

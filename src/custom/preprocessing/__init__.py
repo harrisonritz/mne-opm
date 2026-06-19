@@ -42,6 +42,7 @@ Author: Harrison Ritz, 2025
 
 # Import analysis modules for convenient access
 from . import (
+    bad_ICs,
     init_derivatives,
     regress,
     bad_segments,
@@ -50,7 +51,6 @@ from . import (
     apply_hfc,
     zca_filter,
     bad_epochs,
-    auto_ica,
     manual_ica,
     coreg,
 )
@@ -82,7 +82,7 @@ __all__ = [
     "apply_hfc",
     "zca_filter",
     "bad_epochs",
-    "auto_ica",
+    "bad_ICs",
     "manual_ica",
     "coreg",
     # Shared utilities

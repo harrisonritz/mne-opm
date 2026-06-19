@@ -16,7 +16,7 @@ Provided analyses (CLI --analysis):
     manual_channel -> Interactive visual marking of bad channels
     apply_hfc      -> Apply homogeneous field correction (HFC) projections
     bad_epochs     -> Drop bad epochs post-epoching
-    auto_ica       -> Automatic ICA component labeling
+    bad_ICs       -> Automatic ICA component labeling
     manual_ica     -> Interactive ICA component review
 
 Usage
@@ -82,7 +82,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "zcafilter": "zca_filter",
     "applyzca": "zca_filter",  # Alias for zca_filter
     "badepochs": "bad_epochs",
-    "autoica": "auto_ica",
+    "badICs": "bad_ICs",
     "manualica": "manual_ica",
     "coreg": "coreg",
 }
@@ -96,12 +96,12 @@ ANALYSIS_CHOICES: list[str] = [
     "bad_segments_1",
     "bad_segments_2",
     "bad_channels",
+    "bad_epochs",
+    "bad_ICs",
     "manual_channel",
     "apply_hfc",
     "zca_filter",
     "apply_zca",  # Alias for zca_filter
-    "bad_epochs",
-    "auto_ica",
     "manual_ica",
     "coreg",
 ]

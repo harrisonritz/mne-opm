@@ -12,7 +12,7 @@ import mne
 import numpy as np
 import pytest
 
-from custom.preprocessing.auto_ica import AutoICAAnalysis, PCAGesdResult
+from custom.preprocessing.bad_ICs import AutoICAAnalysis, PCAGesdResult
 
 
 # ---------------------------------------------------------------------------

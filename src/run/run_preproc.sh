@@ -108,17 +108,6 @@ _print_timing "CUSTOM: Common Spatial Filter (ZCA)" $STEP_START
 
 STEP_START=$SECONDS
 echo ""
-echo "======================= OSL: bad segment 2 =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_2 --config=$CONFIG_PATH
-_print_timing "OSL: bad segment 2" $STEP_START
-
-
-
-
-
-STEP_START=$SECONDS
-echo ""
 echo "======================= MNE: preprocessing =============================================="
 echo ""
 mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
@@ -128,10 +117,10 @@ _print_timing "MNE: preprocessing" $STEP_START
 
 STEP_START=$SECONDS
 echo ""
-echo "======================= Manual: automatic ICA rejection =============================================="
+echo "======================= CUSTOM: Automatic ICA rejection =============================================="
 echo ""
-python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=auto_ica --config=$CONFIG_PATH
-_print_timing "Manual: automatic ICA rejection" $STEP_START
+python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_ICs --config=$CONFIG_PATH
+_print_timing "CUSTOM: automatic ICA rejection" $STEP_START
 
 
 
