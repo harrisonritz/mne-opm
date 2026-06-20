@@ -8,3 +8,4 @@ local-mne-opm.sh
 /.vscode
 docs/_build/
 .coverage
+CLAUDE.md
