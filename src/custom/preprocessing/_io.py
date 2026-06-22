@@ -178,6 +178,217 @@ def count_condition_events_in_tsv(events_tsv_path, conditions):
     return n_events, matched_names
 
 
+def first_response_per_trial(
+    raw,
+    *,
+    trial_conditions=("trial",),
+    response_conditions=("response/left", "response/right"),
+):
+    """Pair each trial annotation with the first response that follows it.
+
+    For every trial annotation (taken in chronological order), the first
+    response annotation whose onset falls in ``[trial_onset, next_trial_onset)``
+    is selected.  Responses that are not the first within a trial window (e.g.
+    double presses) and responses that fall outside every trial window
+    ("orphans" — before the first trial, or with no containing window) are
+    flagged for removal.
+
+    Trial and response annotations are matched hierarchically (so ``'trial'``
+    matches ``'trial/read_read'`` and ``'response/left'`` matches exactly),
+    using the same ``mne.event.match_event_names`` logic as
+    :func:`count_condition_events_in_raw`.
+
+    The ``raw`` object is **not** modified.
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw object whose ``annotations`` are inspected.
+    trial_conditions : iterable of str
+        Condition names identifying trial-onset annotations.
+    response_conditions : iterable of str
+        Condition names identifying response annotations.
+
+    Returns
+    -------
+    trial_has_response : numpy.ndarray of bool
+        One entry per trial annotation, in chronological order; ``True`` when a
+        response was found in that trial's window.  ``len`` equals the number of
+        trial annotations counted by :func:`count_condition_events_in_raw` for
+        ``trial_conditions``.
+    keep_ann_idx : list of int
+        Indices into ``raw.annotations`` of the kept (first-per-trial) responses,
+        in chronological order.
+    drop_ann_idx : list of int
+        Indices into ``raw.annotations`` of the responses to remove (extra
+        presses within a window plus orphans), in chronological order.
+    keep_onsets : numpy.ndarray of float
+        Onsets (seconds) of the kept responses, in chronological order.
+    """
+    ann = raw.annotations
+    n_ann = len(ann)
+    if n_ann == 0:
+        return np.zeros(0, dtype=bool), [], [], np.zeros(0, dtype=float)
+
+    unique_names = sorted(set(ann.description))
+
+    def _matched(conds):
+        try:
+            names = mne.event.match_event_names(
+                event_names=unique_names,
+                keys=list(conds),
+                on_missing="ignore",
+            )
+        except KeyError:
+            return set()
+        return set(names)
+
+    trial_names = _matched(trial_conditions)
+    response_names = _matched(response_conditions)
+
+    onsets = np.asarray(ann.onset, dtype=float)
+    descriptions = np.asarray(ann.description)
+
+    trial_glob = np.array(
+        [i for i, d in enumerate(descriptions) if d in trial_names], dtype=int
+    )
+    response_glob = np.array(
+        [i for i, d in enumerate(descriptions) if d in response_names], dtype=int
+    )
+
+    # Sort both by onset (annotations are usually already sorted, but be safe).
+    if trial_glob.size:
+        trial_glob = trial_glob[np.argsort(onsets[trial_glob], kind="stable")]
+    if response_glob.size:
+        response_glob = response_glob[np.argsort(onsets[response_glob], kind="stable")]
+
+    trial_onsets = onsets[trial_glob]
+    resp_onsets = onsets[response_glob]
+
+    n_trials = len(trial_glob)
+    trial_has_response = np.zeros(n_trials, dtype=bool)
+    keep_ann_idx: list[int] = []
+
+    # Upper bound of each trial window is the next trial onset (inf for the last).
+    next_onsets = np.full(n_trials, np.inf, dtype=float)
+    if n_trials > 1:
+        next_onsets[:-1] = trial_onsets[1:]
+
+    used = np.zeros(len(response_glob), dtype=bool)
+    for j in range(n_trials):
+        lo, hi = trial_onsets[j], next_onsets[j]
+        in_window = (resp_onsets >= lo) & (resp_onsets < hi) & (~used)
+        cand = np.where(in_window)[0]
+        if cand.size:
+            # resp_onsets is sorted ascending, so the first candidate is earliest.
+            first = int(cand[0])
+            used[first] = True
+            trial_has_response[j] = True
+            keep_ann_idx.append(int(response_glob[first]))
+
+    keep_set = set(keep_ann_idx)
+    drop_ann_idx = [int(i) for i in response_glob if int(i) not in keep_set]
+    keep_onsets = (
+        onsets[np.asarray(keep_ann_idx, dtype=int)]
+        if keep_ann_idx
+        else np.zeros(0, dtype=float)
+    )
+
+    return trial_has_response, keep_ann_idx, drop_ann_idx, keep_onsets
+
+
+def drop_response_rows_from_events_tsv(
+    events_tsv_path,
+    keep_onsets,
+    response_conditions=("response/left", "response/right"),
+    *,
+    tol_sec: float = 0.02,
+) -> int:
+    """Trim response rows from a BIDS events.tsv down to a kept set of onsets.
+
+    Counterpart to :func:`trim_raw_to_events_tsv`: instead of removing raw
+    annotations that are absent from the events.tsv, this removes *response*
+    rows from the events.tsv that are absent from ``keep_onsets`` (the first
+    response per trial).  All non-response rows are left untouched.
+
+    Each kept onset greedily claims the nearest unclaimed response row within
+    ``tol_sec``; any response row left unclaimed is dropped.  The file is
+    rewritten in place, preserving the original cell formatting (read as strings).
+
+    Parameters
+    ----------
+    events_tsv_path : str or Path
+        Path to a BIDS ``*_events.tsv`` file (modified in place).
+    keep_onsets : array-like of float
+        Onsets (seconds) of the responses to keep.
+    response_conditions : iterable of str
+        Condition names identifying response rows (matched hierarchically).
+    tol_sec : float
+        Maximum onset difference (seconds) for a kept onset and a TSV row to be
+        considered the same event (default 0.02 s).
+
+    Returns
+    -------
+    n_removed : int
+        Number of response rows removed from the events.tsv.
+    """
+    events_path = Path(events_tsv_path)
+    if not events_path.exists():
+        return 0
+
+    # Read as strings (keep_default_na=False) so the round-trip preserves the
+    # exact original formatting, including BIDS "n/a" cells.
+    events_df = pd.read_csv(
+        events_path, sep="\t", dtype=str, keep_default_na=False
+    )
+    if "trial_type" not in events_df.columns or "onset" not in events_df.columns:
+        return 0
+
+    descriptions = events_df["trial_type"].astype(str)
+    unique_names = sorted(set(descriptions[descriptions != "n/a"]))
+    try:
+        matched_names = set(
+            mne.event.match_event_names(
+                event_names=unique_names,
+                keys=list(response_conditions),
+                on_missing="ignore",
+            )
+        )
+    except KeyError:
+        matched_names = set()
+
+    if not matched_names:
+        return 0
+
+    resp_row_mask = descriptions.isin(matched_names).to_numpy()
+    resp_rows = np.where(resp_row_mask)[0]
+    if not resp_rows.size:
+        return 0
+    resp_onsets = events_df["onset"].to_numpy(dtype=float)[resp_rows]
+
+    keep_onsets = np.asarray(list(keep_onsets), dtype=float)
+
+    # Greedy nearest-neighbour: each kept onset claims the closest unclaimed
+    # response row within tol_sec.
+    claimed = np.zeros(len(resp_rows), dtype=bool)
+    for k_on in keep_onsets:
+        dists = np.abs(resp_onsets - k_on)
+        dists[claimed] = np.inf
+        best = int(np.argmin(dists))
+        if dists[best] <= tol_sec:
+            claimed[best] = True
+
+    drop_rows = {int(resp_rows[i]) for i in np.where(~claimed)[0]}
+    n_removed = len(drop_rows)
+    if n_removed == 0:
+        return 0
+
+    keep_mask = np.array([i not in drop_rows for i in range(len(events_df))])
+    events_df.loc[keep_mask].to_csv(events_path, sep="\t", index=False)
+
+    return n_removed
+
+
 def trim_raw_to_events_tsv(
     raw,
     events_tsv_path,
@@ -913,11 +1124,22 @@ def write_raw_bids_custom_step(
         # started/stopped while triggers were firing).  These orphan annotations
         # would make the derivative FIF disagree with the authoritative
         # events.tsv, breaking metadata ↔ epochs alignment downstream.
+        #
+        # Always trim BOTH the epoch-locked conditions (cfg.conditions) AND
+        # trial-onset annotations (_trial_conditions, default "trial").  The
+        # epoch-locked conditions handle stray response presses; the trial
+        # conditions handle extra trigger pulses from the OPM recording
+        # system that appear in raw.annotations but were filtered out during
+        # the initial BIDS conversion and are absent from the events.tsv.
         task_name_for_trim = getattr(output_bp, "task", None) or ""
         if not task_name_for_trim.startswith("noise"):
-            conditions_for_trim = tuple(
+            _epoch_conds = tuple(
                 getattr(cfg, "conditions", ("trial",)) or ("trial",)
             )
+            _trial_conds = tuple(
+                getattr(cfg, "_trial_conditions", ("trial",)) or ("trial",)
+            )
+            conditions_for_trim = tuple(set(_epoch_conds + _trial_conds))
             _events_tsv_for_trim = output_bp.copy().update(
                 suffix="events", extension=".tsv", split=None, check=False
             ).fpath
@@ -960,7 +1182,11 @@ def write_raw_bids_custom_step(
     # the noise/empty-room task because it carries no condition annotations.
     task_name = getattr(output_bp, "task", None) or ""
     if not task_name.startswith("noise"):
-        conditions = tuple(getattr(cfg, "conditions", ("trial",)) or ("trial",))
+        _epoch_conds = tuple(getattr(cfg, "conditions", ("trial",)) or ("trial",))
+        _trial_conds = tuple(
+            getattr(cfg, "_trial_conditions", ("trial",)) or ("trial",)
+        )
+        conditions = tuple(set(_epoch_conds + _trial_conds))
         verify_event_count_after_write(
             raw, output_bp, conditions=conditions,
             context=f"write_raw_bids_custom_step:{task_name or '?'}",

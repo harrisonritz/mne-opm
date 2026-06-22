@@ -50,6 +50,7 @@ from . import (
     manual_channel,
     apply_hfc,
     zca_filter,
+    select_trial_response,
     bad_epochs,
     manual_ica,
     coreg,
@@ -68,6 +69,8 @@ from ._io import (
     assert_not_raw_bids_write,
     count_condition_events_in_raw,
     count_condition_events_in_tsv,
+    first_response_per_trial,
+    drop_response_rows_from_events_tsv,
     verify_event_count_after_write,
 )
 from ._bids_utils import get_bids_path
@@ -81,6 +84,7 @@ __all__ = [
     "manual_channel",
     "apply_hfc",
     "zca_filter",
+    "select_trial_response",
     "bad_epochs",
     "bad_ICs",
     "manual_ica",

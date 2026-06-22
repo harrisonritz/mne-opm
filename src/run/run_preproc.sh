@@ -56,6 +56,15 @@ _print_timing "INIT: clear stale custom derivatives" $STEP_START
 
 STEP_START=$SECONDS
 echo ""
+echo "======================= CUSTOM: select first response per trial =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=select_trial_response --config=$CONFIG_PATH
+_print_timing "CUSTOM: select first response per trial" $STEP_START
+
+
+
+STEP_START=$SECONDS
+echo ""
 echo "======================= custom: regress  =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress --config=$CONFIG_PATH
