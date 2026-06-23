@@ -25,11 +25,14 @@ import mne_bids
 import numpy as np
 import pandas as pd
 
+import pytest
+
 from custom.preprocessing._io import (
     count_condition_events_in_raw,
     count_condition_events_in_tsv,
     drop_response_rows_from_events_tsv,
     first_response_per_trial,
+    trial_response_side_keep_first,
     write_raw_bids_custom_step,
 )
 from custom.preprocessing.select_trial_response import (
@@ -419,3 +422,125 @@ class TestSelectTrialResponseStep:
             mne.io.read_raw_fif(deriv_fif, verbose="ERROR"), cfg.conditions
         )
         assert before == after == 5
+
+
+# ---------------------------------------------------------------------------
+# trial_response_side_keep_first
+# ---------------------------------------------------------------------------
+
+class TestTrialResponseSideKeepFirst:
+    """Per-trial first-response side via mne keep_first epoching."""
+
+    def test_sides_match_first_response_per_window(self):
+        raw = _raw_from_events([
+            (0.5, "response/left"),                  # orphan before first trial
+            (1.0, "trial/a"), (1.5, "response/left"),
+            (3.0, "trial/b"), (3.4, "response/right"), (3.6, "response/left"),
+            (5.0, "trial/c"),                        # no response in [5, 7)
+            (7.0, "trial/d"), (7.2, "response/left"),
+            (9.0, "trial/e"),                        # last trial, no response
+        ])
+        sides = trial_response_side_keep_first(raw)
+        # Orphan ignored; double-press keeps first; no-response -> None; the
+        # last trial's window does not steal a later response (there is none).
+        assert sides == ["left", "right", None, "left", None]
+
+    def test_agrees_with_first_response_per_trial_mask(self):
+        raw = _raw_from_events([
+            (1.0, "trial/a"), (1.5, "response/left"),
+            (3.0, "trial/b"), (3.4, "response/right"), (3.6, "response/right"),
+            (5.0, "trial/c"),
+            (7.0, "trial/d"), (7.1, "response/left"),
+        ])
+        sides = trial_response_side_keep_first(raw)
+        mask, _, _, _ = first_response_per_trial(raw)
+        # A non-None side iff the trial had a response.
+        assert [s is not None for s in sides] == mask.tolist()
+
+    def test_no_responses_all_none(self):
+        raw = _raw_from_events([
+            (1.0, "trial/a"), (3.0, "trial/b"),
+        ])
+        assert trial_response_side_keep_first(raw) == [None, None]
+
+    def test_no_trials_empty(self):
+        raw = _raw_from_events([
+            (1.0, "response/left"), (2.0, "response/right"),
+        ])
+        assert trial_response_side_keep_first(raw) == []
+
+    def test_empty_annotations(self):
+        raw = _raw_from_events([(1.0, "trial/a")])
+        raw.set_annotations(mne.Annotations([], [], []))
+        assert trial_response_side_keep_first(raw) == []
+
+
+# ---------------------------------------------------------------------------
+# Response-alignment check (_check_response_alignment)
+# ---------------------------------------------------------------------------
+
+class TestResponseAlignmentCheck:
+    """Opt-in check that trigger responses line up with behavioral metadata."""
+
+    def _raw(self):
+        return _raw_from_events([
+            (1.0, "trial/a"), (1.5, "response/left"),
+            (3.0, "trial/b"), (3.4, "response/right"),
+            (5.0, "trial/c"),                        # no response
+            (7.0, "trial/d"), (7.2, "response/left"),
+        ])
+
+    def _analysis(self, *, column=None, metadata=None):
+        cfg = SimpleNamespace(_select_trial_response=True)
+        if column is not None:
+            cfg._response_metadata_column = column
+        if metadata is not None:
+            cfg.epochs_custom_metadata = metadata
+        return SelectTrialResponseAnalysis(cfg)
+
+    def test_passes_when_metadata_matches(self):
+        meta = pd.DataFrame({"resp": ["left", "right", None, "left"]})
+        analysis = self._analysis(column="resp", metadata=meta)
+        # Should not raise.
+        analysis._check_response_alignment("test", self._raw())
+
+    def test_normalizes_case_whitespace_and_no_response_markers(self):
+        meta = pd.DataFrame({"resp": ["Left ", "RIGHT", "n/a", "left"]})
+        analysis = self._analysis(column="resp", metadata=meta)
+        analysis._check_response_alignment("test", self._raw())
+
+    def test_raises_on_side_mismatch(self):
+        # Trial b recorded as 'left' but the trigger says 'right'.
+        meta = pd.DataFrame({"resp": ["left", "left", None, "left"]})
+        analysis = self._analysis(column="resp", metadata=meta)
+        with pytest.raises(RuntimeError, match="not aligned"):
+            analysis._check_response_alignment("test", self._raw())
+
+    def test_raises_on_no_response_disagreement(self):
+        # Trial c had no trigger response but metadata claims 'right'.
+        meta = pd.DataFrame({"resp": ["left", "right", "right", "left"]})
+        analysis = self._analysis(column="resp", metadata=meta)
+        with pytest.raises(RuntimeError, match="not aligned"):
+            analysis._check_response_alignment("test", self._raw())
+
+    def test_raises_on_count_mismatch(self):
+        meta = pd.DataFrame({"resp": ["left", "right", None]})  # only 3 rows
+        analysis = self._analysis(column="resp", metadata=meta)
+        with pytest.raises(RuntimeError, match="count mismatch"):
+            analysis._check_response_alignment("test", self._raw())
+
+    def test_raises_when_column_absent(self):
+        meta = pd.DataFrame({"other": ["left", "right", None, "left"]})
+        analysis = self._analysis(column="resp", metadata=meta)
+        with pytest.raises(ValueError, match="not found in metadata columns"):
+            analysis._check_response_alignment("test", self._raw())
+
+    def test_noop_when_column_not_configured(self):
+        meta = pd.DataFrame({"resp": ["wrong", "values", "here", "x"]})
+        analysis = self._analysis(metadata=meta)  # no _response_metadata_column
+        # Skipped silently despite mismatching metadata.
+        analysis._check_response_alignment("test", self._raw())
+
+    def test_noop_when_no_metadata(self):
+        analysis = self._analysis(column="resp")  # no epochs_custom_metadata
+        analysis._check_response_alignment("test", self._raw())

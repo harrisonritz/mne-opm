@@ -297,6 +297,134 @@ def first_response_per_trial(
     return trial_has_response, keep_ann_idx, drop_ann_idx, keep_onsets
 
 
+def trial_response_side_keep_first(
+    raw,
+    *,
+    trial_conditions=("trial",),
+    response_conditions=("response/left", "response/right"),
+):
+    """Per-trial first-response **side** via :func:`mne.epochs.make_metadata`.
+
+    Epochs on each trial annotation (the "row event") and records the *side*
+    (e.g. ``'left'`` / ``'right'``) of the **first** response that follows it,
+    using MNE's hierarchical-event-descriptor ``keep_first`` aggregation.  The
+    per-trial window is ``[trial_onset, next_trial_onset)`` — exactly the window
+    used by :func:`first_response_per_trial`.
+
+    This deliberately uses a different code path than
+    :func:`first_response_per_trial` so the two can be cross-checked against one
+    another, and against the trial-wise responses recorded in the behavioral
+    metadata, to confirm that the trial and response triggers are aligned.
+
+    All trial annotations are collapsed to a single event type before building
+    the events array.  This is required for the ``[trial_onset, next_trial_onset)``
+    windowing: ``make_metadata(..., tmax=None)`` bounds each window by the next
+    event **of the same type**, so trials carrying distinct hierarchical names
+    (``trial/read_read`` vs ``trial/listen_read``) must share one id, otherwise
+    a window would run to the end of the recording and steal a later trial's
+    response.
+
+    The ``raw`` object is **not** modified.
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw object whose ``annotations`` are inspected.
+    trial_conditions : iterable of str
+        Condition names identifying trial-onset annotations (matched
+        hierarchically).
+    response_conditions : iterable of str
+        Condition names identifying response annotations (matched
+        hierarchically).  These must share a single top-level group (the part
+        before the first ``'/'``), e.g. ``'response'`` for
+        ``('response/left', 'response/right')``.
+
+    Returns
+    -------
+    sides : list of (str or None)
+        One entry per trial annotation, in chronological order; the response
+        side (the part after the group prefix, lower-cased, e.g. ``'left'`` /
+        ``'right'``) or ``None`` when the trial had no response in its window.
+    """
+    ann = raw.annotations
+    if len(ann) == 0:
+        return []
+
+    unique_names = sorted(set(ann.description))
+
+    def _matched(conds):
+        try:
+            names = mne.event.match_event_names(
+                event_names=unique_names,
+                keys=list(conds),
+                on_missing="ignore",
+            )
+        except KeyError:
+            return set()
+        return set(names)
+
+    trial_names = _matched(trial_conditions)
+    response_names = _matched(response_conditions)
+
+    sfreq = float(raw.info["sfreq"])
+
+    # Collapse all trials to a single id; map each response to its own id under
+    # a shared group so ``keep_first`` can aggregate them.
+    groups = {name.split("/", 1)[0] for name in response_names}
+    if len(groups) > 1:
+        raise ValueError(
+            "trial_response_side_keep_first requires response_conditions to "
+            f"share a single top-level group; got {sorted(groups)}"
+        )
+    group = groups.pop() if groups else "response"
+
+    event_id = {"trial": 1}
+    for i, name in enumerate(sorted(response_names)):
+        event_id[name] = i + 2
+
+    onsets = np.asarray(ann.onset, dtype=float)
+    descriptions = np.asarray(ann.description)
+
+    rows = []
+    for onset, desc in zip(onsets, descriptions):
+        if desc in trial_names:
+            code = 1
+        elif desc in response_names:
+            code = event_id[desc]
+        else:
+            continue
+        rows.append((int(round(onset * sfreq)), 0, code))
+
+    n_trials = sum(1 for _, _, code in rows if code == 1)
+    if n_trials == 0:
+        return []
+
+    # No responses anywhere: every trial is unanswered.
+    if not response_names:
+        return [None] * n_trials
+
+    events = np.asarray(sorted(rows), dtype=int)
+
+    metadata, _, _ = mne.epochs.make_metadata(
+        events=events,
+        event_id=event_id,
+        tmin=0.0,
+        tmax=None,
+        sfreq=sfreq,
+        row_events=["trial"],
+        keep_first=[group],
+    )
+
+    first_col = f"first_{group}"
+    sides = []
+    for value in metadata[first_col].tolist():
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            sides.append(None)
+        else:
+            sides.append(str(value).strip().lower())
+    return sides
+
+
 def drop_response_rows_from_events_tsv(
     events_tsv_path,
     keep_onsets,

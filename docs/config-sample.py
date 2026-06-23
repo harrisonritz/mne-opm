@@ -96,6 +96,14 @@ generate_reports = False
 #           match the number of metadata rows.
 _load_metadata = False
 
+# Opt-in trial/response alignment check (select_trial_response step).
+# Set to the name of the metadata column holding the trial-wise response side
+# (values like 'left'/'right', case-insensitive; blank / 'n/a' = no response).
+# When set (and _load_metadata = True), the step epochs on each trial with
+# `keep_first='response'` and asserts the first-response side per trial matches
+# this column row-for-row, raising on any misalignment.  None disables the check.
+# _response_metadata_column = 'response'
+
 
 # %% ============================================================
 # SECTION 3: BAD CHANNEL DETECTION (bad_channels step)
