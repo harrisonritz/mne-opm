@@ -45,6 +45,7 @@ echo "--------------------------"
 echo ""
 
 
+
 STEP_START=$SECONDS
 echo ""
 echo "======================= INIT: clear stale custom derivatives =============================================="
@@ -107,12 +108,14 @@ python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_hfc --config=$CON
 _print_timing "CUSTOM: homogeneous field correction (HFC)" $STEP_START
 
 
+
 STEP_START=$SECONDS
 echo ""
 echo "======================= CUSTOM: Common Spatial Filter (ZCA) =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_zca --config=$CONFIG_PATH
 _print_timing "CUSTOM: Common Spatial Filter (ZCA)" $STEP_START
+
 
 
 STEP_START=$SECONDS
@@ -166,7 +169,6 @@ echo "======================= MNE: prep source space ===========================
 echo ""
 mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
 _print_timing "MNE: prep source space" $STEP_START
-
 
 
 

@@ -9,3 +9,4 @@ local-mne-opm.sh
 docs/_build/
 .coverage
 CLAUDE.md
+MagicMock*

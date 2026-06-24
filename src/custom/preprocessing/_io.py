@@ -425,6 +425,131 @@ def trial_response_side_keep_first(
     return sides
 
 
+def assert_response_alignment(
+    raw,
+    meta_df,
+    column,
+    *,
+    trial_conditions=("trial",),
+    response_conditions=("response/left", "response/right"),
+    response_left=(),
+    response_right=(),
+    context="",
+    max_preview=10,
+):
+    """Verify per-trial trigger responses agree with a behavioral metadata column.
+
+    Cross-checks the trigger stream against the behavioral log: for every trial
+    annotation (in chronological order) the *side* of the first response that
+    follows it (via :func:`trial_response_side_keep_first`) must equal the
+    response side recorded in ``meta_df[column]``.  A disagreement means the
+    trial/response triggers and the behavioral log are misaligned, which would
+    silently corrupt the positional trial<->epoch metadata join performed by
+    mne-bids-pipeline, so a :class:`RuntimeError` is raised to halt the run.
+
+    ``meta_df`` must be the **full per-trial** metadata (one row per trial,
+    including unanswered trials), *not* the response-aligned subset — the
+    per-trial first-response sides include ``None`` for unanswered trials, so
+    the row counts only match before the response mask is applied.
+
+    The ``raw`` object is **not** modified.
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw object whose annotations carry the trial and response triggers.
+    meta_df : pandas.DataFrame
+        Per-trial behavioral metadata (one row per trial).
+    column : str
+        Name of the column in ``meta_df`` holding the recorded response side.
+    trial_conditions, response_conditions : iterable of str
+        Condition names identifying trial / response annotations (matched
+        hierarchically), forwarded to :func:`trial_response_side_keep_first`.
+    response_left, response_right : str or iterable of str
+        Metadata token(s) denoting a left / right response (e.g. ``'z'`` /
+        ``'r'``).  Used to map recorded values onto ``'left'`` / ``'right'``
+        before comparison.  A scalar string is treated as a single token.
+    context : str
+        Optional label prepended to log / error messages.
+    max_preview : int
+        Maximum number of mismatching trials to list in the error message.
+
+    Returns
+    -------
+    n_trials : int
+        Number of trials checked.
+
+    Raises
+    ------
+    ValueError
+        If ``column`` is absent from ``meta_df``.
+    RuntimeError
+        If the trial count disagrees with the metadata row count, or any
+        trial's first-response side does not match the metadata column.
+    """
+    prefix = f"[{context}] " if context else ""
+
+    if column not in meta_df.columns:
+        raise ValueError(
+            f"{prefix}response-metadata column {column!r} not found in metadata "
+            f"columns: {list(meta_df.columns)}"
+        )
+
+    def _tokens(value):
+        items = [value] if isinstance(value, str) else list(value)
+        return {str(t).strip().lower() for t in items if t is not None}
+
+    left_tokens = _tokens(response_left)
+    right_tokens = _tokens(response_right)
+
+    def _norm(value):
+        if value is None:
+            return None
+        if isinstance(value, float) and np.isnan(value):
+            return None
+        text = str(value).strip().lower()
+        if text in ("", "none", "nan", "n/a", "na"):
+            return None
+        if text in left_tokens:
+            return "left"
+        if text in right_tokens:
+            return "right"
+        return text
+
+    sides = trial_response_side_keep_first(
+        raw,
+        trial_conditions=trial_conditions,
+        response_conditions=response_conditions,
+    )
+    recorded = list(meta_df[column])
+
+    if len(sides) != len(recorded):
+        raise RuntimeError(
+            f"{prefix}trial/metadata count mismatch — {len(sides)} trial events "
+            f"(keep_first) vs {len(recorded)} metadata rows in column "
+            f"{column!r}. Trials and responses are not aligned."
+        )
+
+    mismatches = [
+        (i, trigger, rec)
+        for i, (trigger, rec) in enumerate(zip(sides, recorded))
+        if _norm(trigger) != _norm(rec)
+    ]
+    if mismatches:
+        preview = ", ".join(
+            f"row {i}: keep_first={trigger!r} vs metadata={rec!r}"
+            for i, trigger, rec in mismatches[:max_preview]
+        )
+        raise RuntimeError(
+            f"{prefix}{len(mismatches)}/{len(sides)} trial(s) where the "
+            f"keep_first response side disagrees with metadata column "
+            f"{column!r}. Trials and responses are not aligned. "
+            f"First mismatches: {preview}"
+        )
+
+    return len(sides)
+
+
 def drop_response_rows_from_events_tsv(
     events_tsv_path,
     keep_onsets,

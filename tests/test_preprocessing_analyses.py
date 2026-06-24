@@ -20,7 +20,7 @@ from custom.preprocessing.manual_channel import ManualChannelAnalysis
 from custom.preprocessing.regress import RegressAnalysis
 from custom.preprocessing.apply_hfc import ApplyHFCAnalysis
 from custom.preprocessing.zca_filter import ZCAFilterAnalysis
-from custom.preprocessing.bad_ICs import AutoICAAnalysis
+from custom.preprocessing.bad_ICs import BadICAnalysis
 from custom.preprocessing.manual_ica import ManualICAAnalysis
 from custom.preprocessing.coreg import CoregAnalysis
 
@@ -42,7 +42,7 @@ class TestAnalysisClassConstants:
             (RegressAnalysis, "regress", "regress"),
             (ApplyHFCAnalysis, "applyhfc", "apply_hfc"),
             (ZCAFilterAnalysis, "zcafilter", "zca_filter"),
-            (AutoICAAnalysis, "autoica", "auto_ica"),
+            (BadICAnalysis, "autoica", "auto_ica"),
             (ManualICAAnalysis, "manualica", "manual_ica"),
             (CoregAnalysis, "coreg", "coreg"),
         ],

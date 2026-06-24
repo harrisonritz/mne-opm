@@ -21,16 +21,17 @@ The per-trial selection is performed by
 source of truth shared with ``config-trialResponse.py`` (the config re-derives
 the same per-trial mask from this reduced derivative to subset its metadata).
 
-Alignment check (opt-in)
-------------------------
-Before reducing anything, the step can verify that the trial and response
-triggers are actually aligned with the recorded behavior.  Set
-``cfg._response_metadata_column`` to the name of the metadata column holding the
-trial-wise response side; the step then epochs on each trial with MNE's
-``keep_first='response'`` aggregation and asserts that the per-trial
-first-response side (``left`` / ``right`` / no response) matches that column
-row-for-row.  A mismatch raises and halts the pipeline.  The check is a no-op
-when the column is unset or no trial metadata is available.
+Alignment check
+---------------
+Verifying that the trial and response triggers are actually aligned with the
+recorded behavior is a separate concern handled by
+:func:`custom.preprocessing._io.assert_response_alignment`, which is invoked
+from ``config-trialResponse.py`` once the per-trial metadata has been built.
+That is the only place the **full per-trial** metadata (one row per trial,
+including unanswered trials) and the trigger raw coexist — this step only sees
+the raw, and the metadata it could reach via ``cfg.epochs_custom_metadata`` is
+the response-aligned *subset*, whose row count no longer matches the per-trial
+first-response sides.  Keeping the check in the config avoids that mismatch.
 
 Gating
 ------
@@ -70,7 +71,6 @@ from ._io import (
     first_response_per_trial,
     get_custom_output_path,
     read_raw_bids_with_retry,
-    trial_response_side_keep_first,
     write_raw_bids_custom_step,
 )
 
@@ -104,13 +104,6 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
         self.response_conditions = tuple(
             getattr(cfg, "_response_conditions", _DEFAULT_RESPONSE_CONDITIONS)
             or _DEFAULT_RESPONSE_CONDITIONS
-        )
-        # Opt-in alignment check: name of the metadata column holding the
-        # trial-wise response side.  When set, run() verifies the keep_first
-        # response side per trial matches this column (see
-        # _check_response_alignment).  Unset (None) -> check skipped.
-        self.response_metadata_column = getattr(
-            cfg, "_response_metadata_column", None
         )
 
     # ------------------------------------------------------------------
@@ -163,10 +156,6 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
         results: Dict[str, Any] = {}
 
         for task, raw in data.items():
-            # Opt-in: confirm trial and response triggers are aligned with the
-            # behavioral metadata before reducing anything.
-            self._check_response_alignment(task, raw)
-
             (
                 trial_has_response,
                 keep_ann_idx,
@@ -251,120 +240,6 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    def _check_response_alignment(self, task: str, raw: mne.io.BaseRaw) -> None:
-        """Confirm the trigger responses line up with the behavioral metadata.
-
-        Opt-in via ``cfg._response_metadata_column`` (the name of the metadata
-        column recording the trial-wise response side).  When that column is
-        configured and trial-level metadata is available, this epochs on each
-        trial with MNE's ``keep_first='response'`` aggregation and asserts that
-        the per-trial first-response side (``'left'`` / ``'right'`` / no
-        response) matches the recorded metadata column row-for-row.  A mismatch
-        means the trial and response triggers (or the behavioral log) are
-        misaligned, so a :class:`RuntimeError` is raised to halt the pipeline.
-
-        The check is a **no-op** when ``_response_metadata_column`` is unset or
-        no metadata is available (``cfg.epochs_custom_metadata is None``).
-
-        Parameters
-        ----------
-        task : str
-            Task name (for log/error messages).
-        raw : mne.io.BaseRaw
-            Raw object (with the full, un-reduced response annotations).
-
-        Raises
-        ------
-        RuntimeError
-            If the trial count disagrees with the metadata row count, or any
-            trial's keep_first response side does not match the metadata.
-        ValueError
-            If the configured column is absent from the metadata.
-        """
-        column = self.response_metadata_column
-        if not column:
-            return  # opt-in: not configured
-
-        metadata = getattr(self.cfg, "epochs_custom_metadata", None)
-        if metadata is None:
-            self.log(
-                f"task={task}: response-alignment check skipped "
-                f"(no epochs_custom_metadata available)"
-            )
-            return
-
-        if column not in metadata.columns:
-            raise ValueError(
-                f"[{self.ANALYSIS_NAME}] _response_metadata_column={column!r} "
-                f"not found in metadata columns: {list(metadata.columns)}"
-            )
-
-        sides = trial_response_side_keep_first(
-            raw,
-            trial_conditions=self.trial_conditions,
-            response_conditions=self.response_conditions,
-        )
-        recorded = list(metadata[column])
-
-        if len(sides) != len(recorded):
-            raise RuntimeError(
-                f"[{self.ANALYSIS_NAME}] task={task}: trial/metadata count "
-                f"mismatch — {len(sides)} trial events (keep_first) vs "
-                f"{len(recorded)} metadata rows in column {column!r}. "
-                f"Trials and responses are not aligned."
-            )
-
-        mismatches = [
-            (i, trigger, rec)
-            for i, (trigger, rec) in enumerate(zip(sides, recorded))
-            if self._norm_side(trigger) != self._norm_side(rec)
-        ]
-        if mismatches:
-            preview = ", ".join(
-                f"row {i}: keep_first={trigger!r} vs metadata={rec!r}"
-                for i, trigger, rec in mismatches[:10]
-            )
-            raise RuntimeError(
-                f"[{self.ANALYSIS_NAME}] task={task}: "
-                f"{len(mismatches)}/{len(sides)} trial(s) where the keep_first "
-                f"response side disagrees with metadata column {column!r}. "
-                f"Trials and responses are not aligned. First mismatches: "
-                f"{preview}"
-            )
-
-        self.log(
-            f"task={task}: response-alignment OK — {len(sides)} trials' "
-            f"keep_first response matches metadata column {column!r}"
-        )
-
-    @staticmethod
-    def _norm_side(value: Any) -> str | None:
-        """Normalize a response-side value for comparison.
-
-        Maps missing/no-response markers (``None``, NaN, ``''``, ``'none'``,
-        ``'nan'``, ``'n/a'``, ``'na'``) to ``None`` and lower-cases/strips
-        everything else, so ``'Left'``, ``'left '`` and ``'left'`` all compare
-        equal across the keep_first trigger and the recorded metadata.
-
-        Parameters
-        ----------
-        value : Any
-            A keep_first side (``str`` / ``None``) or a recorded metadata cell.
-
-        Returns
-        -------
-        side : str or None
-            The normalized side label, or ``None`` for "no response".
-        """
-        if value is None:
-            return None
-        if isinstance(value, float) and np.isnan(value):
-            return None
-        text = str(value).strip().lower()
-        if text in ("", "none", "nan", "n/a", "na"):
-            return None
-        return text
 
     @staticmethod
     def _drop_annotations(
