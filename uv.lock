@@ -1421,8 +1421,8 @@ wheels = [
 
 [[package]]
 name = "mne"
-version = "0.1.0.dev18598+gd8ac86fd1"
-source = { git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm#d8ac86fd123e90f9da548010a57d14799ba0d2de" }
+version = "0.1.0.dev18600+ga553e580a"
+source = { git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm#a553e580a8ad3d69d220ecffc299972df0385049" }
 dependencies = [
     { name = "decorator" },
     { name = "jinja2" },

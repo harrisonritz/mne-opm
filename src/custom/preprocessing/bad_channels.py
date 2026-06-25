@@ -108,7 +108,7 @@ _DEFAULT_SIGNIFICANCE: float = 0.05
 _DEFAULT_WINDOW_SEC: float = 2.0
 _DEFAULT_PSD_FMIN: float = 1.0
 _DEFAULT_PSD_FMAX: float = 100.0
-_DEFAULT_PSD_NFFT: int = 2000
+_DEFAULT_PSD_NFFT: int = 2048
 _DEFAULT_LOF_NEIGHBORS: int = 20
 
 # Fraction of outliers cap passed to GESD (channels are rarely >50% bad).
@@ -174,6 +174,9 @@ class BadChannelsAnalysis(BaseAnalysis):
         "kurtosis",
         "lof",
         "psd",
+        "psd_low",
+        "psd_med",
+        "psd_high",
     ]
 
     def is_enabled(self) -> bool:
@@ -386,11 +389,17 @@ class BadChannelsAnalysis(BaseAnalysis):
             if lof is not None:
                 specs.append(MetricSpec("lof", log_transform(lof), 1))
 
-        if "psd" in selected:
-            psd = self._psd_logpower(raw, ch_idx)
-            if psd is not None:
-                # Two-tailed: dead (low) and noisy (high) channels both flagged.
+        if "psd" in selected or "psd_low" in selected or "psd_med" in selected or "psd_high" in selected:
+            (psd, psd_low, psd_med, psd_high) = self._psd_logpower(raw, ch_idx)
+            # Two-tailed: dead (low) and noisy (high) channels both flagged.
+            if psd is not None and "psd" in selected:
                 specs.append(MetricSpec("psd", psd, 0))
+            if psd_low is not None and "psd_low" in selected:
+                specs.append(MetricSpec("psd_low", psd_low, 0))
+            if psd_med is not None and "psd_med" in selected:
+                specs.append(MetricSpec("psd_med", psd_med, 0))
+            if psd_high is not None and "psd_high" in selected:
+                specs.append(MetricSpec("psd_high", psd_high, 0))
 
         del filt
         for s in specs:
@@ -482,11 +491,15 @@ class BadChannelsAnalysis(BaseAnalysis):
                 reject_by_annotation=True,
                 verbose=False,
             )
-            pow_data = psd.get_data(picks="all", exclude=[""])  # (n_ch, n_freqs)
+            pow_all = psd.get_data(picks="all", exclude=[""])  # (n_ch, n_freqs)
+            pow_low = psd.get_data(picks="all", exclude=[""], fmin=0, fmax=10)  # (n_ch, low freqs)
+            pow_med = psd.get_data(picks="all", exclude=[""], fmin=10, fmax=20)  # (n_ch, med freqs)
+            pow_high = psd.get_data(picks="all", exclude=[""], fmin=20, fmax=fmax)  # (n_ch, high freqs)
         except Exception as exc:
             self.log(f"  [psd] skipped ({exc})")
             return None
-        return np.log10(pow_data + 1e-30).mean(axis=1)
+        return np.log10(pow_all + 1e-32).mean(axis=1), np.log10(pow_low + 1e-32).mean(axis=1), np.log10(pow_med + 1e-32).mean(axis=1), np.log10(pow_high + 1e-32).mean(axis=1),
+        
 
     # ------------------------------------------------------------------
     # Figures
