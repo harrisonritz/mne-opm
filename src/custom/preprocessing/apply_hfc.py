@@ -227,12 +227,12 @@ class ApplyHFCAnalysis(BaseAnalysis):
         self.log(f"Computed {len(projs)} HFC projection(s)")
 
         # Apply to main task data
-        raw.add_proj(projs=projs)#.apply_proj()
+        raw.add_proj(projs=projs).apply_proj()
         self.log("Applied HFC projections to task data")
 
         # Apply same projections to noise data
         if noise is not None:
-            noise.add_proj(projs=projs)#.apply_proj()
+            noise.add_proj(projs=projs).apply_proj()
             self.log("Applied HFC projections to noise data")
 
         self.log("HFC application complete!")
