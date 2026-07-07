@@ -292,7 +292,7 @@ class CoregAnalysis(BaseAnalysis):
         # Create coregistration object
         self.log("Running automatic coregistration...")
         coreg = mne.coreg.Coregistration(
-            info, fs_subject, subjects_dir, fiducials="estimated"
+            info, fs_subject, subjects_dir, fiducials="auto",
         )
 
         # Fit fiducials
