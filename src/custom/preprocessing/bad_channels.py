@@ -365,7 +365,7 @@ class BadChannelsAnalysis(BaseAnalysis):
 
         # Bandpass-filtered copy for variance/kurtosis/spatial metrics.
         filt = raw.copy().filter(
-            l_freq=self.cfg.l_freq, h_freq=self.cfg.h_freq, method="iir"
+            l_freq=self.cfg.l_freq, h_freq=self.cfg.h_freq, method="iir",n_jobs=-1,  # avoid nested parallelism
         )
         data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")
 
@@ -382,7 +382,7 @@ class BadChannelsAnalysis(BaseAnalysis):
 
         if "kurtosis" in selected:
             kurt = scipy_kurtosis(data, axis=1, fisher=True)
-            specs.append(MetricSpec("kurtosis", signed_sqrt(kurt), 1))
+            specs.append(MetricSpec("kurtosis", signed_sqrt(kurt), 0))
 
         if "lof" in selected:
             lof = self._lof_scores(filt, ch_idx)

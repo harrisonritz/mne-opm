@@ -244,6 +244,8 @@ def compute_lcmv_filters(
         weight_norm=cfg._beamformer_weight_norm,
         depth=cfg._beamformer_depth,
         rank=cfg._beamformer_rank,
+        reduce_rank=cfg._reduce_rank,  # Always reduce rank for stability
+        verbose=True,
     )
 
     print("[compute_lcmv_filters] Filters computed successfully")
