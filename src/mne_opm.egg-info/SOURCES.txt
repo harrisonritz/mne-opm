@@ -16,7 +16,7 @@ src/custom/preprocessing/_bids_utils.py
 src/custom/preprocessing/_config.py
 src/custom/preprocessing/_io.py
 src/custom/preprocessing/apply_hfc.py
-src/custom/preprocessing/auto_ica.py
+src/custom/preprocessing/bad_ICs.py
 src/custom/preprocessing/bad_channels.py
 src/custom/preprocessing/bad_epochs.py
 src/custom/preprocessing/bad_segments.py
@@ -26,6 +26,7 @@ src/custom/preprocessing/manual_channel.py
 src/custom/preprocessing/manual_ica.py
 src/custom/preprocessing/pca_gesd.py
 src/custom/preprocessing/regress.py
+src/custom/preprocessing/select_trial_response.py
 src/custom/preprocessing/zca_filter.py
 src/dev/cMEG_mne.py
 src/dev/do_iterative.py
@@ -62,3 +63,4 @@ tests/test_io_and_bids_utils.py
 tests/test_io_save_ica.py
 tests/test_preprocessing_analyses.py
 tests/test_regress_full.py
+tests/test_select_trial_response.py

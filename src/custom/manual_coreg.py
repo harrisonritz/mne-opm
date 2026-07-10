@@ -43,7 +43,7 @@ import mne_bids
 # Paths / constants — edit these to match your machine
 # ---------------------------------------------------------------------------
 
-ROOT_DIR = "/Volumes/fileset-NDAW/harrison_ritz/TSX/data/TSX"
+ROOT_DIR = "/Volumes/harrison_ritz/TSX/data/TSX"
 FS_DIR = f"{ROOT_DIR}/freesurfer"
 BIDS_DIR = f"{ROOT_DIR}/bids"
 TASK = "TSX"

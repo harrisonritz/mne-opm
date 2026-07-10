@@ -54,6 +54,14 @@ python $ROOT_DIR/src/custom/custom_preproc.py --analysis=init --config=$CONFIG_P
 _print_timing "INIT: clear stale custom derivatives" $STEP_START
 
 
+# Render BEM, alignment, head-point distance and sensitivity-map figures
+# and save them under {deriv_root}/sub-XX/ses-YY/meg/coreg_diagnostics/.
+echo ""
+echo "======================= COREG DIAGNOSTICS =============================================="
+echo ""
+python "$ROOT_DIR/src/custom/coreg_diagnostics.py" --config="$CONFIG_PATH"
+
+
 
 STEP_START=$SECONDS
 echo ""
