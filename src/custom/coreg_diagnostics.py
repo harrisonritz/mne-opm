@@ -32,15 +32,19 @@ from glob import glob
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
-
+import pyvista
 import matplotlib
-
-matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
 from mne_bids import BIDSPath, get_head_mri_trans
+
+matplotlib.use("Agg")
+pyvista.OFF_SCREEN = True
+pyvista.start_xvfb()  # start virtual framebuffer for headless/cluster use
+mne.viz.set_3d_backend("pyvista")
+
 
 # Add mne-bids-pipeline to path for importing utilities
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "mne-bids-pipeline"))
@@ -1036,7 +1040,7 @@ def main() -> None:
         )
         return
 
-    _setup_3d_backend()
+    # _setup_3d_backend()
 
     data = load_diagnostic_data(cfg)
     paths = _diag_paths(cfg)
