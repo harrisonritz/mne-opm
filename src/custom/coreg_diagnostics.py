@@ -107,7 +107,9 @@ def _setup_3d_backend() -> None:
         except Exception as e:
             print(f"[_setup_3d_backend] Backend {backend!r} unavailable: {e}")
     else:
-        print("[_setup_3d_backend] WARNING: no usable 3D backend; 3D figures will fail.")
+        print(
+            "[_setup_3d_backend] WARNING: no usable 3D backend; 3D figures will fail."
+        )
         return
 
     try:
@@ -317,9 +319,7 @@ def _compute_forward(
         print(f"[_compute_forward] Loading BEM solution: {bem_path}")
         bem = mne.read_bem_solution(bem_path)
     else:
-        conductivity = tuple(
-            getattr(cfg, "_coreg_diag_bem_conductivity", (0.3,))
-        )
+        conductivity = tuple(getattr(cfg, "_coreg_diag_bem_conductivity", (0.3,)))
         ico = int(getattr(cfg, "_coreg_diag_bem_ico", 4))
         print(
             f"[_compute_forward] Building BEM model "
@@ -385,13 +385,10 @@ def load_diagnostic_data(cfg: SimpleNamespace) -> Dict[str, Any]:
     bp = _bids_path(cfg)
 
     # Info — required.
-    epochs_path = bp.copy().update(
-        suffix="epo", processing="clean", extension=".fif"
-    )
+    epochs_path = bp.copy().update(suffix="epo", processing="clean", extension=".fif")
     if not epochs_path.fpath.exists():
         raise FileNotFoundError(
-            f"Clean epochs not found at {epochs_path.fpath}\n"
-            f"Run preprocessing first."
+            f"Clean epochs not found at {epochs_path.fpath}\nRun preprocessing first."
         )
     info = mne.io.read_info(epochs_path.fpath)
     print(f"[load_diagnostic_data] Loaded info from {epochs_path.fpath}")
@@ -438,7 +435,11 @@ def load_diagnostic_data(cfg: SimpleNamespace) -> Dict[str, Any]:
     else:
         try:
             forward = _compute_forward(
-                cfg, info, trans, fs_subject, fs_subjects_dir,
+                cfg,
+                info,
+                trans,
+                fs_subject,
+                fs_subjects_dir,
                 Path(fwd_path.fpath),
             )
         except Exception as e:
@@ -507,9 +508,7 @@ def _signed_volume(verts: np.ndarray, tris: np.ndarray) -> float:
     return float(np.abs(np.einsum("ij,ij->i", v0, np.cross(v1, v2)).sum()) / 6.0)
 
 
-def _surface_metrics(
-    subjects_dir: str, fs_subject: str
-) -> Dict[str, Dict[str, Any]]:
+def _surface_metrics(subjects_dir: str, fs_subject: str) -> Dict[str, Dict[str, Any]]:
     """Compute per-surface volume and inter-surface min/max gaps (mm)."""
     metrics: Dict[str, Dict[str, Any]] = {}
     surfs: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
@@ -566,7 +565,9 @@ def _overlay_bem_on_t1_with_nilearn(
         import nibabel as nib
         from nilearn import plotting as nlp
     except ImportError:
-        print("[_overlay_bem_on_t1_with_nilearn] nilearn/nibabel unavailable; skipping.")
+        print(
+            "[_overlay_bem_on_t1_with_nilearn] nilearn/nibabel unavailable; skipping."
+        )
         return None
 
     t1_path = Path(subjects_dir) / fs_subject / "mri" / "T1.mgz"
@@ -588,9 +589,7 @@ def _overlay_bem_on_t1_with_nilearn(
         t1_img = nib.load(str(t1_path))
         affine_inv = np.linalg.inv(t1_img.affine)
         shape = t1_img.shape
-        for name, color in zip(
-            _BEM_SURFACES, ("red", "yellow", "cyan")
-        ):
+        for name, color in zip(_BEM_SURFACES, ("red", "yellow", "cyan")):
             surf_path = Path(subjects_dir) / fs_subject / "bem" / f"{name}.surf"
             if not surf_path.exists():
                 continue
@@ -677,10 +676,14 @@ def _available_surfaces(fs_subjects_dir: str, fs_subject: str) -> Dict[str, floa
     surf_dir = Path(fs_subjects_dir) / fs_subject / "surf"
 
     candidate: Dict[str, Tuple[List[Path], float]] = {
-        "head-dense": ([bem_dir / "outer_skin.surf",
-                        bem_dir / f"{fs_subject}-head-dense.fif"], 0.4),
-        "head": ([bem_dir / "outer_skin.surf",
-                  bem_dir / f"{fs_subject}-head.fif"], 0.4),
+        "head-dense": (
+            [bem_dir / "outer_skin.surf", bem_dir / f"{fs_subject}-head-dense.fif"],
+            0.4,
+        ),
+        "head": (
+            [bem_dir / "outer_skin.surf", bem_dir / f"{fs_subject}-head.fif"],
+            0.4,
+        ),
         "inner_skull": ([bem_dir / "inner_skull.surf"], 0.5),
         "brain": ([surf_dir / "lh.pial", surf_dir / "rh.pial"], 0.6),
     }
@@ -698,7 +701,9 @@ def _available_surfaces(fs_subjects_dir: str, fs_subject: str) -> Dict[str, floa
     return surfaces
 
 
-def _render_rotation_gif(fig: Any, out_path: Path, n_frames: int = 36) -> Optional[Path]:
+def _render_rotation_gif(
+    fig: Any, out_path: Path, n_frames: int = 36
+) -> Optional[Path]:
     """Render a simple 360° rotating-azimuth GIF of an alignment figure."""
     try:
         plotter = fig.plotter
@@ -728,10 +733,12 @@ def run_alignment_diagnostics(
     print("\n[run_alignment_diagnostics] Rendering alignment views...")
 
     if trans is None:
-        print("[run_alignment_diagnostics] skipped: trans=None (no head-MRI transform available)")
+        print(
+            "[run_alignment_diagnostics] skipped: trans=None (no head-MRI transform available)"
+        )
         return {"skipped": "no trans"}
-    
-    print('trans:', trans)
+
+    print("trans:", trans)
 
     surfaces = _available_surfaces(fs_subjects_dir, fs_subject)
     if not surfaces:
@@ -743,8 +750,8 @@ def run_alignment_diagnostics(
     gif_path: Optional[str] = None
 
     try:
-        print('plot_algnment kwargs: surfaces=', surfaces)
-        print('subject=', fs_subject, 'subjects_dir=', fs_subjects_dir)
+        print("plot_algnment kwargs: surfaces=", surfaces)
+        print("subject=", fs_subject, "subjects_dir=", fs_subjects_dir)
         fig = mne.viz.plot_alignment(
             info=info,
             trans=trans,
@@ -752,11 +759,11 @@ def run_alignment_diagnostics(
             subjects_dir=fs_subjects_dir,
             # surfaces=surfaces,
             surfaces="head-dense",
-            meg='sensors',
+            meg="sensors",
             dig=True,
             show_axes=True,
         )
-        print('plot_alignment rendered successfully')
+        print("plot_alignment rendered successfully")
     except Exception as e:
         print(f"[run_alignment_diagnostics] plot_alignment failed: {e}")
         return {"error": str(e), "surfaces": surfaces, "views": views}
@@ -778,9 +785,7 @@ def run_alignment_diagnostics(
             print(f"[run_alignment_diagnostics] set_3d_view {view} failed: {e}")
 
     if getattr(cfg, "_coreg_diag_make_gif", False):
-        gp = _render_rotation_gif(
-            fig, out_dir / f"{basename}_desc-align-rotation.gif"
-        )
+        gp = _render_rotation_gif(fig, out_dir / f"{basename}_desc-align-rotation.gif")
         gif_path = str(gp) if gp is not None else None
 
     try:
@@ -823,13 +828,18 @@ def run_headpoint_distance_diagnostic(
 
         # Get head-shape digitization points (extra + HPI) in head coords
         from mne.io.constants import FIFF as _FIFF
-        head_pts = np.array([
-            d["r"] for d in info["dig"]
-            if d["kind"] in (
-                _FIFF.FIFFV_POINT_EXTRA,
-                _FIFF.FIFFV_POINT_HPI,
-            )
-        ])
+
+        head_pts = np.array(
+            [
+                d["r"]
+                for d in info["dig"]
+                if d["kind"]
+                in (
+                    _FIFF.FIFFV_POINT_EXTRA,
+                    _FIFF.FIFFV_POINT_HPI,
+                )
+            ]
+        )
         if head_pts.size == 0:
             return {"skipped": "no head-shape digitization points"}
 
@@ -918,9 +928,7 @@ def run_sensitivity_diagnostics(
                 results[key] = {"error": str(e)}
                 continue
 
-            stc_stem = (
-                out_dir / f"{basename}_desc-sensitivity-{ch_type}-{mode}"
-            )
+            stc_stem = out_dir / f"{basename}_desc-sensitivity-{ch_type}-{mode}"
             try:
                 stc.save(str(stc_stem), ftype="h5", overwrite=True)
                 entry["stc"] = str(stc_stem) + "-stc.h5"
@@ -943,8 +951,7 @@ def run_sensitivity_diagnostics(
                         show_traces=False,
                     )
                     fig_name = (
-                        f"{basename}_desc-sensitivity-{ch_type}-{mode}"
-                        f"-{hemi}-{view}"
+                        f"{basename}_desc-sensitivity-{ch_type}-{mode}-{hemi}-{view}"
                     )
                     written = _save_fig(brain, fig_name, cfg, out_dir, kind="brain")
                     entry["images"].extend(str(p) for p in written)
@@ -1036,22 +1043,55 @@ def main() -> None:
     results: Dict[str, Any] = {}
 
     sections = (
-        ("bem", getattr(cfg, "_coreg_diag_run_bem", True),
-         lambda: run_bem_diagnostics(
-             cfg, data["fs_subject"], data["fs_subjects_dir"],
-             paths["out_dir"], paths["basename"])),
-        ("alignment", getattr(cfg, "_coreg_diag_run_alignment", True),
-         lambda: run_alignment_diagnostics(
-             cfg, data["info"], data["trans"], data["fs_subject"],
-             data["fs_subjects_dir"], paths["out_dir"], paths["basename"])),
-        ("headpoint", getattr(cfg, "_coreg_diag_run_headpoint", True),
-         lambda: run_headpoint_distance_diagnostic(
-             cfg, data["info"], data["trans"], data["fs_subject"],
-             data["fs_subjects_dir"], paths["out_dir"], paths["basename"])),
-        ("sensitivity", getattr(cfg, "_coreg_diag_run_sensitivity", True),
-         lambda: run_sensitivity_diagnostics(
-             cfg, data["forward"], data["fs_subject"], data["fs_subjects_dir"],
-             paths["out_dir"], paths["basename"])),
+        (
+            "bem",
+            getattr(cfg, "_coreg_diag_run_bem", True),
+            lambda: run_bem_diagnostics(
+                cfg,
+                data["fs_subject"],
+                data["fs_subjects_dir"],
+                paths["out_dir"],
+                paths["basename"],
+            ),
+        ),
+        (
+            "alignment",
+            getattr(cfg, "_coreg_diag_run_alignment", True),
+            lambda: run_alignment_diagnostics(
+                cfg,
+                data["info"],
+                data["trans"],
+                data["fs_subject"],
+                data["fs_subjects_dir"],
+                paths["out_dir"],
+                paths["basename"],
+            ),
+        ),
+        (
+            "headpoint",
+            getattr(cfg, "_coreg_diag_run_headpoint", True),
+            lambda: run_headpoint_distance_diagnostic(
+                cfg,
+                data["info"],
+                data["trans"],
+                data["fs_subject"],
+                data["fs_subjects_dir"],
+                paths["out_dir"],
+                paths["basename"],
+            ),
+        ),
+        (
+            "sensitivity",
+            getattr(cfg, "_coreg_diag_run_sensitivity", True),
+            lambda: run_sensitivity_diagnostics(
+                cfg,
+                data["forward"],
+                data["fs_subject"],
+                data["fs_subjects_dir"],
+                paths["out_dir"],
+                paths["basename"],
+            ),
+        ),
     )
 
     for name, enabled, runner in sections:

@@ -21,6 +21,7 @@ from custom.preprocessing.bad_epochs import BadEpochsAnalysis, run
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def bad_epo_cfg(tmp_path):
     """Config appropriate for bad epoch detection."""
@@ -48,9 +49,13 @@ def epochs_with_bad_trial(meg_info):
 
     events = np.array([[int(i * 2 * sfreq), 0, 1] for i in range(20)])
     epochs = mne.Epochs(
-        raw, events, event_id={"stim": 1},
-        tmin=0, tmax=1.0 - 1 / sfreq,
-        baseline=None, preload=True,
+        raw,
+        events,
+        event_id={"stim": 1},
+        tmin=0,
+        tmax=1.0 - 1 / sfreq,
+        baseline=None,
+        preload=True,
     )
 
     # Inject a large artifact into the last epoch
@@ -63,6 +68,7 @@ def epochs_with_bad_trial(meg_info):
 # ---------------------------------------------------------------------------
 # _drop_bad_epochs — core GESD logic
 # ---------------------------------------------------------------------------
+
 
 class TestDropBadEpochs:
     """Test the core epoch rejection method."""
@@ -92,12 +98,11 @@ class TestDropBadEpochs:
 # run() method
 # ---------------------------------------------------------------------------
 
+
 class TestBadEpochsRun:
     """Test run() method."""
 
-    def test_run_returns_cleaned_epochs(
-        self, epochs_with_bad_trial, bad_epo_cfg
-    ):
+    def test_run_returns_cleaned_epochs(self, epochs_with_bad_trial, bad_epo_cfg):
         n_before = len(epochs_with_bad_trial)
         analysis = BadEpochsAnalysis(bad_epo_cfg)
         data = {bad_epo_cfg.task: epochs_with_bad_trial}
@@ -112,11 +117,10 @@ class TestBadEpochsRun:
 # load_data — mocked file I/O
 # ---------------------------------------------------------------------------
 
+
 class TestBadEpochsLoadData:
     @patch("custom.preprocessing.bad_epochs.mne.read_epochs")
-    def test_load_constructs_bids_path(
-        self, mock_read, epochs_meg, bad_epo_cfg
-    ):
+    def test_load_constructs_bids_path(self, mock_read, epochs_meg, bad_epo_cfg):
         """load_data should construct a BIDSPath and call mne.read_epochs."""
         mock_read.return_value = epochs_meg
 
@@ -131,6 +135,7 @@ class TestBadEpochsLoadData:
 # ---------------------------------------------------------------------------
 # save_results — mocked file I/O
 # ---------------------------------------------------------------------------
+
 
 class TestBadEpochsSaveResults:
     def test_save_calls_epochs_save(self, epochs_meg, bad_epo_cfg):
@@ -149,6 +154,7 @@ class TestBadEpochsSaveResults:
 # ---------------------------------------------------------------------------
 # Module-level run(cfg)
 # ---------------------------------------------------------------------------
+
 
 class TestBadEpochsModuleRun:
     @patch("custom.preprocessing.bad_epochs.mne.read_epochs")

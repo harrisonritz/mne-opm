@@ -43,6 +43,7 @@ from custom.run_decoding import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def rng():
     """Deterministic NumPy random state."""
@@ -100,19 +101,23 @@ def binary_epochs(rng):
     # Add signal difference between conditions
     data[:10, :4, 20:35] += 5e-13
 
-    events = np.column_stack([
-        np.arange(n_epochs) * n_times,
-        np.zeros(n_epochs, dtype=int),
-        np.ones(n_epochs, dtype=int),
-    ])
+    events = np.column_stack(
+        [
+            np.arange(n_epochs) * n_times,
+            np.zeros(n_epochs, dtype=int),
+            np.ones(n_epochs, dtype=int),
+        ]
+    )
 
     epochs = mne.EpochsArray(data, info, events=events, event_id={"trial": 1})
 
-    metadata = pd.DataFrame({
-        "task1": ["read"] * 10 + ["listen"] * 10,
-        "run": [1, 1, 1, 1, 1, 2, 2, 2, 2, 2] * 2,
-        "resp": ["m"] * 5 + ["z"] * 5 + ["m"] * 5 + ["z"] * 5,
-    })
+    metadata = pd.DataFrame(
+        {
+            "task1": ["read"] * 10 + ["listen"] * 10,
+            "run": [1, 1, 1, 1, 1, 2, 2, 2, 2, 2] * 2,
+            "resp": ["m"] * 5 + ["z"] * 5 + ["m"] * 5 + ["z"] * 5,
+        }
+    )
     epochs.metadata = metadata
 
     return epochs
@@ -130,6 +135,7 @@ def simple_contrast():
 # ---------------------------------------------------------------------------
 # MultivariateNoiseNormalizer
 # ---------------------------------------------------------------------------
+
 
 class TestMultivariateNoiseNormalizer:
     """Test the whitening transformer."""
@@ -212,6 +218,7 @@ class TestMultivariateNoiseNormalizer:
 # get_data_rank
 # ---------------------------------------------------------------------------
 
+
 class TestGetDataRank:
     """Test data rank estimation."""
 
@@ -228,6 +235,7 @@ class TestGetDataRank:
 # ---------------------------------------------------------------------------
 # _prep_contrast
 # ---------------------------------------------------------------------------
+
 
 class TestPrepContrast:
     """Test epoch subsetting and equalization."""
@@ -266,9 +274,7 @@ class TestPrepContrast:
 
     def test_custom_group_column(self, binary_epochs, simple_contrast):
         """group_column should use the specified metadata column."""
-        result = _prep_contrast(
-            binary_epochs, simple_contrast, group_column="run"
-        )
+        result = _prep_contrast(binary_epochs, simple_contrast, group_column="run")
         _, _, _, _, groups, _, _ = result
         assert len(groups) > 0
         assert set(groups).issubset({1, 2})
@@ -277,14 +283,13 @@ class TestPrepContrast:
         """Groups should come from the metadata."""
         result = _prep_contrast(binary_epochs, simple_contrast)
         ep_all, _, _, _, groups, _, _ = result
-        np.testing.assert_array_equal(
-            groups, ep_all.metadata["run"].values
-        )
+        np.testing.assert_array_equal(groups, ep_all.metadata["run"].values)
 
 
 # ---------------------------------------------------------------------------
 # Pipeline factories
 # ---------------------------------------------------------------------------
+
 
 class TestPipelineFactories:
     """Test that pipeline factories return valid sklearn pipelines."""
@@ -326,6 +331,7 @@ class TestPipelineFactories:
 # Decoding functions (with mocked CV)
 # ---------------------------------------------------------------------------
 
+
 class TestTimeDecoding:
     """Test run_subject_time_decoding."""
 
@@ -334,8 +340,10 @@ class TestTimeDecoding:
         n_times = len(binary_epochs.times)
         n_ch = len(binary_epochs.ch_names)
 
-        with patch("custom.run_decoding.cross_val_multiscore") as mock_cv, \
-             patch("custom.run_decoding.get_coef") as mock_coef:
+        with (
+            patch("custom.run_decoding.cross_val_multiscore") as mock_cv,
+            patch("custom.run_decoding.get_coef") as mock_coef,
+        ):
             mock_cv.return_value = np.random.rand(2, n_times)
             mock_coef.return_value = np.random.rand(n_times, n_ch)
             result = run_subject_time_decoding(
@@ -343,8 +351,16 @@ class TestTimeDecoding:
             )
 
         assert result is not None
-        for key in ("times", "scores", "cv_scores", "patterns", "filters",
-                     "info", "n_cond1", "n_cond2"):
+        for key in (
+            "times",
+            "scores",
+            "cv_scores",
+            "patterns",
+            "filters",
+            "info",
+            "n_cond1",
+            "n_cond2",
+        ):
             assert key in result
 
     def test_returns_none_for_empty(self, binary_epochs):
@@ -359,13 +375,13 @@ class TestTimeDecoding:
         """Mean scores should be 1-D with length n_times."""
         n_times = len(binary_epochs.times)
 
-        with patch("custom.run_decoding.cross_val_multiscore") as mock_cv, \
-             patch("custom.run_decoding.get_coef") as mock_coef:
+        with (
+            patch("custom.run_decoding.cross_val_multiscore") as mock_cv,
+            patch("custom.run_decoding.get_coef") as mock_coef,
+        ):
             mock_cv.return_value = np.random.rand(2, n_times)
             mock_coef.return_value = np.random.rand(n_times, 8)
-            result = run_subject_time_decoding(
-                binary_epochs, simple_contrast
-            )
+            result = run_subject_time_decoding(binary_epochs, simple_contrast)
 
         assert result["scores"].ndim == 1
 
@@ -392,9 +408,7 @@ class TestTemporalGen:
 
         with patch("custom.run_decoding.cross_val_multiscore") as mock_cv:
             mock_cv.return_value = np.random.rand(2, n_times, n_times)
-            result = run_subject_temporal_gen(
-                binary_epochs, simple_contrast
-            )
+            result = run_subject_temporal_gen(binary_epochs, simple_contrast)
 
         assert result["scores_mean"].shape == (n_times, n_times)
 
@@ -467,14 +481,17 @@ class TestCrossDecoding:
             },
             "analyses": ["time"],
         }
-        with patch("custom.run_decoding.SlidingEstimator") as MockSliding, \
-             patch("custom.run_decoding.get_coef") as mock_coef:
+        with (
+            patch("custom.run_decoding.SlidingEstimator") as MockSliding,
+            patch("custom.run_decoding.get_coef") as mock_coef,
+        ):
             mock_se = MagicMock()
             mock_se.score.return_value = np.random.rand(50)
             MockSliding.return_value = mock_se
             mock_coef.return_value = np.random.rand(50, 8)
             result = run_subject_cross_decoding(
-                binary_epochs, cross_contrast,
+                binary_epochs,
+                cross_contrast,
             )
 
         assert result is not None
@@ -484,10 +501,11 @@ class TestCrossDecoding:
     def test_empty_analyses_returns_none(self, binary_epochs):
         cross_contrast = {
             "name": "test_cross",
-            "train": {"name": "a",
-                       "conditions": ['task1 == "read"', 'task1 == "listen"']},
-            "test": {"name": "b",
-                      "conditions": ['resp == "m"', 'resp == "z"']},
+            "train": {
+                "name": "a",
+                "conditions": ['task1 == "read"', 'task1 == "listen"'],
+            },
+            "test": {"name": "b", "conditions": ['resp == "m"', 'resp == "z"']},
             "analyses": [],
         }
         result = run_subject_cross_decoding(binary_epochs, cross_contrast)
@@ -512,7 +530,8 @@ class TestCrossDecoding:
             mock_factory.return_value = mock_clf
             with patch("custom.run_decoding.roc_auc_score", return_value=0.65):
                 result = run_subject_cross_decoding(
-                    binary_epochs, cross_contrast,
+                    binary_epochs,
+                    cross_contrast,
                 )
 
         assert result is not None
@@ -537,7 +556,8 @@ class TestCrossDecoding:
             mock_tg.score.return_value = np.random.rand(50, 50)
             MockTG.return_value = mock_tg
             result = run_subject_cross_decoding(
-                binary_epochs, cross_contrast,
+                binary_epochs,
+                cross_contrast,
             )
 
         assert result is not None
@@ -548,6 +568,7 @@ class TestCrossDecoding:
 # ---------------------------------------------------------------------------
 # Save functions
 # ---------------------------------------------------------------------------
+
 
 class TestSaveFunctions:
     """Test BIDS path construction and save calls."""
@@ -561,9 +582,7 @@ class TestSaveFunctions:
             mock_copy.update.return_value.fpath = fpath
             return mock_copy
 
-        bids_path.copy.side_effect = lambda: make_update_chain(
-            tmp_path / "output_file"
-        )
+        bids_path.copy.side_effect = lambda: make_update_chain(tmp_path / "output_file")
         return bids_path
 
     def test_save_time_results(self, tmp_path):
@@ -579,8 +598,7 @@ class TestSaveFunctions:
         }
         contrast = {"name": "task", "conditions": ["c1", "c2"]}
 
-        with patch("custom.run_decoding.sanitize_cond_name",
-                    return_value="task"):
+        with patch("custom.run_decoding.sanitize_cond_name", return_value="task"):
             save_time_results(bids_path, contrast, result, "roc_auc", tmp_path)
 
         # Should call copy() twice: once for TSV, once for NPZ
@@ -595,8 +613,7 @@ class TestSaveFunctions:
         }
         contrast = {"name": "task", "conditions": ["c1", "c2"]}
 
-        with patch("custom.run_decoding.sanitize_cond_name",
-                    return_value="task"):
+        with patch("custom.run_decoding.sanitize_cond_name", return_value="task"):
             save_epoch_results(bids_path, contrast, result, "roc_auc", tmp_path)
 
         assert bids_path.copy.call_count == 1
@@ -610,8 +627,7 @@ class TestSaveFunctions:
         }
         contrast = {"name": "task", "conditions": ["c1", "c2"]}
 
-        with patch("custom.run_decoding.sanitize_cond_name",
-                    return_value="task"):
+        with patch("custom.run_decoding.sanitize_cond_name", return_value="task"):
             save_tg_results(bids_path, contrast, result, tmp_path)
 
         assert bids_path.copy.call_count == 1
@@ -633,8 +649,7 @@ class TestSaveFunctions:
             ),
         }
 
-        with patch("custom.run_decoding.sanitize_cond_name",
-                    return_value="crosstest"):
+        with patch("custom.run_decoding.sanitize_cond_name", return_value="crosstest"):
             save_cross_time_results(
                 bids_path, cross_contrast, result, "roc_auc", tmp_path
             )
@@ -651,8 +666,7 @@ class TestSaveFunctions:
         }
         result = {"score": 0.72}
 
-        with patch("custom.run_decoding.sanitize_cond_name",
-                    return_value="crosstest"):
+        with patch("custom.run_decoding.sanitize_cond_name", return_value="crosstest"):
             save_cross_epoch_results(
                 bids_path, cross_contrast, result, "roc_auc", tmp_path
             )
@@ -668,11 +682,8 @@ class TestSaveFunctions:
             "times": np.linspace(-0.2, 1.0, 50),
         }
 
-        with patch("custom.run_decoding.sanitize_cond_name",
-                    return_value="crosstest"):
-            save_cross_tg_results(
-                bids_path, cross_contrast, cc_res, result, tmp_path
-            )
+        with patch("custom.run_decoding.sanitize_cond_name", return_value="crosstest"):
+            save_cross_tg_results(bids_path, cross_contrast, cc_res, result, tmp_path)
 
         assert bids_path.copy.call_count == 1
 
@@ -680,6 +691,7 @@ class TestSaveFunctions:
 # ---------------------------------------------------------------------------
 # save_fig
 # ---------------------------------------------------------------------------
+
 
 class TestSaveFig:
     """Test figure saving utility."""
@@ -704,57 +716,55 @@ class TestSaveFig:
 # Plotting functions (smoke tests)
 # ---------------------------------------------------------------------------
 
+
 class TestPlotFunctions:
     """Smoke tests for plot functions -- verify they don't raise."""
 
     def test_plot_time_ribbon_no_raise(self, tmp_path):
         from custom.run_decoding import plot_subject_time_ribbon
+
         time_results = {
             "task": {
                 "times": np.linspace(-0.2, 1.0, 50),
                 "cv_scores": np.random.rand(3, 50),
             },
         }
-        plot_subject_time_ribbon(
-            time_results, "sub-007", tmp_path, ["png"], chance=0.5
-        )
+        plot_subject_time_ribbon(time_results, "sub-007", tmp_path, ["png"], chance=0.5)
 
     def test_plot_epoch_bar_no_raise(self, tmp_path):
         from custom.run_decoding import plot_subject_epoch_bar
+
         epoch_results = {
             "task": {
                 "cv_scores": np.array([0.6, 0.7, 0.8]),
                 "best_C_per_fold": [0.1, 0.1, 1.0],
             },
         }
-        plot_subject_epoch_bar(
-            epoch_results, "sub-007", tmp_path, ["png"], chance=0.5
-        )
+        plot_subject_epoch_bar(epoch_results, "sub-007", tmp_path, ["png"], chance=0.5)
 
     def test_plot_epoch_bar_no_C_no_raise(self, tmp_path):
         """Epoch bar plot without best_C_per_fold (no C subplot) should not raise."""
         from custom.run_decoding import plot_subject_epoch_bar
+
         epoch_results = {
             "task": {"cv_scores": np.array([0.6, 0.7, 0.8])},
         }
-        plot_subject_epoch_bar(
-            epoch_results, "sub-007", tmp_path, ["png"], chance=0.5
-        )
+        plot_subject_epoch_bar(epoch_results, "sub-007", tmp_path, ["png"], chance=0.5)
 
     def test_plot_tg_heatmap_no_raise(self, tmp_path):
         from custom.run_decoding import plot_subject_tg_heatmap
+
         tg_results = {
             "task": {
                 "times": np.linspace(-0.2, 1.0, 20),
                 "scores_mean": np.random.rand(20, 20),
             },
         }
-        plot_subject_tg_heatmap(
-            tg_results, "sub-007", tmp_path, ["png"]
-        )
+        plot_subject_tg_heatmap(tg_results, "sub-007", tmp_path, ["png"])
 
     def test_plot_cross_ribbon_no_raise(self, tmp_path):
         from custom.run_decoding import plot_subject_cross_ribbon
+
         cross_results = {
             "cross_task": {
                 "times": np.linspace(-0.2, 1.0, 50),
@@ -769,6 +779,7 @@ class TestPlotFunctions:
 
     def test_plot_cross_epoch_bar_no_raise(self, tmp_path):
         from custom.run_decoding import plot_subject_cross_epoch_bar
+
         cross_results = {
             "cross_task": {"score": 0.65},
         }
@@ -778,6 +789,7 @@ class TestPlotFunctions:
 
     def test_plot_cross_tg_heatmap_no_raise(self, tmp_path):
         from custom.run_decoding import plot_subject_cross_tg_heatmap
+
         cross_results = {
             "cross_task": {
                 "times": np.linspace(-0.2, 1.0, 20),
@@ -786,9 +798,7 @@ class TestPlotFunctions:
                 "test_name": "b",
             },
         }
-        plot_subject_cross_tg_heatmap(
-            cross_results, "sub-007", tmp_path, ["png"]
-        )
+        plot_subject_cross_tg_heatmap(cross_results, "sub-007", tmp_path, ["png"])
 
     def test_plot_time_patterns_no_raise(self, tmp_path, capsys):
         """Smoke test: function should not raise even when plot_joint fails.
@@ -829,6 +839,7 @@ class TestPlotFunctions:
             plot_subject_epoch_bar,
             plot_subject_tg_heatmap,
         )
+
         plot_subject_time_ribbon({}, "sub-007", tmp_path, ["png"])
         plot_subject_epoch_bar({}, "sub-007", tmp_path, ["png"])
         plot_subject_tg_heatmap({}, "sub-007", tmp_path, ["png"])
@@ -838,13 +849,16 @@ class TestPlotFunctions:
 # main() flow
 # ---------------------------------------------------------------------------
 
+
 class TestMain:
     """Test config loading and master switch."""
 
     def test_disabled_decoding_exits_early(self, capsys):
-        with patch("custom.run_decoding._import_config") as mock_import, \
-             patch("custom.run_decoding._update_config_from_path"), \
-             patch("custom.run_decoding.parse_args") as mock_args:
+        with (
+            patch("custom.run_decoding._import_config") as mock_import,
+            patch("custom.run_decoding._update_config_from_path"),
+            patch("custom.run_decoding.parse_args") as mock_args,
+        ):
             mock_args.return_value = SimpleNamespace(config="/fake/config.py")
             cfg = SimpleNamespace(_run_decoding=False)
             mock_import.return_value = cfg
@@ -854,10 +868,12 @@ class TestMain:
         assert "Decoding disabled" in output
 
     def test_enabled_decoding_calls_process(self):
-        with patch("custom.run_decoding._import_config") as mock_import, \
-             patch("custom.run_decoding._update_config_from_path"), \
-             patch("custom.run_decoding.parse_args") as mock_args, \
-             patch("custom.run_decoding.process_subject") as mock_proc:
+        with (
+            patch("custom.run_decoding._import_config") as mock_import,
+            patch("custom.run_decoding._update_config_from_path"),
+            patch("custom.run_decoding.parse_args") as mock_args,
+            patch("custom.run_decoding.process_subject") as mock_proc,
+        ):
             mock_args.return_value = SimpleNamespace(config="/fake/config.py")
             cfg = SimpleNamespace(_run_decoding=True)
             mock_import.return_value = cfg
@@ -867,9 +883,11 @@ class TestMain:
 
     def test_missing_run_decoding_exits_early(self, capsys):
         """If _run_decoding is not set at all, should exit early."""
-        with patch("custom.run_decoding._import_config") as mock_import, \
-             patch("custom.run_decoding._update_config_from_path"), \
-             patch("custom.run_decoding.parse_args") as mock_args:
+        with (
+            patch("custom.run_decoding._import_config") as mock_import,
+            patch("custom.run_decoding._update_config_from_path"),
+            patch("custom.run_decoding.parse_args") as mock_args,
+        ):
             mock_args.return_value = SimpleNamespace(config="/fake/config.py")
             cfg = SimpleNamespace()  # no _run_decoding attribute
             mock_import.return_value = cfg

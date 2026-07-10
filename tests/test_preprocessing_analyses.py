@@ -29,6 +29,7 @@ from custom.preprocessing.coreg import CoregAnalysis
 # Class constants
 # ---------------------------------------------------------------------------
 
+
 class TestAnalysisClassConstants:
     """Verify ANALYSIS_KEY and ANALYSIS_NAME on every analysis class."""
 
@@ -56,6 +57,7 @@ class TestAnalysisClassConstants:
 # is_enabled — always-on analyses
 # ---------------------------------------------------------------------------
 
+
 class TestAlwaysEnabled:
     """bad_segments, bad_channels, bad_epochs, coreg are always enabled."""
 
@@ -72,6 +74,7 @@ class TestAlwaysEnabled:
 # ---------------------------------------------------------------------------
 # is_enabled — flag-gated analyses
 # ---------------------------------------------------------------------------
+
 
 class TestFlagGatedEnabled:
     """Analyses gated by a config flag."""
@@ -117,6 +120,7 @@ class TestFlagGatedEnabled:
 # is_enabled — ICA analyses (require spatial_filter='ica' + flag)
 # ---------------------------------------------------------------------------
 
+
 class TestICAEnabled:
     """auto_ica and manual_ica require both flag AND spatial_filter='ica'."""
 
@@ -148,6 +152,7 @@ class TestICAEnabled:
 # ---------------------------------------------------------------------------
 # RegressAnalysis — core regression logic (time-varying)
 # ---------------------------------------------------------------------------
+
 
 class TestRegressCore:
     """Test the time-varying sliding-window regression on synthetic data."""
@@ -254,6 +259,7 @@ class TestRegressCore:
 # ZCA / Coreg — FreeSurfer subject name and BEM/source space helpers
 # ---------------------------------------------------------------------------
 
+
 class TestZCAAndCoregHelpers:
     """ZCAFilterAnalysis has _get_fs_subject, _find_bem_solution, _find_source_space."""
 
@@ -269,7 +275,8 @@ class TestZCAAndCoregHelpers:
 
     def test_find_bem_missing_dir(self, tmp_path):
         cfg = SimpleNamespace(
-            subjects=["001"], sessions=["01"],
+            subjects=["001"],
+            sessions=["01"],
             subjects_dir=str(tmp_path),
         )
         analysis = ZCAFilterAnalysis(cfg)
@@ -278,7 +285,8 @@ class TestZCAAndCoregHelpers:
 
     def test_find_source_space_missing_dir(self, tmp_path):
         cfg = SimpleNamespace(
-            subjects=["001"], sessions=["01"],
+            subjects=["001"],
+            sessions=["01"],
             subjects_dir=str(tmp_path),
         )
         analysis = ZCAFilterAnalysis(cfg)
@@ -289,7 +297,8 @@ class TestZCAAndCoregHelpers:
         bem_dir = tmp_path / "sub-001_ses-01" / "bem"
         bem_dir.mkdir(parents=True)
         cfg = SimpleNamespace(
-            subjects=["001"], sessions=["01"],
+            subjects=["001"],
+            sessions=["01"],
             subjects_dir=str(tmp_path),
         )
         analysis = ZCAFilterAnalysis(cfg)
@@ -300,7 +309,8 @@ class TestZCAAndCoregHelpers:
         bem_dir = tmp_path / "sub-001_ses-01" / "bem"
         bem_dir.mkdir(parents=True)
         cfg = SimpleNamespace(
-            subjects=["001"], sessions=["01"],
+            subjects=["001"],
+            sessions=["01"],
             subjects_dir=str(tmp_path),
         )
         analysis = ZCAFilterAnalysis(cfg)
@@ -315,7 +325,8 @@ class TestZCAAndCoregHelpers:
         bem_file.touch()
 
         cfg = SimpleNamespace(
-            subjects=["001"], sessions=["01"],
+            subjects=["001"],
+            sessions=["01"],
             subjects_dir=str(tmp_path),
         )
         analysis = ZCAFilterAnalysis(cfg)
@@ -330,7 +341,8 @@ class TestZCAAndCoregHelpers:
         src_file.touch()
 
         cfg = SimpleNamespace(
-            subjects=["001"], sessions=["01"],
+            subjects=["001"],
+            sessions=["01"],
             subjects_dir=str(tmp_path),
         )
         analysis = ZCAFilterAnalysis(cfg)
@@ -345,6 +357,7 @@ class TestZCAAndCoregHelpers:
 # ---------------------------------------------------------------------------
 # ZCA — helper methods
 # ---------------------------------------------------------------------------
+
 
 class TestZCAHelpers:
     def test_get_fs_subject_with_session(self):

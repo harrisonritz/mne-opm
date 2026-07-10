@@ -93,8 +93,16 @@ class BadEpochsAnalysis(BaseAnalysis):
         self.log("Loading epochs...")
 
         # Construct BIDSPath for epochs
-        subject = self.cfg.subjects[0] if isinstance(self.cfg.subjects, list) else self.cfg.subjects
-        session = self.cfg.sessions[0] if isinstance(self.cfg.sessions, list) else self.cfg.sessions
+        subject = (
+            self.cfg.subjects[0]
+            if isinstance(self.cfg.subjects, list)
+            else self.cfg.subjects
+        )
+        session = (
+            self.cfg.sessions[0]
+            if isinstance(self.cfg.sessions, list)
+            else self.cfg.sessions
+        )
 
         bids_path = BIDSPath(
             root=self.cfg.deriv_root,
@@ -145,8 +153,16 @@ class BadEpochsAnalysis(BaseAnalysis):
         self.log("Saving cleaned epochs...")
 
         # Construct BIDSPath for epochs
-        subject = self.cfg.subjects[0] if isinstance(self.cfg.subjects, list) else self.cfg.subjects
-        session = self.cfg.sessions[0] if isinstance(self.cfg.sessions, list) else self.cfg.sessions
+        subject = (
+            self.cfg.subjects[0]
+            if isinstance(self.cfg.subjects, list)
+            else self.cfg.subjects
+        )
+        session = (
+            self.cfg.sessions[0]
+            if isinstance(self.cfg.sessions, list)
+            else self.cfg.sessions
+        )
 
         bids_path = BIDSPath(
             root=self.cfg.deriv_root,
@@ -193,9 +209,7 @@ class BadEpochsAnalysis(BaseAnalysis):
         n_dropped = n_before - len(clean_epochs)
         pct_dropped = 100 * n_dropped / n_before if n_before > 0 else 0
 
-        self.log(
-            f"Dropped {n_dropped}/{n_before} epochs ({pct_dropped:.1f}%)"
-        )
+        self.log(f"Dropped {n_dropped}/{n_before} epochs ({pct_dropped:.1f}%)")
         self.log(f"Remaining epochs: {len(clean_epochs)}")
 
         return clean_epochs

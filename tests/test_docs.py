@@ -20,7 +20,8 @@ import custom.preprocessing as pp
 
 # Collect all names from __all__ that are callable or classes
 _PUBLIC_NAMES = [
-    name for name in pp.__all__
+    name
+    for name in pp.__all__
     if not name.startswith("_") and not isinstance(getattr(pp, name, None), type(pp))
 ]
 
@@ -43,9 +44,16 @@ class TestDocstringCoverage:
     def test_public_modules_have_docstrings(self):
         """Each analysis module should have a module-level docstring."""
         module_names = [
-            "regress", "bad_segments", "bad_channels", "manual_channel",
-            "apply_hfc", "zca_filter", "bad_epochs", "auto_ica",
-            "manual_ica", "coreg",
+            "regress",
+            "bad_segments",
+            "bad_channels",
+            "manual_channel",
+            "apply_hfc",
+            "zca_filter",
+            "bad_epochs",
+            "auto_ica",
+            "manual_ica",
+            "coreg",
         ]
         for mod_name in module_names:
             mod = importlib.import_module(f"custom.preprocessing.{mod_name}")
@@ -106,6 +114,7 @@ class TestDocsInfrastructure:
     def test_conf_py_imports_cleanly(self):
         """conf.py should be importable without errors."""
         import importlib.util
+
         spec = importlib.util.spec_from_file_location(
             "docs_conf", str(_DOCS_DIR / "conf.py")
         )

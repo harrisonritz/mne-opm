@@ -156,7 +156,8 @@ def _build_file_tree(
 
     all_entries = sorted(dir_path.iterdir(), key=lambda p: (p.is_file(), p.name))
     entries = [
-        e for e in all_entries
+        e
+        for e in all_entries
         if not (
             e.is_file()
             and ignore
@@ -360,9 +361,7 @@ def convert_triggers(raw: mne.io.Raw, cfg: SimpleNamespace) -> mne.io.Raw:
     combined = np.sum(stacked * powers, axis=0).astype(int)
 
     # Add combined trigger channel
-    combined_info = mne.create_info(
-        ["Trigger Combined"], raw.info["sfreq"], ["stim"]
-    )
+    combined_info = mne.create_info(["Trigger Combined"], raw.info["sfreq"], ["stim"])
     combined_raw = mne.io.RawArray(combined.reshape(1, -1), combined_info)
     raw.add_channels([combined_raw], force_update_info=True)
 
@@ -380,10 +379,7 @@ def convert_triggers(raw: mne.io.Raw, cfg: SimpleNamespace) -> mne.io.Raw:
     # Remove old trigger-channel annotations
     old_ann = raw.copy().annotations
     keep_mask = np.array(
-        [
-            not any(ch in desc for ch in trigger_channels)
-            for desc in old_ann.description
-        ]
+        [not any(ch in desc for ch in trigger_channels) for desc in old_ann.description]
     )
     filtered_ann = mne.Annotations(
         onset=old_ann.onset[keep_mask],
@@ -403,12 +399,15 @@ def convert_triggers(raw: mne.io.Raw, cfg: SimpleNamespace) -> mne.io.Raw:
     # to re-extract events with different find_events parameters whenever
     # the data is re-saved later in the pipeline (e.g. by bad_segments),
     # which can produce a different event count and break metadata alignment.
-    stim_channels_to_drop = [ch for ch in trigger_channels + ["Trigger Combined"]
-                             if ch in raw.ch_names]
+    stim_channels_to_drop = [
+        ch for ch in trigger_channels + ["Trigger Combined"] if ch in raw.ch_names
+    ]
     if stim_channels_to_drop:
         raw.drop_channels(stim_channels_to_drop)
-        print(f"Dropped {len(stim_channels_to_drop)} trigger stim channels: "
-              f"{stim_channels_to_drop}")
+        print(
+            f"Dropped {len(stim_channels_to_drop)} trigger stim channels: "
+            f"{stim_channels_to_drop}"
+        )
 
     print("Trigger & Response conversion completed.\n----------\n")
     return raw
@@ -419,9 +418,7 @@ def convert_triggers(raw: mne.io.Raw, cfg: SimpleNamespace) -> mne.io.Raw:
 # ===========================================================================
 
 
-def _load_eyetracking(
-    eye_path: str, cfg: SimpleNamespace
-) -> tuple[mne.io.Raw, dict]:
+def _load_eyetracking(eye_path: str, cfg: SimpleNamespace) -> tuple[mne.io.Raw, dict]:
     """Load eye-tracking data and apply calibration.
 
     Parameters
@@ -559,9 +556,7 @@ def _interpolate_nans(
         valid_idx = np.where(~expanded)[0]
 
         if len(valid_idx) > 1:
-            data[ch_idx, nan_idx] = np.interp(
-                nan_idx, valid_idx, ch_data[valid_idx]
-            )
+            data[ch_idx, nan_idx] = np.interp(nan_idx, valid_idx, ch_data[valid_idx])
         elif len(valid_idx) == 1:
             data[ch_idx, nan_idx] = ch_data[valid_idx[0]]
             print(
@@ -605,9 +600,7 @@ def _annotation_to_timeseries(
     return np.convolve(ts, window, "same")[np.newaxis, :] * 1e-5
 
 
-def _create_eye_feature_channels(
-    eye: mne.io.Raw, orig_nan_mask: np.ndarray
-) -> None:
+def _create_eye_feature_channels(eye: mne.io.Raw, orig_nan_mask: np.ndarray) -> None:
     """Create NMF/SVD decomposition channels from blink/saccade/NaN signals.
 
     Adds ``eye_nmf1`` … ``eye_nmf3`` (or ``eye_pc1`` … ``eye_pc3`` if NMF
@@ -626,9 +619,9 @@ def _create_eye_feature_channels(
     # Build feature channels
     print("Adding NaN / blink / saccade feature channels...")
     nan_channel = (
-        np.convolve(
-            orig_nan_mask, np.hanning(int(0.05 * eye.info["sfreq"])), "same"
-        )[np.newaxis, :]
+        np.convolve(orig_nan_mask, np.hanning(int(0.05 * eye.info["sfreq"])), "same")[
+            np.newaxis, :
+        ]
         * 1e-5
     )
     blink_channel = _annotation_to_timeseries(eye, "blink")
@@ -644,9 +637,7 @@ def _create_eye_feature_channels(
     try:
         from sklearn.decomposition import NMF
 
-        model = NMF(
-            n_components=n_comp, init="nndsvda", random_state=99, max_iter=500
-        )
+        model = NMF(n_components=n_comp, init="nndsvda", random_state=99, max_iter=500)
         model.fit_transform(feature_data)
         components = model.components_
         label = "eye_nmf"
@@ -890,7 +881,9 @@ def _set_eyetrack_channel_types(raw: mne.io.Raw) -> None:
             raw.set_channel_types({ch_name: "misc"})
 
 
-def process_eyetracking(raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace) -> mne.io.Raw:
+def process_eyetracking(
+    raw: mne.io.Raw, eye_path: str, cfg: SimpleNamespace
+) -> mne.io.Raw:
     """Full eye-tracking processing pipeline.
 
     Loads the eye-tracking file, interpolates NaNs, creates feature channels,
@@ -1086,11 +1079,11 @@ def bids_conversion(cfg: SimpleNamespace) -> None:
 
     # update device info
     if getattr(cfg, "device_info", None) is not None:
-            # Merge cfg.device_info into the raw file's device_info,
-            # overwriting any fields shared with the raw file.
-            merged_device_info = dict(raw.info["device_info"] or {})
-            merged_device_info.update(cfg.device_info)
-            raw.info["device_info"] = merged_device_info
+        # Merge cfg.device_info into the raw file's device_info,
+        # overwriting any fields shared with the raw file.
+        merged_device_info = dict(raw.info["device_info"] or {})
+        merged_device_info.update(cfg.device_info)
+        raw.info["device_info"] = merged_device_info
     print("device info: ", raw.info["device_info"])
 
     # Optional crop
@@ -1149,6 +1142,7 @@ def bids_conversion(cfg: SimpleNamespace) -> None:
     # write_raw_bids round-trip — downstream metadata alignment will break in
     # confusing ways.  Catch it here while the failure is still local.
     from custom.preprocessing._io import verify_event_count_after_write
+
     conditions = getattr(cfg, "verify_conditions", ("trial",))
     verify_event_count_after_write(
         raw, bids_path, conditions=conditions, context="format_bids"

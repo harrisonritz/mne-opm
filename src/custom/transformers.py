@@ -19,6 +19,7 @@ from sklearn.decomposition import PCA
 # MultivariateNoiseNormalizer
 # ---------------------------------------------------------------------------
 
+
 class MultivariateNoiseNormalizer(BaseEstimator, TransformerMixin):
     """Pre-whiten data by a LedoitWolf estimate of the noise covariance.
 
@@ -87,6 +88,7 @@ class MultivariateNoiseNormalizer(BaseEstimator, TransformerMixin):
 # FlexPCA
 # ---------------------------------------------------------------------------
 
+
 class FlexPCA(PCA):
     """PCA that caps n_components at min(n_samples, n_features) during fit.
 
@@ -98,7 +100,10 @@ class FlexPCA(PCA):
 
     def _clamp(self, X):
         max_comp = min(X.shape)
-        if isinstance(self.n_components, (int, np.integer)) and self.n_components > max_comp:
+        if (
+            isinstance(self.n_components, (int, np.integer))
+            and self.n_components > max_comp
+        ):
             self.n_components = max_comp
 
     def fit(self, X, y=None):

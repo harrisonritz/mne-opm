@@ -45,6 +45,7 @@ from custom.preprocessing.select_trial_response import run as select_run
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _raw_from_events(events, sfreq: float = 300.0, pad: float = 1.0):
     """Build a tiny RawArray carrying the given ``(onset, description)`` events.
 
@@ -80,7 +81,9 @@ def _onsets_at(raw, idx):
 
 def _write_events_tsv(path, rows):
     """Write a minimal BIDS events.tsv from ``rows`` (list of dicts)."""
-    df = pd.DataFrame(rows, columns=["onset", "duration", "trial_type", "value", "sample"])
+    df = pd.DataFrame(
+        rows, columns=["onset", "duration", "trial_type", "value", "sample"]
+    )
     df.to_csv(path, sep="\t", index=False)
     return path
 
@@ -113,15 +116,21 @@ def _make_meg_info(n_meg: int = 10, sfreq: float = 300.0) -> mne.Info:
 # first_response_per_trial
 # ---------------------------------------------------------------------------
 
+
 class TestFirstResponsePerTrial:
     """Per-trial first-response pairing."""
 
     def test_one_response_per_trial(self):
-        raw = _raw_from_events([
-            (1.0, "trial/a"), (1.5, "response/left"),
-            (3.0, "trial/b"), (3.4, "response/right"),
-            (5.0, "trial/a"), (5.2, "response/left"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (3.0, "trial/b"),
+                (3.4, "response/right"),
+                (5.0, "trial/a"),
+                (5.2, "response/left"),
+            ]
+        )
         mask, keep, drop, keep_onsets = first_response_per_trial(raw)
 
         assert mask.tolist() == [True, True, True]
@@ -130,10 +139,15 @@ class TestFirstResponsePerTrial:
         np.testing.assert_allclose(sorted(keep_onsets), [1.5, 3.4, 5.2])
 
     def test_multiple_presses_keep_first(self):
-        raw = _raw_from_events([
-            (1.0, "trial/a"), (1.5, "response/left"),
-            (3.0, "trial/b"), (3.4, "response/right"), (3.6, "response/left"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (3.0, "trial/b"),
+                (3.4, "response/right"),
+                (3.6, "response/left"),
+            ]
+        )
         mask, keep, drop, keep_onsets = first_response_per_trial(raw)
 
         assert mask.tolist() == [True, True]
@@ -142,11 +156,15 @@ class TestFirstResponsePerTrial:
         assert _onsets_at(raw, drop) == [3.6]
 
     def test_no_response_trial_is_false_and_does_not_steal_next(self):
-        raw = _raw_from_events([
-            (1.0, "trial/a"), (1.5, "response/left"),
-            (3.0, "trial/b"),                       # no response in [3.0, 5.0)
-            (5.0, "trial/c"), (5.2, "response/right"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (3.0, "trial/b"),  # no response in [3.0, 5.0)
+                (5.0, "trial/c"),
+                (5.2, "response/right"),
+            ]
+        )
         mask, keep, drop, keep_onsets = first_response_per_trial(raw)
 
         assert mask.tolist() == [True, False, True]
@@ -154,10 +172,13 @@ class TestFirstResponsePerTrial:
         assert drop == []
 
     def test_orphan_response_before_first_trial_is_dropped(self):
-        raw = _raw_from_events([
-            (0.5, "response/left"),                 # orphan: precedes all trials
-            (1.0, "trial/a"), (1.5, "response/right"),
-        ])
+        raw = _raw_from_events(
+            [
+                (0.5, "response/left"),  # orphan: precedes all trials
+                (1.0, "trial/a"),
+                (1.5, "response/right"),
+            ]
+        )
         mask, keep, drop, keep_onsets = first_response_per_trial(raw)
 
         assert mask.tolist() == [True]
@@ -165,9 +186,12 @@ class TestFirstResponsePerTrial:
         assert _onsets_at(raw, drop) == [0.5]
 
     def test_last_trial_response_has_no_upper_bound(self):
-        raw = _raw_from_events([
-            (1.0, "trial/a"), (10.0, "response/left"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (10.0, "response/left"),
+            ]
+        )
         mask, keep, drop, keep_onsets = first_response_per_trial(raw)
 
         assert mask.tolist() == [True]
@@ -176,12 +200,16 @@ class TestFirstResponsePerTrial:
 
     def test_hierarchical_trial_matching(self):
         # 'trial' must match 'trial/read_read'; non-trial labels ignored.
-        raw = _raw_from_events([
-            (1.0, "CSI"),
-            (1.2, "trial/read_read"), (1.6, "response/right"),
-            (2.0, "ITI"),
-            (3.0, "trial/listen_read"), (3.3, "response/left"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "CSI"),
+                (1.2, "trial/read_read"),
+                (1.6, "response/right"),
+                (2.0, "ITI"),
+                (3.0, "trial/listen_read"),
+                (3.3, "response/left"),
+            ]
+        )
         mask, keep, drop, keep_onsets = first_response_per_trial(raw)
 
         assert mask.tolist() == [True, True]
@@ -191,32 +219,43 @@ class TestFirstResponsePerTrial:
     def test_kept_count_matches_response_count_after_drop(self):
         # Mirrors the config invariant: after dropping, the FIF's response count
         # equals the number of responded trials (sum of the mask).
-        raw = _raw_from_events([
-            (1.0, "trial/a"), (1.5, "response/left"),
-            (3.0, "trial/b"), (3.4, "response/right"), (3.6, "response/right"),
-            (5.0, "trial/c"),
-            (7.0, "trial/d"), (7.1, "response/left"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (3.0, "trial/b"),
+                (3.4, "response/right"),
+                (3.6, "response/right"),
+                (5.0, "trial/c"),
+                (7.0, "trial/d"),
+                (7.1, "response/left"),
+            ]
+        )
         mask, keep, drop, _ = first_response_per_trial(raw)
 
         # Apply the drop and recount.
         ann = raw.annotations
         keep_mask = np.array([i not in set(drop) for i in range(len(ann))])
-        raw.set_annotations(mne.Annotations(
-            onset=ann.onset[keep_mask],
-            duration=ann.duration[keep_mask],
-            description=ann.description[keep_mask],
-            orig_time=ann.orig_time,
-        ))
+        raw.set_annotations(
+            mne.Annotations(
+                onset=ann.onset[keep_mask],
+                duration=ann.duration[keep_mask],
+                description=ann.description[keep_mask],
+                orig_time=ann.orig_time,
+            )
+        )
         n_resp, _ = count_condition_events_in_raw(
             raw, ("response/left", "response/right")
         )
         assert n_resp == int(mask.sum()) == len(keep)
 
     def test_no_trials_drops_all_responses_as_orphans(self):
-        raw = _raw_from_events([
-            (1.0, "response/left"), (2.0, "response/right"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "response/left"),
+                (2.0, "response/right"),
+            ]
+        )
         mask, keep, drop, keep_onsets = first_response_per_trial(raw)
 
         assert mask.tolist() == []
@@ -237,16 +276,47 @@ class TestFirstResponsePerTrial:
 # drop_response_rows_from_events_tsv
 # ---------------------------------------------------------------------------
 
+
 class TestDropResponseRowsFromEventsTsv:
     """Trimming response rows from a BIDS events.tsv."""
 
     def _base_rows(self):
         return [
-            {"onset": 1.0, "duration": 0, "trial_type": "trial/a", "value": 9, "sample": 300},
-            {"onset": 1.5, "duration": 0, "trial_type": "response/left", "value": 5, "sample": 450},
-            {"onset": 3.0, "duration": 0, "trial_type": "trial/b", "value": 12, "sample": 900},
-            {"onset": 3.4, "duration": 0, "trial_type": "response/right", "value": 6, "sample": 1020},
-            {"onset": 3.6, "duration": 0, "trial_type": "response/left", "value": 5, "sample": 1080},
+            {
+                "onset": 1.0,
+                "duration": 0,
+                "trial_type": "trial/a",
+                "value": 9,
+                "sample": 300,
+            },
+            {
+                "onset": 1.5,
+                "duration": 0,
+                "trial_type": "response/left",
+                "value": 5,
+                "sample": 450,
+            },
+            {
+                "onset": 3.0,
+                "duration": 0,
+                "trial_type": "trial/b",
+                "value": 12,
+                "sample": 900,
+            },
+            {
+                "onset": 3.4,
+                "duration": 0,
+                "trial_type": "response/right",
+                "value": 6,
+                "sample": 1020,
+            },
+            {
+                "onset": 3.6,
+                "duration": 0,
+                "trial_type": "response/left",
+                "value": 5,
+                "sample": 1080,
+            },
         ]
 
     def test_drops_unkept_response_rows(self, tmp_path):
@@ -272,8 +342,20 @@ class TestDropResponseRowsFromEventsTsv:
 
     def test_no_response_rows_is_noop(self, tmp_path):
         rows = [
-            {"onset": 1.0, "duration": 0, "trial_type": "trial/a", "value": 9, "sample": 300},
-            {"onset": 2.0, "duration": 0, "trial_type": "ITI", "value": 2, "sample": 600},
+            {
+                "onset": 1.0,
+                "duration": 0,
+                "trial_type": "trial/a",
+                "value": 9,
+                "sample": 300,
+            },
+            {
+                "onset": 2.0,
+                "duration": 0,
+                "trial_type": "ITI",
+                "value": 2,
+                "sample": 600,
+            },
         ]
         tsv = _write_events_tsv(tmp_path / "events.tsv", rows)
         before = (tmp_path / "events.tsv").read_text()
@@ -282,9 +364,12 @@ class TestDropResponseRowsFromEventsTsv:
         assert (tmp_path / "events.tsv").read_text() == before
 
     def test_missing_file_returns_zero(self, tmp_path):
-        assert drop_response_rows_from_events_tsv(
-            tmp_path / "does_not_exist.tsv", keep_onsets=[1.0]
-        ) == 0
+        assert (
+            drop_response_rows_from_events_tsv(
+                tmp_path / "does_not_exist.tsv", keep_onsets=[1.0]
+            )
+            == 0
+        )
 
     def test_tolerance_matching(self, tmp_path):
         tsv = _write_events_tsv(tmp_path / "events.tsv", self._base_rows())
@@ -302,6 +387,7 @@ class TestDropResponseRowsFromEventsTsv:
 # End-to-end: SelectTrialResponseAnalysis through the real write guards
 # ---------------------------------------------------------------------------
 
+
 class TestSelectTrialResponseStep:
     """Full round-trip: seed a proc-init derivative, run the step, and verify
     the FIF and events.tsv are reduced consistently (so write_raw_bids_custom_step's
@@ -317,17 +403,24 @@ class TestSelectTrialResponseStep:
             np.random.RandomState(0).randn(10, n_samples) * 1e-13, info
         )
         events = [
-            (1.0, "trial/read_read"), (1.4, "response/left"),
-            (3.0, "trial/listen_read"), (3.4, "response/right"), (3.6, "response/right"),
-            (5.0, "trial/read_listen"),                          # no response
-            (7.0, "trial/listen_listen"), (7.2, "response/left"),
-            (9.0, "trial/read_read"), (9.3, "response/right"),
+            (1.0, "trial/read_read"),
+            (1.4, "response/left"),
+            (3.0, "trial/listen_read"),
+            (3.4, "response/right"),
+            (3.6, "response/right"),
+            (5.0, "trial/read_listen"),  # no response
+            (7.0, "trial/listen_listen"),
+            (7.2, "response/left"),
+            (9.0, "trial/read_read"),
+            (9.3, "response/right"),
         ]
-        raw.set_annotations(mne.Annotations(
-            onset=[o for o, _ in events],
-            duration=[0.0] * len(events),
-            description=[d for _, d in events],
-        ))
+        raw.set_annotations(
+            mne.Annotations(
+                onset=[o for o, _ in events],
+                duration=[0.0] * len(events),
+                description=[d for _, d in events],
+            )
+        )
         return raw
 
     def _cfg(self, tmp_path):
@@ -347,12 +440,20 @@ class TestSelectTrialResponseStep:
         """Write source BIDS, then seed a proc-init derivative (as the first
         custom step would), returning nothing — leaves derivative on disk."""
         source_bp = mne_bids.BIDSPath(
-            root=cfg.bids_root, subject="001", session="01", task="test",
-            datatype="meg", suffix="meg", extension=".fif",
+            root=cfg.bids_root,
+            subject="001",
+            session="01",
+            task="test",
+            datatype="meg",
+            suffix="meg",
+            extension=".fif",
         )
         mne_bids.write_raw_bids(
-            raw=raw, bids_path=source_bp, allow_preload=True,
-            overwrite=True, format="FIF",
+            raw=raw,
+            bids_path=source_bp,
+            allow_preload=True,
+            overwrite=True,
+            format="FIF",
         )
         # Seeds proc-init FIF + events.tsv (all responses) and passes guards.
         write_raw_bids_custom_step(raw, cfg, source_bp)
@@ -363,14 +464,10 @@ class TestSelectTrialResponseStep:
         self._seed_proc_init(raw, cfg)
 
         # Sanity: the seeded derivative carries all 5 responses.
-        deriv_fif = list(
-            (tmp_path / "deriv").glob("sub-001/**/*proc-init_raw.fif")
-        )
+        deriv_fif = list((tmp_path / "deriv").glob("sub-001/**/*proc-init_raw.fif"))
         assert deriv_fif, "proc-init derivative not seeded"
         raw_seed = mne.io.read_raw_fif(deriv_fif[0], verbose="ERROR")
-        n_resp_before, _ = count_condition_events_in_raw(
-            raw_seed, cfg.conditions
-        )
+        n_resp_before, _ = count_condition_events_in_raw(raw_seed, cfg.conditions)
         assert n_resp_before == 5
 
         # Run the step (no exception => write guards passed).
@@ -385,16 +482,17 @@ class TestSelectTrialResponseStep:
 
         # The kept responses are the first within each responded trial window.
         resp_onsets = sorted(
-            float(o) for o, d in zip(raw_after.annotations.onset,
-                                     raw_after.annotations.description)
+            float(o)
+            for o, d in zip(
+                raw_after.annotations.onset, raw_after.annotations.description
+            )
             if d.startswith("response")
         )
         np.testing.assert_allclose(resp_onsets, [1.4, 3.4, 7.2, 9.3])
 
         # events.tsv stays consistent with the FIF (guards depend on this).
         events_tsv = deriv_fif[0].parent / (
-            deriv_fif[0].name.split("_proc-")[0]
-            + "_proc-init_events.tsv"
+            deriv_fif[0].name.split("_proc-")[0] + "_proc-init_events.tsv"
         )
         n_resp_tsv, _ = count_condition_events_in_tsv(events_tsv, cfg.conditions)
         assert n_resp_tsv == 4
@@ -409,9 +507,7 @@ class TestSelectTrialResponseStep:
         cfg._select_trial_response = False
         self._seed_proc_init(raw, cfg)
 
-        deriv_fif = list(
-            (tmp_path / "deriv").glob("sub-001/**/*proc-init_raw.fif")
-        )[0]
+        deriv_fif = list((tmp_path / "deriv").glob("sub-001/**/*proc-init_raw.fif"))[0]
         before, _ = count_condition_events_in_raw(
             mne.io.read_raw_fif(deriv_fif, verbose="ERROR"), cfg.conditions
         )
@@ -428,45 +524,64 @@ class TestSelectTrialResponseStep:
 # trial_response_side_keep_first
 # ---------------------------------------------------------------------------
 
+
 class TestTrialResponseSideKeepFirst:
     """Per-trial first-response side via mne keep_first epoching."""
 
     def test_sides_match_first_response_per_window(self):
-        raw = _raw_from_events([
-            (0.5, "response/left"),                  # orphan before first trial
-            (1.0, "trial/a"), (1.5, "response/left"),
-            (3.0, "trial/b"), (3.4, "response/right"), (3.6, "response/left"),
-            (5.0, "trial/c"),                        # no response in [5, 7)
-            (7.0, "trial/d"), (7.2, "response/left"),
-            (9.0, "trial/e"),                        # last trial, no response
-        ])
+        raw = _raw_from_events(
+            [
+                (0.5, "response/left"),  # orphan before first trial
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (3.0, "trial/b"),
+                (3.4, "response/right"),
+                (3.6, "response/left"),
+                (5.0, "trial/c"),  # no response in [5, 7)
+                (7.0, "trial/d"),
+                (7.2, "response/left"),
+                (9.0, "trial/e"),  # last trial, no response
+            ]
+        )
         sides = trial_response_side_keep_first(raw)
         # Orphan ignored; double-press keeps first; no-response -> None; the
         # last trial's window does not steal a later response (there is none).
         assert sides == ["left", "right", None, "left", None]
 
     def test_agrees_with_first_response_per_trial_mask(self):
-        raw = _raw_from_events([
-            (1.0, "trial/a"), (1.5, "response/left"),
-            (3.0, "trial/b"), (3.4, "response/right"), (3.6, "response/right"),
-            (5.0, "trial/c"),
-            (7.0, "trial/d"), (7.1, "response/left"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (3.0, "trial/b"),
+                (3.4, "response/right"),
+                (3.6, "response/right"),
+                (5.0, "trial/c"),
+                (7.0, "trial/d"),
+                (7.1, "response/left"),
+            ]
+        )
         sides = trial_response_side_keep_first(raw)
         mask, _, _, _ = first_response_per_trial(raw)
         # A non-None side iff the trial had a response.
         assert [s is not None for s in sides] == mask.tolist()
 
     def test_no_responses_all_none(self):
-        raw = _raw_from_events([
-            (1.0, "trial/a"), (3.0, "trial/b"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (3.0, "trial/b"),
+            ]
+        )
         assert trial_response_side_keep_first(raw) == [None, None]
 
     def test_no_trials_empty(self):
-        raw = _raw_from_events([
-            (1.0, "response/left"), (2.0, "response/right"),
-        ])
+        raw = _raw_from_events(
+            [
+                (1.0, "response/left"),
+                (2.0, "response/right"),
+            ]
+        )
         assert trial_response_side_keep_first(raw) == []
 
     def test_empty_annotations(self):
@@ -479,16 +594,22 @@ class TestTrialResponseSideKeepFirst:
 # Response-alignment check (_check_response_alignment)
 # ---------------------------------------------------------------------------
 
+
 class TestResponseAlignmentCheck:
     """Opt-in check that trigger responses line up with behavioral metadata."""
 
     def _raw(self):
-        return _raw_from_events([
-            (1.0, "trial/a"), (1.5, "response/left"),
-            (3.0, "trial/b"), (3.4, "response/right"),
-            (5.0, "trial/c"),                        # no response
-            (7.0, "trial/d"), (7.2, "response/left"),
-        ])
+        return _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (3.0, "trial/b"),
+                (3.4, "response/right"),
+                (5.0, "trial/c"),  # no response
+                (7.0, "trial/d"),
+                (7.2, "response/left"),
+            ]
+        )
 
     def _analysis(self, *, column=None, metadata=None):
         cfg = SimpleNamespace(_select_trial_response=True)

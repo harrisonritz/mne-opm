@@ -57,9 +57,7 @@ def _as_list(value) -> list:
     return [value]
 
 
-def _meg_dirs_for_subject(
-    deriv_root: Path, subject: str, sessions: list
-) -> list[Path]:
+def _meg_dirs_for_subject(deriv_root: Path, subject: str, sessions: list) -> list[Path]:
     """Collect the ``meg`` derivative folders for one subject.
 
     Parameters
@@ -111,8 +109,7 @@ def run(cfg: SimpleNamespace) -> None:
     proc = get_custom_proc(cfg)
     if proc is None:
         print(
-            "[init_derivatives] custom_proc is not set; no custom derivatives "
-            "to clear."
+            "[init_derivatives] custom_proc is not set; no custom derivatives to clear."
         )
         return
 

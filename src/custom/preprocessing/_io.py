@@ -56,6 +56,7 @@ import mne
 import mne_bids
 import numpy as np
 from mne_bids import BIDSPath
+
 # from filelock import SoftFileLock, Timeout
 import pandas as pd
 
@@ -591,9 +592,7 @@ def drop_response_rows_from_events_tsv(
 
     # Read as strings (keep_default_na=False) so the round-trip preserves the
     # exact original formatting, including BIDS "n/a" cells.
-    events_df = pd.read_csv(
-        events_path, sep="\t", dtype=str, keep_default_na=False
-    )
+    events_df = pd.read_csv(events_path, sep="\t", dtype=str, keep_default_na=False)
     if "trial_type" not in events_df.columns or "onset" not in events_df.columns:
         return 0
 
@@ -749,9 +748,7 @@ def trim_raw_to_events_tsv(
 
     # Build keep mask over ALL raw annotations.
     unmatched_global = set(cond_ann_idx[unmatched_local])
-    keep_mask = np.array(
-        [i not in unmatched_global for i in range(len(ann))]
-    )
+    keep_mask = np.array([i not in unmatched_global for i in range(len(ann))])
     new_ann = mne.Annotations(
         onset=ann.onset[keep_mask],
         duration=ann.duration[keep_mask],
@@ -813,9 +810,11 @@ def verify_event_count_after_write(
     del raw_after
 
     # 2. If an events.tsv exists alongside, recount that too.
-    events_tsv = bids_path.copy().update(
-        suffix="events", extension=".tsv", split=None, check=False
-    ).fpath
+    events_tsv = (
+        bids_path.copy()
+        .update(suffix="events", extension=".tsv", split=None, check=False)
+        .fpath
+    )
     tsv_n = None
     if events_tsv.exists():
         tsv_n, _ = count_condition_events_in_tsv(events_tsv, conditions)
@@ -878,12 +877,10 @@ def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
     # Source files — retry on transient NFS read errors.
     for attempt in range(max_retries):
         try:
-            return mne_bids.read_raw_bids(
-                bids_path, extra_params=extra_params
-            )
+            return mne_bids.read_raw_bids(bids_path, extra_params=extra_params)
         except (IndexError, json.JSONDecodeError):
             if attempt < max_retries - 1:
-                delay = (2 ** attempt) + random.uniform(0, 2)
+                delay = (2**attempt) + random.uniform(0, 2)
                 print(
                     f"[read_raw_bids_with_retry] Transient read error "
                     f"(attempt {attempt + 1}/{max_retries}), "
@@ -937,12 +934,8 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
     # )
 
     # Derive the events sidecar paths from the raw BIDSPath
-    events_tsv: Path = bp.copy().update(
-        suffix="events", extension=".tsv"
-    ).fpath
-    events_json: Path = bp.copy().update(
-        suffix="events", extension=".json"
-    ).fpath
+    events_tsv: Path = bp.copy().update(suffix="events", extension=".tsv").fpath
+    events_json: Path = bp.copy().update(suffix="events", extension=".json").fpath
 
     # Back up existing events files
     tsv_backup = Path(str(events_tsv) + ".bak") if events_tsv.exists() else None
@@ -963,7 +956,7 @@ def write_raw_bids_preserve_events(**write_kwargs) -> None:
                 # Transient empty-file read — can still occur on NFS even with
                 # advisory locking.  Retry with exponential back-off.
                 if _attempt < _max_retries - 1:
-                    _delay = (2 ** _attempt) + random.uniform(0, 2)
+                    _delay = (2**_attempt) + random.uniform(0, 2)
                     print(
                         f"[write_raw_bids_preserve_events] Transient "
                         f"BIDS sidecar read error "
@@ -1080,9 +1073,7 @@ def _is_relative_to(path: Path, other: Path) -> bool:
         return False
 
 
-def assert_not_raw_bids_write(
-    target, cfg: SimpleNamespace, context: str = ""
-) -> None:
+def assert_not_raw_bids_write(target, cfg: SimpleNamespace, context: str = "") -> None:
     """Raise if *target* would write into the raw BIDS data directory.
 
     Custom preprocessing steps must only ever write into ``deriv_root`` (the
@@ -1270,12 +1261,16 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
         ("events", "events", ".json"),
     ]
     for src_suffix, dst_suffix, ext in sidecars:
-        src = source_bp.copy().update(
-            suffix=src_suffix, extension=ext, split=None, check=False
-        ).fpath
-        dst = output_bp.copy().update(
-            suffix=dst_suffix, extension=ext, split=None, check=False
-        ).fpath
+        src = (
+            source_bp.copy()
+            .update(suffix=src_suffix, extension=ext, split=None, check=False)
+            .fpath
+        )
+        dst = (
+            output_bp.copy()
+            .update(suffix=dst_suffix, extension=ext, split=None, check=False)
+            .fpath
+        )
         if src == dst or not src.exists() or dst.exists():
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -1298,12 +1293,8 @@ def _seed_events_files(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
         return
 
     for ext in (".tsv", ".json"):
-        src = source_bp.copy().update(
-            suffix="events", extension=ext, check=False
-        ).fpath
-        dst = output_bp.copy().update(
-            suffix="events", extension=ext, check=False
-        ).fpath
+        src = source_bp.copy().update(suffix="events", extension=ext, check=False).fpath
+        dst = output_bp.copy().update(suffix="events", extension=ext, check=False).fpath
         if src.exists() and not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
@@ -1357,9 +1348,7 @@ def write_raw_bids_custom_step(
     # Safety invariant: a custom step must never overwrite the raw BIDS data.
     # This guards against a misconfigured custom_proc (or a future change to
     # the routing helpers) silently writing back into bids_root.
-    assert_not_raw_bids_write(
-        output_bp, cfg, context="write_raw_bids_custom_step"
-    )
+    assert_not_raw_bids_write(output_bp, cfg, context="write_raw_bids_custom_step")
 
     if proc is not None:
         # Derivative mode — follow the mne-bids-pipeline save pattern:
@@ -1386,18 +1375,19 @@ def write_raw_bids_custom_step(
         # the initial BIDS conversion and are absent from the events.tsv.
         task_name_for_trim = getattr(output_bp, "task", None) or ""
         if not task_name_for_trim.startswith("noise"):
-            _epoch_conds = tuple(
-                getattr(cfg, "conditions", ("trial",)) or ("trial",)
-            )
+            _epoch_conds = tuple(getattr(cfg, "conditions", ("trial",)) or ("trial",))
             _trial_conds = tuple(
                 getattr(cfg, "_trial_conditions", ("trial",)) or ("trial",)
             )
             conditions_for_trim = tuple(set(_epoch_conds + _trial_conds))
-            _events_tsv_for_trim = output_bp.copy().update(
-                suffix="events", extension=".tsv", split=None, check=False
-            ).fpath
+            _events_tsv_for_trim = (
+                output_bp.copy()
+                .update(suffix="events", extension=".tsv", split=None, check=False)
+                .fpath
+            )
             trim_raw_to_events_tsv(
-                raw, _events_tsv_for_trim,
+                raw,
+                _events_tsv_for_trim,
                 conditions=conditions_for_trim,
                 context=f"write_raw_bids_custom_step:{task_name_for_trim or '?'}",
             )
@@ -1441,7 +1431,9 @@ def write_raw_bids_custom_step(
         )
         conditions = tuple(set(_epoch_conds + _trial_conds))
         verify_event_count_after_write(
-            raw, output_bp, conditions=conditions,
+            raw,
+            output_bp,
+            conditions=conditions,
             context=f"write_raw_bids_custom_step:{task_name or '?'}",
         )
 
@@ -1522,7 +1514,9 @@ def save_ica_bids(
                     df.loc[mask, "status_description"] = "manual"
                 except Exception as e:
                     print("Exception: ", e)
-                    print(f"Warning: 'status_description' column not found in {tsv_path.fpath}. Skipping description update.")
+                    print(
+                        f"Warning: 'status_description' column not found in {tsv_path.fpath}. Skipping description update."
+                    )
                     print(f"masked df: {df.loc[mask]}")
         df.to_csv(tsv_path.fpath, sep="\t", index=False)
 
@@ -1574,16 +1568,16 @@ def mark_bad_channels_bids(
     if bids_path is None:
         proc = get_custom_proc(cfg)
         if proc is None:
-            bids_path = get_bids_path_for_task(
-                cfg, task=task, from_derivatives=False
-            )
+            bids_path = get_bids_path_for_task(cfg, task=task, from_derivatives=False)
         else:
-            bids_path = get_bids_path_for_task(
-                cfg, task=task, from_derivatives=False
-            ).copy().update(
-                root=cfg.deriv_root,
-                processing=proc,
-                check=False,
+            bids_path = (
+                get_bids_path_for_task(cfg, task=task, from_derivatives=False)
+                .copy()
+                .update(
+                    root=cfg.deriv_root,
+                    processing=proc,
+                    check=False,
+                )
             )
 
     # Never mark channels on the raw BIDS recordings — only on derivatives.

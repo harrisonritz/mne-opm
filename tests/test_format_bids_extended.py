@@ -34,6 +34,7 @@ from custom.format_bids import (
 # Fixtures — minimal BIDS-compatible raw directory structure
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def bids_raw_setup(tmp_path):
     """Create a minimal raw directory with task .fif files.
@@ -130,6 +131,7 @@ def bids_raw_with_noise(bids_raw_setup):
 # validate_raw_folder — extended
 # ---------------------------------------------------------------------------
 
+
 class TestValidateRawFolderExtended:
     def test_multiple_subject_dirs_warns(self, tmp_path):
         """When multiple folders match, should use first and warn."""
@@ -156,7 +158,10 @@ class TestValidateRawFolderExtended:
 
         validate_raw_folder(str(tmp_path), 1)
         captured = capsys.readouterr()
-        assert "naming convention" in captured.out.lower() or "ignored" in captured.out.lower()
+        assert (
+            "naming convention" in captured.out.lower()
+            or "ignored" in captured.out.lower()
+        )
 
     def test_t2w_detected(self, tmp_path):
         """T2w images should be detected."""
@@ -188,6 +193,7 @@ class TestValidateRawFolderExtended:
 # ---------------------------------------------------------------------------
 # bids_conversion — full pipeline with real tmp dirs
 # ---------------------------------------------------------------------------
+
 
 class TestBidsConversion:
     def test_basic_conversion(self, bids_raw_setup):
@@ -234,6 +240,7 @@ class TestBidsConversion:
 # set_bids_params — error handling
 # ---------------------------------------------------------------------------
 
+
 class TestSetBidsParamsExtended:
     def test_invalid_config_path(self, tmp_path):
         """Non-existent config should fall back to template if available."""
@@ -251,6 +258,7 @@ class TestSetBidsParamsExtended:
 # _add_no_eyetrack_annotations
 # ---------------------------------------------------------------------------
 
+
 class TestAddNoEyetrackAnnotations:
     def test_adds_annotations_when_eye_shorter(self):
         """If eye data doesn't cover full raw, annotate the gap."""
@@ -258,8 +266,9 @@ class TestAddNoEyetrackAnnotations:
         raw = mne.io.RawArray(np.zeros((1, 3000)), info)  # 30s
 
         # Eye covers 5s to 25s of raw time
-        _add_no_eyetrack_annotations(raw, zero_ord=5.0, first_ord=1.0,
-                                     eye_original_duration=20.0)
+        _add_no_eyetrack_annotations(
+            raw, zero_ord=5.0, first_ord=1.0, eye_original_duration=20.0
+        )
 
         descs = list(raw.annotations.description)
         assert "no_eyetrack" in descs
@@ -269,8 +278,9 @@ class TestAddNoEyetrackAnnotations:
         info = mne.create_info(["ch1"], 100.0, ["mag"])
         raw = mne.io.RawArray(np.zeros((1, 3000)), info)  # 30s
 
-        _add_no_eyetrack_annotations(raw, zero_ord=0.0, first_ord=1.0,
-                                     eye_original_duration=35.0)
+        _add_no_eyetrack_annotations(
+            raw, zero_ord=0.0, first_ord=1.0, eye_original_duration=35.0
+        )
 
         descs = list(raw.annotations.description)
         assert "no_eyetrack" not in descs
@@ -279,6 +289,7 @@ class TestAddNoEyetrackAnnotations:
 # ---------------------------------------------------------------------------
 # _set_eyetrack_channel_types
 # ---------------------------------------------------------------------------
+
 
 class TestSetEyetrackChannelTypes:
     def test_drops_din_channel(self):
@@ -299,6 +310,7 @@ class TestSetEyetrackChannelTypes:
 # ---------------------------------------------------------------------------
 # _create_eye_feature_channels
 # ---------------------------------------------------------------------------
+
 
 class TestCreateEyeFeatureChannels:
     def test_adds_nmf_channels(self):

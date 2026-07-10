@@ -27,6 +27,7 @@ from custom.preprocessing.bad_channels import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def bad_ch_cfg(tmp_path):
     """Config appropriate for bad channel detection."""
@@ -48,6 +49,7 @@ def bad_ch_cfg(tmp_path):
 # ---------------------------------------------------------------------------
 # Detectors — core per-recording logic
 # ---------------------------------------------------------------------------
+
 
 class TestDetectBadChannels:
     """Test the detectors on synthetic data."""
@@ -71,9 +73,7 @@ class TestDetectBadChannels:
         # Consensus of >=2 detectors on iid data should confirm nothing.
         assert len(confirmed) == 0
 
-    def test_filtering_applied_before_detection(
-        self, raw_with_bad_channel, bad_ch_cfg
-    ):
+    def test_filtering_applied_before_detection(self, raw_with_bad_channel, bad_ch_cfg):
         """Detection should use data filtered at cfg.l_freq / h_freq."""
         bad_ch_cfg.l_freq = 5.0
         bad_ch_cfg.h_freq = 40.0
@@ -87,6 +87,7 @@ class TestDetectBadChannels:
 # ---------------------------------------------------------------------------
 # Time-resolved detector — intermittent bad channels
 # ---------------------------------------------------------------------------
+
 
 class TestTimeResolvedDetection:
     """The time-resolved detector should catch intermittent bad channels."""
@@ -140,7 +141,7 @@ class TestTimeResolvedDetection:
             n_windows, size=int(bad_frac * n_windows), replace=False
         )
         for w in bad_windows:
-            data[2, w * win:(w + 1) * win] *= 6.0
+            data[2, w * win : (w + 1) * win] *= 6.0
         return mne.io.RawArray(data, info)
 
     def test_full_gesd_misses_intermittent(self, bad_ch_cfg):
@@ -159,6 +160,7 @@ class TestTimeResolvedDetection:
 # ---------------------------------------------------------------------------
 # Consensus voting
 # ---------------------------------------------------------------------------
+
 
 class TestConsensusVoting:
     """Test _combine_votes confirmed/candidate split."""
@@ -189,6 +191,7 @@ class TestConsensusVoting:
 # Candidates sidecar — written here, consumed by manual_channel
 # ---------------------------------------------------------------------------
 
+
 class TestCandidatesSidecar:
     """Single-method flags are written to a sidecar and not auto-marked."""
 
@@ -208,6 +211,7 @@ class TestCandidatesSidecar:
         assert sidecar.exists()
 
         import pandas as pd
+
         df = pd.read_csv(sidecar, sep="\t")
         assert set(df["channel"]) == {"MEG004", "MEG006"}
 
@@ -228,6 +232,7 @@ class TestCandidatesSidecar:
 # ---------------------------------------------------------------------------
 # run() method — accumulation across tasks
 # ---------------------------------------------------------------------------
+
 
 class TestBadChannelsRun:
     """Test run() method accumulates bads across tasks."""
@@ -269,6 +274,7 @@ class TestBadChannelsRun:
 # ---------------------------------------------------------------------------
 # load_data — mocked BIDS I/O
 # ---------------------------------------------------------------------------
+
 
 class TestBadChannelsLoadData:
     """Test load_data with mocked path-resolution calls."""
@@ -318,6 +324,7 @@ class TestBadChannelsLoadData:
 # ---------------------------------------------------------------------------
 # save_results — mocked BIDS I/O
 # ---------------------------------------------------------------------------
+
 
 class TestBadChannelsSaveResults:
     """Test save_results merges bads and calls write_raw_bids_custom_step."""
@@ -370,6 +377,7 @@ class TestBadChannelsSaveResults:
 # ---------------------------------------------------------------------------
 # Module-level run(cfg) entry point
 # ---------------------------------------------------------------------------
+
 
 class TestBadChannelsModuleRun:
     """Test the module-level run(cfg) function."""

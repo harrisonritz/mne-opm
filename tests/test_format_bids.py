@@ -31,6 +31,7 @@ from custom.format_bids import (
 # Constants
 # ---------------------------------------------------------------------------
 
+
 class TestDefaults:
     def test_screen_resolution(self):
         assert _DEFAULT_SCREEN_RESOLUTION == (1920, 1080)
@@ -47,6 +48,7 @@ class TestDefaults:
 # ---------------------------------------------------------------------------
 # _build_file_tree
 # ---------------------------------------------------------------------------
+
 
 class TestBuildFileTree:
     def test_nonexistent_dir(self, tmp_path):
@@ -99,6 +101,7 @@ class TestBuildFileTree:
 # set_bids_params
 # ---------------------------------------------------------------------------
 
+
 class TestSetBidsParams:
     def test_defaults_without_config(self):
         cfg = set_bids_params("")
@@ -118,6 +121,7 @@ class TestSetBidsParams:
 # ---------------------------------------------------------------------------
 # validate_raw_folder
 # ---------------------------------------------------------------------------
+
 
 class TestValidateRawFolder:
     def test_missing_subject_folder_raises(self, tmp_path):
@@ -173,6 +177,7 @@ class TestValidateRawFolder:
 # convert_triggers
 # ---------------------------------------------------------------------------
 
+
 class TestConvertTriggers:
     @pytest.fixture()
     def raw_with_triggers(self):
@@ -214,9 +219,7 @@ class TestConvertTriggers:
         # Trigger Combined and individual trigger channels should be gone
         assert "Trigger Combined" not in raw_out.ch_names
         stim_chs = [ch for ch in raw_out.ch_names if ch.startswith("Trigger")]
-        assert len(stim_chs) == 0, (
-            f"Stim channels should be dropped, found: {stim_chs}"
-        )
+        assert len(stim_chs) == 0, f"Stim channels should be dropped, found: {stim_chs}"
 
     def test_creates_annotations(self, raw_with_triggers):
         cfg = SimpleNamespace(
@@ -241,6 +244,7 @@ class TestConvertTriggers:
 # ---------------------------------------------------------------------------
 # _interpolate_nans
 # ---------------------------------------------------------------------------
+
 
 class TestInterpolateNans:
     def test_no_nans(self):
@@ -289,6 +293,7 @@ class TestInterpolateNans:
 # _get_head_pos_channels
 # ---------------------------------------------------------------------------
 
+
 class TestGetHeadPosChannels:
     def test_all_present(self):
         info = mne.create_info(
@@ -312,6 +317,7 @@ class TestGetHeadPosChannels:
 # _annotation_to_timeseries
 # ---------------------------------------------------------------------------
 
+
 class TestAnnotationToTimeseries:
     def test_basic_conversion(self):
         info = mne.create_info(["ch1"], 100.0, ["eog"])
@@ -334,6 +340,7 @@ class TestAnnotationToTimeseries:
 # ---------------------------------------------------------------------------
 # _match_lengths
 # ---------------------------------------------------------------------------
+
 
 class TestMatchLengths:
     def test_eye_shorter_gets_padded(self):
@@ -364,6 +371,7 @@ class TestMatchLengths:
 # ---------------------------------------------------------------------------
 # _reset_first_samp
 # ---------------------------------------------------------------------------
+
 
 class TestResetFirstSamp:
     def test_first_samp_is_zero(self):

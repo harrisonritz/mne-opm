@@ -19,6 +19,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_info(
     n_meg: int = 10,
     n_ref: int = 3,
@@ -75,6 +76,7 @@ def _make_info(
 # Fixtures — small synthetic objects
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def rng():
     """Deterministic NumPy random state."""
@@ -117,13 +119,15 @@ def epochs_meg(raw_meg) -> mne.Epochs:
     """Create 5 synthetic epochs from raw_meg (2 s each, no overlap)."""
     sfreq = raw_meg.info["sfreq"]
     # Create events every 2 seconds starting at t=0
-    events = np.array(
-        [[int(i * 2 * sfreq), 0, 1] for i in range(5)]
-    )
+    events = np.array([[int(i * 2 * sfreq), 0, 1] for i in range(5)])
     return mne.Epochs(
-        raw_meg, events, event_id={"stim": 1},
-        tmin=0, tmax=1.0 - 1 / sfreq,
-        baseline=None, preload=True,
+        raw_meg,
+        events,
+        event_id={"stim": 1},
+        tmin=0,
+        tmax=1.0 - 1 / sfreq,
+        baseline=None,
+        preload=True,
     )
 
 
@@ -136,6 +140,7 @@ def tmp_dir(tmp_path) -> Path:
 # ---------------------------------------------------------------------------
 # Fixtures — config SimpleNamespace
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def base_cfg(tmp_dir) -> SimpleNamespace:
@@ -157,6 +162,7 @@ def base_cfg(tmp_dir) -> SimpleNamespace:
 # ---------------------------------------------------------------------------
 # Fixtures — synthetic data with injected artifacts
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def raw_with_bad_channel(meg_info, rng) -> mne.io.RawArray:

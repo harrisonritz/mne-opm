@@ -100,7 +100,6 @@ class CoregAnalysis(BaseAnalysis):
     DEFAULT_OMIT_DISTANCE: float = 2.5 / 1e3  # 2.5mm in meters
     """Default distance threshold for omitting head shape points."""
 
-
     def is_enabled(self) -> bool:
         """Check if coregistration is enabled.
 
@@ -160,7 +159,9 @@ class CoregAnalysis(BaseAnalysis):
             parts = fs_subject.split("_ses-")
             subject = parts[0].replace("sub-", "")
             session = parts[1] if len(parts) > 1 else session_raw
-            self.log(f"Parsed FreeSurfer format: {fs_subject} -> subject={subject}, session={session}")
+            self.log(
+                f"Parsed FreeSurfer format: {fs_subject} -> subject={subject}, session={session}"
+            )
         else:
             # MNE format: just the subject number - ensure zero-padding to 3 digits
             subject = str(subject_raw).lstrip("0") or "0"  # normalize first
@@ -292,28 +293,31 @@ class CoregAnalysis(BaseAnalysis):
         # Create coregistration object
         self.log("Running automatic coregistration...")
         coreg = mne.coreg.Coregistration(
-            info, fs_subject, subjects_dir, fiducials="auto",
+            info,
+            fs_subject,
+            subjects_dir,
+            fiducials="auto",
         )
 
         # Fit fiducials
         coreg.set_scale_mode(None)
 
         coreg.fit_fiducials(
-            lpa_weight = 5.0,
-            nasion_weight = 10.0,
-            rpa_weight = 5.0,
+            lpa_weight=5.0,
+            nasion_weight=10.0,
+            rpa_weight=5.0,
             verbose=True,
         )
 
         coreg.omit_head_shape_points(distance=omit_distance)
-        
+
         coreg.fit_icp(
-            lpa_weight = 5.0,
-            nasion_weight = 10.0,
-            rpa_weight = 5.0,
-            n_iterations=100, 
+            lpa_weight=5.0,
+            nasion_weight=10.0,
+            rpa_weight=5.0,
+            n_iterations=100,
             verbose=True,
-            )
+        )
 
         # Final distance report
         final_dists = coreg.compute_dig_mri_distances() * 1e3
@@ -324,13 +328,13 @@ class CoregAnalysis(BaseAnalysis):
 
         # Save Trans file
         trans_path = os.path.join(
-                    subjects_dir, fs_subject, "bem", f"{fs_subject}-trans.fif"
-                )
+            subjects_dir, fs_subject, "bem", f"{fs_subject}-trans.fif"
+        )
         mne.write_trans(
-            fname=trans_path, 
+            fname=trans_path,
             trans=coreg.trans,
             overwrite=True,
-            )
+        )
         self.log(f"Saved Trans file to {trans_path}")
 
         return {
@@ -398,7 +402,6 @@ class CoregAnalysis(BaseAnalysis):
         )
 
         self.log(f"Saved T1w with landmarks to {t1w_bids_path}")
-
 
 
 def run(cfg: SimpleNamespace) -> None:

@@ -42,6 +42,7 @@ from custom.preprocessing._io import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_raw_with_events(
     n_meg: int = 10,
     sfreq: float = 300.0,
@@ -115,8 +116,7 @@ def _make_raw_with_events(
     # Create annotations at uniform intervals
     annotations = mne.Annotations(
         onset=[
-            (i + 1) * duration_sec / (n_trial_events + 1)
-            for i in range(n_trial_events)
+            (i + 1) * duration_sec / (n_trial_events + 1) for i in range(n_trial_events)
         ],
         duration=[0.0] * n_trial_events,
         description=[
@@ -170,6 +170,7 @@ def _count_trial_events(events_df: pd.DataFrame) -> int:
 # Tests: write_raw_bids_preserve_events utility
 # ---------------------------------------------------------------------------
 
+
 class TestWriteRawBidsPreserveEvents:
     """Verify that write_raw_bids_preserve_events keeps events.tsv intact."""
 
@@ -200,7 +201,8 @@ class TestWriteRawBidsPreserveEvents:
         restored_df = _read_events_tsv(bp)
 
         pd.testing.assert_frame_equal(
-            original_df, restored_df,
+            original_df,
+            restored_df,
             obj="events.tsv after preserve-events rewrite",
         )
 
@@ -289,6 +291,7 @@ class TestWriteRawBidsPreserveEvents:
 # Tests: event count stability across simulated pipeline
 # ---------------------------------------------------------------------------
 
+
 class TestEventCountStability:
     """Simulate the read → modify → write cycle that preprocessing steps
     perform and verify event counts remain stable."""
@@ -330,9 +333,7 @@ class TestEventCountStability:
             raw_read = mne_bids.read_raw_bids(bp)
             raw_read.load_data()
             # Each step might add a BAD annotation
-            raw_read.annotations.append(
-                float(i + 1) * 2, 0.5, f"bad_segment_pass{i}"
-            )
+            raw_read.annotations.append(float(i + 1) * 2, 0.5, f"bad_segment_pass{i}")
             bp.split = None
             write_raw_bids_preserve_events(
                 raw=raw_read,
@@ -376,6 +377,7 @@ class TestEventCountStability:
 # Tests: stim channel removal in format_bids
 # ---------------------------------------------------------------------------
 
+
 class TestStimChannelDrop:
     """Verify that convert_triggers drops stim channels, preventing
     event re-discovery on later write_raw_bids calls."""
@@ -416,6 +418,7 @@ class TestStimChannelDrop:
 # Tests: metadata ↔ BIDS event alignment
 # ---------------------------------------------------------------------------
 
+
 class TestMetadataAlignment:
     """Tests verifying that metadata row counts match BIDS trial events.
 
@@ -435,14 +438,15 @@ class TestMetadataAlignment:
         n_bids_trials = _count_trial_events(events_df)
 
         # Simulate metadata with exactly n_trials rows
-        metadata = pd.DataFrame({
-            "word": [f"word_{i}" for i in range(n_trials)],
-            "condition": ["A", "B"] * (n_trials // 2),
-        })
+        metadata = pd.DataFrame(
+            {
+                "word": [f"word_{i}" for i in range(n_trials)],
+                "condition": ["A", "B"] * (n_trials // 2),
+            }
+        )
 
         assert len(metadata) == n_bids_trials, (
-            f"Metadata rows ({len(metadata)}) != "
-            f"BIDS trial events ({n_bids_trials})"
+            f"Metadata rows ({len(metadata)}) != BIDS trial events ({n_bids_trials})"
         )
 
     def test_metadata_mismatch_after_corruption(self, tmp_path):
@@ -486,9 +490,7 @@ class TestMetadataAlignment:
         raw = _make_raw_with_events(n_trial_events=n_trials)
         bp = _write_initial_bids(raw, tmp_path / "bids")
 
-        metadata = pd.DataFrame({
-            "word": [f"word_{i}" for i in range(n_trials)]
-        })
+        metadata = pd.DataFrame({"word": [f"word_{i}" for i in range(n_trials)]})
 
         # Simulate 3 pipeline steps
         for _ in range(3):
@@ -515,6 +517,7 @@ class TestMetadataAlignment:
 # ---------------------------------------------------------------------------
 # Tests: events.json preservation
 # ---------------------------------------------------------------------------
+
 
 class TestEventsJsonPreservation:
     """Verify that events.json sidecar is also preserved."""
@@ -561,8 +564,10 @@ class TestEventCountHelpers:
         raw = _make_raw_with_events(
             n_trial_events=12,
             event_descriptions=[
-                "trial/read_read", "trial/listen_listen",
-                "feedback", "ITI",
+                "trial/read_read",
+                "trial/listen_listen",
+                "feedback",
+                "ITI",
             ],
         )
         n, names = count_condition_events_in_raw(raw, ["trial"])
@@ -613,9 +618,7 @@ class TestVerifyEventCountAfterWrite:
         raw_extra.annotations.append(16.0, 0.0, "trial/extra")
 
         with pytest.raises(RuntimeError, match="Event-count mismatch"):
-            verify_event_count_after_write(
-                raw_extra, bp, ("trial",), context="test"
-            )
+            verify_event_count_after_write(raw_extra, bp, ("trial",), context="test")
 
     def test_raises_when_tsv_disagrees_with_fif(self, tmp_path):
         """Mismatch between FIF and events.tsv at the same path raises."""
@@ -632,9 +635,7 @@ class TestVerifyEventCountAfterWrite:
         pd.concat([df, extra], ignore_index=True).to_csv(tsv, sep="\t", index=False)
 
         with pytest.raises(RuntimeError, match="Event-count mismatch"):
-            verify_event_count_after_write(
-                raw, bp, ("trial",), context="test"
-            )
+            verify_event_count_after_write(raw, bp, ("trial",), context="test")
 
 
 class TestWriteCustomStepInvokesVerification:
@@ -655,7 +656,9 @@ class TestWriteCustomStepInvokesVerification:
         cfg = SimpleNamespace(
             bids_root=str(tmp_path / "bids"),
             deriv_root=str(tmp_path / "deriv"),
-            subjects=["001"], sessions=["01"], task="test",
+            subjects=["001"],
+            sessions=["01"],
+            task="test",
             custom_proc="init",
             conditions=["trial"],
         )

@@ -26,6 +26,7 @@ from custom.run_beamformer import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def beamformer_cfg():
     """Standard beamformer config namespace."""
@@ -54,6 +55,7 @@ def beamformer_cfg():
 # ---------------------------------------------------------------------------
 # compute_lcmv_filters — parameter validation
 # ---------------------------------------------------------------------------
+
 
 class TestComputeLcmvFiltersValidation:
     """Test that invalid parameters raise appropriate errors."""
@@ -123,8 +125,10 @@ class TestComputeLcmvFiltersValidation:
     def test_none_noise_cov_creates_adhoc(self, beamformer_cfg):
         """When noise_cov is None, an ad-hoc covariance should be created."""
         info = mne.create_info(["MEG001"], 300.0, ["mag"])
-        with patch("custom.run_beamformer.make_lcmv") as mock_lcmv, \
-             patch("custom.run_beamformer.mne.make_ad_hoc_cov") as mock_adhoc:
+        with (
+            patch("custom.run_beamformer.make_lcmv") as mock_lcmv,
+            patch("custom.run_beamformer.mne.make_ad_hoc_cov") as mock_adhoc,
+        ):
             mock_adhoc.return_value = MagicMock()
             mock_lcmv.return_value = {"mock": "filters"}
             compute_lcmv_filters(
@@ -159,6 +163,7 @@ class TestComputeLcmvFiltersValidation:
 # run_beamformer_timecourse
 # ---------------------------------------------------------------------------
 
+
 class TestRunBeamformerTimecourse:
     """Test time-locked beamformer analysis data flow."""
 
@@ -183,9 +188,7 @@ class TestRunBeamformerTimecourse:
                 mock_stc.data = np.zeros((10, 100))
                 mock_apply.return_value = mock_stc
 
-                stcs = run_beamformer_timecourse(
-                    epochs, MagicMock(), beamformer_cfg
-                )
+                stcs = run_beamformer_timecourse(epochs, MagicMock(), beamformer_cfg)
 
         assert "stim" in stcs
         assert "nonexistent" not in stcs
@@ -211,9 +214,7 @@ class TestRunBeamformerTimecourse:
                 mock_stc.data = np.zeros((5, 100))
                 mock_apply.return_value = mock_stc
 
-                stcs = run_beamformer_timecourse(
-                    epochs, MagicMock(), beamformer_cfg
-                )
+                stcs = run_beamformer_timecourse(epochs, MagicMock(), beamformer_cfg)
 
         assert isinstance(stcs, dict)
         assert "stim" in stcs
@@ -222,6 +223,7 @@ class TestRunBeamformerTimecourse:
 # ---------------------------------------------------------------------------
 # run_beamformer_power
 # ---------------------------------------------------------------------------
+
 
 class TestRunBeamformerPower:
     """Test power beamformer analysis data flow."""
@@ -237,17 +239,17 @@ class TestRunBeamformerPower:
         beamformer_cfg.conditions = ["stim", "nonexistent"]
         beamformer_cfg.contrasts = []
 
-        with patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply, \
-             patch("custom.run_beamformer.mne.compute_covariance") as mock_cov:
+        with (
+            patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply,
+            patch("custom.run_beamformer.mne.compute_covariance") as mock_cov,
+        ):
             mock_stc = MagicMock()
             mock_stc.data = np.zeros((5, 1))
             mock_stc.copy.return_value = MagicMock(data=np.zeros((5, 1)))
             mock_apply.return_value = mock_stc
             mock_cov.return_value = MagicMock()
 
-            stcs = run_beamformer_power(
-                epochs, MagicMock(), beamformer_cfg
-            )
+            stcs = run_beamformer_power(epochs, MagicMock(), beamformer_cfg)
 
         # 'stim' should succeed, 'nonexistent' should be skipped
         assert "stim" in stcs
@@ -258,6 +260,7 @@ class TestRunBeamformerPower:
 # ---------------------------------------------------------------------------
 # save_beamformer_results
 # ---------------------------------------------------------------------------
+
 
 class TestSaveBeamformerResults:
     """Test result saving logic."""
@@ -270,9 +273,7 @@ class TestSaveBeamformerResults:
 
         with patch("custom.run_beamformer.sanitize_cond_name") as mock_san:
             mock_san.return_value = "stim"
-            out = save_beamformer_results(
-                beamformer_cfg, MagicMock(), stcs, "time"
-            )
+            out = save_beamformer_results(beamformer_cfg, MagicMock(), stcs, "time")
 
         assert "stim" in out
         mock_stc.save.assert_called_once()

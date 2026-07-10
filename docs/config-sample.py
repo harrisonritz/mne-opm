@@ -37,12 +37,12 @@ import pandas as pd
 # config is loaded; they locate your data on disk.
 # ================================================================
 
-ROOT_DIR     = f"{os.environ.get('ROOT_DIR')}"      # repo root
-EXPERIMENT   = f"{os.environ.get('EXPERIMENT')}"    # task name (= BIDS task label)
-BIDS_DIR     = f"{os.environ.get('BIDS_DIR')}"      # BIDS root directory
-RAW_DIR      = f"{os.environ.get('RAW_DIR')}"       # raw / unprocessed data
+ROOT_DIR = f"{os.environ.get('ROOT_DIR')}"  # repo root
+EXPERIMENT = f"{os.environ.get('EXPERIMENT')}"  # task name (= BIDS task label)
+BIDS_DIR = f"{os.environ.get('BIDS_DIR')}"  # BIDS root directory
+RAW_DIR = f"{os.environ.get('RAW_DIR')}"  # raw / unprocessed data
 SUBJECTS_DIR = f"{os.environ.get('SUBJECTS_DIR')}"  # FreeSurfer SUBJECTS_DIR
-SUBJECT      = f"{os.environ.get('SUBJECT')}"       # current subject ID
+SUBJECT = f"{os.environ.get('SUBJECT')}"  # current subject ID
 
 
 # %% ============================================================
@@ -56,12 +56,12 @@ SUBJECT      = f"{os.environ.get('SUBJECT')}"       # current subject ID
 # derivatives folder.  Increment it when changing any parameter that would
 # produce different output files (filter settings, epoch window, ICA, etc.)
 # so that old results are not silently overwritten.
-_version = "sample"   # ← bump this to start a fresh derivatives folder
+_version = "sample"  # ← bump this to start a fresh derivatives folder
 
 # Full analysis name: used as the derivatives sub-directory name.
 # Format: <ANALYSIS env var>__<version tag>
 _ANALYSIS_NAME = f"{os.environ.get('ANALYSIS')}__{_version}"
-print(f'\n[loading configuration]: {_ANALYSIS_NAME}')
+print(f"\n[loading configuration]: {_ANALYSIS_NAME}")
 
 # Primary spatial filter method.  Exactly one of {"maxwell", "HFC", "ZCA", "none"}.
 # Controls which spatial filter is applied during preprocessing.
@@ -120,11 +120,11 @@ _channel_metrics = [
     "psd",
 ]
 _bad_channel_significance_level = 0.05  # family-wise GESD alpha (+ per-window alpha)
-_bad_channel_window_sec = 2.0           # window length (s) for logit_outlier_frac
-_bad_channel_psd_fmin = 1.0             # PSD metric frequency band (Hz)
+_bad_channel_window_sec = 2.0  # window length (s) for logit_outlier_frac
+_bad_channel_psd_fmin = 1.0  # PSD metric frequency band (Hz)
 _bad_channel_psd_fmax = 80.0
-_bad_channel_psd_nfft = 2000            # PSD metric FFT length
-_bad_channel_lof_neighbors = 16         # LOF neighbours
+_bad_channel_psd_nfft = 2000  # PSD metric FFT length
+_bad_channel_lof_neighbors = 16  # LOF neighbours
 
 
 # %% ============================================================
@@ -141,8 +141,8 @@ task = EXPERIMENT
 # Epoch conditions to include.  Matched against the 'trial_type' column in the
 # BIDS events.tsv file.
 conditions = [
-    'standard_onset',   # EXAMPLE — trigger 1
-    'deviant_onset',    # EXAMPLE — trigger 2
+    "standard_onset",  # EXAMPLE — trigger 1
+    "deviant_onset",  # EXAMPLE — trigger 2
 ]
 
 # Contrasts define linear combinations of epoch sub-populations for evoked and
@@ -151,7 +151,11 @@ conditions = [
 #   conditions : list of condition labels (or metadata query strings)
 #   weights    : linear weights summing to 0 (positive = "signal")
 contrasts = [
-    {'name': 'MMN', 'conditions': ['deviant_onset', 'standard_onset'], 'weights': [1.0, -1.0]},
+    {
+        "name": "MMN",
+        "conditions": ["deviant_onset", "standard_onset"],
+        "weights": [1.0, -1.0],
+    },
 ]
 
 
@@ -160,8 +164,8 @@ contrasts = [
 # ================================================================
 
 # Time window around the locking event (seconds).
-epochs_tmin = -0.5   # pre-stimulus baseline start
-epochs_tmax =  0.8   # post-stimulus end
+epochs_tmin = -0.5  # pre-stimulus baseline start
+epochs_tmax = 0.8  # post-stimulus end
 
 # Pre-stimulus baseline correction applied to evoked responses.
 #   None              : no baseline correction
@@ -189,15 +193,19 @@ _raw_sync_regex = "trial"
 
 if not _load_metadata:
     epochs_custom_metadata = None
-    print('    - metadata: skipped (_load_metadata=False)')
+    print("    - metadata: skipped (_load_metadata=False)")
 else:
-    _metadata_dir = os.path.join(RAW_DIR, f'*_{SUBJECT}', 'metadata', f'sub-{SUBJECT}_*.csv')
+    _metadata_dir = os.path.join(
+        RAW_DIR, f"*_{SUBJECT}", "metadata", f"sub-{SUBJECT}_*.csv"
+    )
     _metadata_path = glob(_metadata_dir)
     assert len(_metadata_path) > 0, f"no metadata found at {_metadata_dir}"
     _meta_df = pd.read_csv(sorted(_metadata_path)[0])
     _meta_df = _meta_df.replace({np.nan: None})
     epochs_custom_metadata = _meta_df
-    print(f'    - metadata ready: {len(_meta_df)} rows, {len(_meta_df.columns)} columns')
+    print(
+        f"    - metadata ready: {len(_meta_df)} rows, {len(_meta_df.columns)} columns"
+    )
     del _meta_df
 
 
@@ -210,21 +218,21 @@ else:
 interactive = False
 
 # Number of parallel workers.  Reads from MAX_WORKERS env var; defaults to 1.
-n_jobs = int(os.environ.get('MAX_WORKERS', 1))
+n_jobs = int(os.environ.get("MAX_WORKERS", 1))
 
 # Process the empty-room recording through the same preprocessing steps as
 # the experimental data.  Required when noise_cov = 'emptyroom'.
 process_empty_room = True
 
 # mne_bids_pipeline output goes here:
-bids_root    = BIDS_DIR
-deriv_root   = f'{bids_root}/derivatives/{_ANALYSIS_NAME}'
+bids_root = BIDS_DIR
+deriv_root = f"{bids_root}/derivatives/{_ANALYSIS_NAME}"
 subjects_dir = SUBJECTS_DIR
 
 # Which subjects / sessions / channel types to process
 subjects = [SUBJECT]
-sessions = ['01']
-ch_types = ['mag']   # OPM sensors are magnetometers
+sessions = ["01"]
+ch_types = ["mag"]  # OPM sensors are magnetometers
 
 
 # %% ============================================================
@@ -251,7 +259,7 @@ elif _spatial_filter.lower() != "none":
         f'Unknown _spatial_filter value: "{_spatial_filter}". '
         f'Must be one of: "maxwell", "HFC", "ZCA", "none".'
     )
-print(f'    - spatial filter: {_spatial_filter}')
+print(f"    - spatial filter: {_spatial_filter}")
 
 # -- HFC parameters --
 # Spherical harmonic order for homogeneous field correction.
@@ -259,28 +267,28 @@ print(f'    - spatial filter: {_spatial_filter}')
 _hfc_order = 3
 
 # -- ZCA parameters (only used when _spatial_filter == "ZCA") --
-_zca_method    = 'zca'   # toggle between 'zca' and 'gedai'
-_zca_ext_order = 3       # external SSS order used to form the GED noise basis
-_zca_threshold = 0.50    # GED eigenvalue threshold for ZCA component selection
+_zca_method = "zca"  # toggle between 'zca' and 'gedai'
+_zca_ext_order = 3  # external SSS order used to form the GED noise basis
+_zca_threshold = 0.50  # GED eigenvalue threshold for ZCA component selection
 _gedai_threshold = 0.50  # absolute eigenvalue cutoff for GEDAI artifact identification
 
 # -- Maxwell filter parameters (only used when _spatial_filter == "maxwell") --
-mf_int_order     = 8       # internal multipole order
-mf_ext_order     = 3       # external multipole order
-mf_st_duration   = 60.0    # tSSS sliding-window duration (s); None = SSS only
-mf_st_correlation = 0.95   # tSSS subspace correlation threshold
-mf_reference_run = '01'    # reference run for multi-run head-position alignment
-mf_extra_kws     = {'ignore_ref': True, 'st_overlap': True}
-mf_esss          = 0       # extended SSS basis projectors (0 = disabled)
-mf_esss_reject   = None
-mf_cal_missing   = "warn"  # how to handle a missing calibration file
-mf_ctc_missing   = "warn"  # how to handle a missing cross-talk file
+mf_int_order = 8  # internal multipole order
+mf_ext_order = 3  # external multipole order
+mf_st_duration = 60.0  # tSSS sliding-window duration (s); None = SSS only
+mf_st_correlation = 0.95  # tSSS subspace correlation threshold
+mf_reference_run = "01"  # reference run for multi-run head-position alignment
+mf_extra_kws = {"ignore_ref": True, "st_overlap": True}
+mf_esss = 0  # extended SSS basis projectors (0 = disabled)
+mf_esss_reject = None
+mf_cal_missing = "warn"  # how to handle a missing calibration file
+mf_ctc_missing = "warn"  # how to handle a missing cross-talk file
 
 # Built-in flat / noisy channel detection is only meaningful with Maxwell
 # filtering (SSS can interpolate over bad channels).  Disabled for HFC/ZCA.
-find_flat_channels_meg  = use_maxwell_filter
+find_flat_channels_meg = use_maxwell_filter
 find_noisy_channels_meg = use_maxwell_filter
-find_bad_channels_extra_kws = {'ignore_ref': True}
+find_bad_channels_extra_kws = {"ignore_ref": True}
 
 
 # %% ============================================================
@@ -290,8 +298,8 @@ find_bad_channels_extra_kws = {'ignore_ref': True}
 # ================================================================
 
 _manual_channels = False  # pause to inspect bad channels interactively
-_auto_ica        = True   # run automated ICA component classification
-_manual_ica      = False  # pause for manual inspection / override of ICA labels
+_auto_ica = True  # run automated ICA component classification
+_manual_ica = False  # pause for manual inspection / override of ICA labels
 
 # Skip a pipeline step if its derivatives folder already exists (resume runs).
 _skip_on_deriv = True
@@ -316,14 +324,14 @@ _skip_on_deriv = True
 
 _bad_segments_params = {
     "1": {
-        "channel_threshold": 0.20,        # lenient — only gross artifacts
+        "channel_threshold": 0.20,  # lenient — only gross artifacts
         "noise_channel_threshold": 0.50,  # very lenient for noise
-        "segment_len_sec": 1.0,           # 1 s window (coarse)
+        "segment_len_sec": 1.0,  # 1 s window (coarse)
     },
     "2": {
-        "channel_threshold": 0.05,        # strict — fine cleanup
+        "channel_threshold": 0.05,  # strict — fine cleanup
         "noise_channel_threshold": 0.30,  # moderate for noise
-        "segment_len_sec": 0.5,           # 0.5 s window (fine)
+        "segment_len_sec": 0.5,  # 0.5 s window (fine)
     },
 }
 
@@ -333,9 +341,9 @@ _bad_segments_params = {
 # Regress out nuisance predictors from the data before decoding.
 # ================================================================
 
-_regress = False                                   # master switch
+_regress = False  # master switch
 _regress_preds = ["x_head", "y_head", "distance"]  # predictor channels / signals
-_regress_lags = 1                                  # delay-embedding lags (0 = none)
+_regress_lags = 1  # delay-embedding lags (0 = none)
 # The regress step also supports (optional, defaults shown):
 # _regress_timevarying = False   # sliding-window (time-varying) regression weights
 # _regress_window      = 100.0   # window size (ms) for time-varying regression
@@ -348,22 +356,22 @@ _regress_lags = 1                                  # delay-embedding lags (0 = n
 # ================================================================
 
 # -- Rest / break detection --
-find_breaks                              = True
-min_break_duration                       = 6    # minimum break length (s)
+find_breaks = True
+min_break_duration = 6  # minimum break length (s)
 t_break_annot_start_after_previous_event = 1.5  # buffer after last event (s)
-t_break_annot_stop_before_next_event     = 1.5  # buffer before next event (s)
+t_break_annot_stop_before_next_event = 1.5  # buffer before next event (s)
 
 # -- Bandpass filter (applied to raw before epoching) --
-l_freq = 1.0    # high-pass cut-off (Hz)
-h_freq = 40.0   # low-pass cut-off (Hz)
+l_freq = 1.0  # high-pass cut-off (Hz)
+h_freq = 40.0  # low-pass cut-off (Hz)
 # Blackman window — excellent stopband attenuation, minimal edge artefacts.
-bandpass_extra_kws = {'fir_window': 'blackman'}
+bandpass_extra_kws = {"fir_window": "blackman"}
 
 # -- Notch filter --
 # Set to a frequency (or list) to remove line noise; None = skip (preferred for
 # OPM when line noise is low).
-notch_freq      = None
-notch_extra_kws = {'method': 'spectrum_fit', 'fir_window': 'blackman'}
+notch_freq = None
+notch_extra_kws = {"method": "spectrum_fit", "fir_window": "blackman"}
 
 # Zapline (notch via DSS) — alternative to the MNE notch filter. Uncomment to use.
 # zapline_fline = 60.0
@@ -379,7 +387,7 @@ epochs_decim = 3
 # ================================================================
 
 # How to handle trials with duplicate events ("drop" or "merge").
-event_repeated = 'drop'
+event_repeated = "drop"
 
 # Peak-to-peak amplitude threshold for magnetometers (Tesla); epochs exceeding
 # this value are rejected.
@@ -393,22 +401,22 @@ reject = dict(mag=5e-12)
 # ================================================================
 
 # Apply ICA as the primary artifact-rejection step (rather than SSP).
-spatial_filter = 'ica'
+spatial_filter = "ica"
 
 # ICA decomposition algorithm.
 #   'picard-extended_infomax' : fast, robust; recommended for MEG.
 #   'picard' / 'fastica' / 'infomax' : alternatives.
-ica_algorithm = 'picard-extended_infomax'
+ica_algorithm = "picard-extended_infomax"
 
 # High-pass filter applied before ICA fitting (Hz). Must be >= l_freq.
 ica_l_freq = np.max([l_freq, 1.0])
 
-ica_max_iterations = 1024          # maximum ICA fitting iterations
-ica_n_components   = 64            # number of components (<= data rank)
-ica_decim          = epochs_decim  # decimation during ICA fitting
-ica_reject         = dict(mag=5e-12)  # peak-to-peak threshold for ICA-fit data
-ica_ecg_threshold  = 0.10          # correlation threshold for cardiac components
-ica_eog_threshold  = 3.0           # z-score threshold for ocular components
+ica_max_iterations = 1024  # maximum ICA fitting iterations
+ica_n_components = 64  # number of components (<= data rank)
+ica_decim = epochs_decim  # decimation during ICA fitting
+ica_reject = dict(mag=5e-12)  # peak-to-peak threshold for ICA-fit data
+ica_ecg_threshold = 0.10  # correlation threshold for cardiac components
+ica_eog_threshold = 3.0  # z-score threshold for ocular components
 
 # Disable mne-bids-pipeline's built-in EOG/ECG detection — ALL ICA component
 # selection is performed by the unified GESD in the custom auto_ica step, where
@@ -461,13 +469,13 @@ _ica_metrics = [
 decode = True
 
 # Time-generalisation matrix (train at each time, test at all times).
-decoding_time_generalization       = False
-decoding_time_generalization_decim = 5   # extra temporal decimation for the TGM
+decoding_time_generalization = False
+decoding_time_generalization_decim = 5  # extra temporal decimation for the TGM
 
 # Leave-One-Group-Out (LOGO) cross-validation — holds out one group at a time,
 # preventing temporal autocorrelation from inflating decoding accuracy.
-decoding_LOGO       = True
-decoding_LOGO_group = 'run'   # metadata column defining the CV group
+decoding_LOGO = True
+decoding_LOGO_group = "run"  # metadata column defining the CV group
 
 # Baseline period applied to epochs before decoding ((None, 0.0) = full
 # pre-stimulus window; None = no baseline).
@@ -507,7 +515,7 @@ decoding_csp = True
 #   'ad-hoc'    : diagonal ad-hoc covariance (no recording needed).
 # ================================================================
 
-noise_cov = 'emptyroom'
+noise_cov = "emptyroom"
 
 
 # %% ============================================================
@@ -522,7 +530,7 @@ freesurfer_verbose = True
 
 # Source-space type and resolution.
 #   'oct5' ~8 mm (coarse) | 'oct6' ~4 mm (standard) | 'oct7' ~2 mm (fine, slow)
-spacing = 'oct6'
+spacing = "oct6"
 
 # Minimum distance (mm) between sources and the inner skull surface.
 mindist = 5
@@ -531,7 +539,7 @@ mindist = 5
 adjust_coreg = False
 
 # Distributed inverse method: 'dSPM' | 'sLORETA' | 'eLORETA' | 'MNE'.
-inverse_method = 'dSPM'
+inverse_method = "dSPM"
 
 
 # %% ============================================================
@@ -540,7 +548,7 @@ inverse_method = 'dSPM'
 # location while suppressing all others.  Well-suited to OPM-MEG.
 # ================================================================
 
-_run_beamformer = True   # master switch
+_run_beamformer = True  # master switch
 
 # Regularisation added to the data covariance before inversion (0.01–0.10).
 _beamformer_reg = 0.05
@@ -549,14 +557,14 @@ _beamformer_reg = 0.05
 #   'max-power' : optimise orientation for maximum power (scalar beamformer)
 #   'vector'    : return all three dipole orientations (vector beamformer)
 #   None        : fixed orientation from the forward model
-_beamformer_pick_ori = 'max-power'
+_beamformer_pick_ori = "max-power"
 
 # Weight normalisation.
 #   'unit-noise-gain'           : corrects depth bias (scalar)
 #   'nai'                       : Neural Activity Index (scalar)
 #   'unit-noise-gain-invariant' : orientation-invariant (vector only)
 #   None                        : no normalisation
-_beamformer_weight_norm = 'nai'
+_beamformer_weight_norm = "nai"
 
 # Depth-bias compensation via forward-model weighting (0.0 none | 0.8 standard
 # | None when weight_norm is set).  Cancels out for two-condition contrasts.
@@ -566,22 +574,22 @@ _beamformer_depth = 0.8
 #   'info' : infer from the Info object (recommended)
 #   dict   : explicit per-channel-type rank, e.g. {'mag': 64}
 #   None   : auto-detect via SVD
-_beamformer_rank = 'info'
+_beamformer_rank = "info"
 
 # What the beamformer operates on.
 #   'time'  : evoked response (time-domain output)
 #   'power' : data covariance (power / envelope output)
 #   'both'  : both
-_beamformer_output_type = 'time'
+_beamformer_output_type = "time"
 
 # Time window for power-mode covariance estimation (s, relative to epoch onset).
 _beamformer_power_tmin = 0.0
 _beamformer_power_tmax = epochs_tmax
 
 # Bookkeeping / reporting.
-_beamformer_save_filters         = True  # persist filter weights for re-use
-_beamformer_add_to_report        = True  # include source maps in the HTML report
-_beamformer_report_n_time_points = 51    # frames in the report source-map animation
+_beamformer_save_filters = True  # persist filter weights for re-use
+_beamformer_add_to_report = True  # include source maps in the HTML report
+_beamformer_report_n_time_points = 51  # frames in the report source-map animation
 
 
 # %% ============================================================
@@ -591,40 +599,44 @@ _beamformer_report_n_time_points = 51    # frames in the report source-map anima
 # under {deriv_root}/sub-XX/ses-YY/meg/coreg_diagnostics/.  No GUI required.
 # ================================================================
 
-_run_coreg_diagnostics = True   # master switch
+_run_coreg_diagnostics = True  # master switch
 
 # Per-section toggles.
-_coreg_diag_run_alignment   = True
-_coreg_diag_run_bem         = True
-_coreg_diag_run_headpoint   = True
+_coreg_diag_run_alignment = True
+_coreg_diag_run_bem = True
+_coreg_diag_run_headpoint = True
 _coreg_diag_run_sensitivity = True
 
 # Output formats.  3D figures are always saved as PNG regardless of this list.
-_coreg_diag_output_formats = ['png']   # any subset of {'png','pdf','svg'}
-_coreg_diag_dpi            = 200
-_coreg_diag_figsize        = (10, 10)
+_coreg_diag_output_formats = ["png"]  # any subset of {'png','pdf','svg'}
+_coreg_diag_dpi = 200
+_coreg_diag_figsize = (10, 10)
 
 # Alignment views to render — keys of the _VIEWS dict in coreg_diagnostics.py.
 # Available: 'frontal', 'posterior', 'lateral_left', 'lateral_right',
 # 'superior', 'oblique'.
 _coreg_diag_alignment_views = [
-    'frontal', 'posterior', 'lateral_left',
-    'lateral_right', 'superior', 'oblique',
+    "frontal",
+    "posterior",
+    "lateral_left",
+    "lateral_right",
+    "superior",
+    "oblique",
 ]
 
 # 360° rotating-azimuth GIF of the alignment scene.  Off by default — slow.
 _coreg_diag_make_gif = False
 
 # mne.sensitivity_map(...) modes to compute, per ch_type in cfg.ch_types.
-_coreg_diag_sensitivity_modes = ['free', 'radiality']
+_coreg_diag_sensitivity_modes = ["free", "radiality"]
 
 # Use nilearn for richer BEM-on-T1 contour overlays.
 _coreg_diag_use_nilearn = True
 
 # On-the-fly forward-solution fallback (only used if no *-fwd.fif is found).
-_coreg_diag_bem_conductivity = (0.3,)   # single-shell, appropriate for MEG
-_coreg_diag_bem_ico          = 4
-_coreg_diag_src_spacing      = 'oct6'
+_coreg_diag_bem_conductivity = (0.3,)  # single-shell, appropriate for MEG
+_coreg_diag_bem_ico = 4
+_coreg_diag_src_spacing = "oct6"
 
 
 # %% ============================================================
@@ -634,7 +646,7 @@ _coreg_diag_src_spacing      = 'oct6'
 # with Leave-One-Group-Out cross-validation.
 # ================================================================
 
-_run_decoding = True   # master switch
+_run_decoding = True  # master switch
 
 # Scoring metric ('roc_auc' or 'accuracy').
 _decoder_scoring = "roc_auc"
@@ -664,15 +676,15 @@ _decoder_group_column = "run"
 #   "rank" -> data rank from mne.compute_rank (recommended for per-time)
 #   int    -> fixed number of components
 #   float  -> fraction of variance to retain (0 < x <= 1.0)
-_decoder_time_n_components  = 0.99   # per-time-step pipeline (SlidingEstimator / TG)
-_decoder_epoch_n_components = 0.99   # full-epoch pipeline (Vectorizer -> PCA -> SVC)
+_decoder_time_n_components = 0.99  # per-time-step pipeline (SlidingEstimator / TG)
+_decoder_epoch_n_components = 0.99  # full-epoch pipeline (Vectorizer -> PCA -> SVC)
 
 # Binary classification contrasts for the custom decoder.  Each entry needs:
 #   name       : unique identifier (used in BIDS file names)
 #   conditions : list of exactly 2 metadata query strings
 # EXAMPLE (replace with your own); requires _load_metadata = True.
 _decoder_contrasts = [
-    {'name': 'MMN', 'conditions': ['deviant_onset', 'standard_onset']},
+    {"name": "MMN", "conditions": ["deviant_onset", "standard_onset"]},
 ]
 
 # Cross-decoding contrasts (train on one condition set, test on another).
@@ -693,13 +705,13 @@ if not _load_metadata:
 
 # -- Required environment variables --
 _required_env = {
-    'EXPERIMENT'  : EXPERIMENT,
-    'BIDS_DIR'    : BIDS_DIR,
-    'RAW_DIR'     : RAW_DIR,
-    'SUBJECTS_DIR': SUBJECTS_DIR,
-    'SUBJECT'     : SUBJECT,
+    "EXPERIMENT": EXPERIMENT,
+    "BIDS_DIR": BIDS_DIR,
+    "RAW_DIR": RAW_DIR,
+    "SUBJECTS_DIR": SUBJECTS_DIR,
+    "SUBJECT": SUBJECT,
 }
-_missing_env = [k for k, v in _required_env.items() if not v or v == 'None']
+_missing_env = [k for k, v in _required_env.items() if not v or v == "None"]
 assert not _missing_env, (
     f"The following required environment variables are not set: {_missing_env}\n"
     f"Export them before calling mne_bids_pipeline."
@@ -731,31 +743,41 @@ assert epochs_decim >= 1 and isinstance(epochs_decim, int), (
 )
 
 # -- ICA parameters --
-assert ica_n_components > 0, f"ica_n_components must be positive, got {ica_n_components}."
-assert ica_max_iterations > 0, f"ica_max_iterations must be positive, got {ica_max_iterations}."
-assert 0 < ica_ecg_threshold <= 1, f"ica_ecg_threshold should be in (0, 1], got {ica_ecg_threshold}."
-assert ica_eog_threshold > 0, f"ica_eog_threshold must be positive, got {ica_eog_threshold}."
+assert ica_n_components > 0, (
+    f"ica_n_components must be positive, got {ica_n_components}."
+)
+assert ica_max_iterations > 0, (
+    f"ica_max_iterations must be positive, got {ica_max_iterations}."
+)
+assert 0 < ica_ecg_threshold <= 1, (
+    f"ica_ecg_threshold should be in (0, 1], got {ica_ecg_threshold}."
+)
+assert ica_eog_threshold > 0, (
+    f"ica_eog_threshold must be positive, got {ica_eog_threshold}."
+)
 
 # -- Contrasts (weights must sum to 0) --
 for _c in contrasts:
-    assert len(_c['weights']) == len(_c['conditions']), (
+    assert len(_c["weights"]) == len(_c["conditions"]), (
         f"Contrast '{_c['name']}': number of weights must equal number of conditions."
     )
-    assert abs(sum(_c['weights'])) < 1e-10, (
+    assert abs(sum(_c["weights"])) < 1e-10, (
         f"Contrast '{_c['name']}': weights must sum to 0 (got {sum(_c['weights']):.6f})."
     )
 
 # -- Beamformer --
-assert 0.0 <= _beamformer_reg <= 1.0, f"_beamformer_reg must be in [0.0, 1.0], got {_beamformer_reg}."
-assert _beamformer_pick_ori in {'max-power', 'vector', None}, (
+assert 0.0 <= _beamformer_reg <= 1.0, (
+    f"_beamformer_reg must be in [0.0, 1.0], got {_beamformer_reg}."
+)
+assert _beamformer_pick_ori in {"max-power", "vector", None}, (
     f"_beamformer_pick_ori must be 'max-power', 'vector', or None; got '{_beamformer_pick_ori}'."
 )
-_valid_weight_norms = {'unit-noise-gain', 'nai', 'unit-noise-gain-invariant', None}
+_valid_weight_norms = {"unit-noise-gain", "nai", "unit-noise-gain-invariant", None}
 assert _beamformer_weight_norm in _valid_weight_norms, (
     f"_beamformer_weight_norm must be one of {_valid_weight_norms}; got '{_beamformer_weight_norm}'."
 )
-if _beamformer_pick_ori == 'vector':
-    assert _beamformer_weight_norm in {'unit-noise-gain-invariant', None}, (
+if _beamformer_pick_ori == "vector":
+    assert _beamformer_weight_norm in {"unit-noise-gain-invariant", None}, (
         "For vector beamformers, use weight_norm='unit-noise-gain-invariant' (or None)."
     )
 assert _beamformer_power_tmin < _beamformer_power_tmax, (
@@ -764,14 +786,16 @@ assert _beamformer_power_tmin < _beamformer_power_tmax, (
 )
 
 # -- Source estimation --
-_valid_inverse_methods = {'dSPM', 'sLORETA', 'eLORETA', 'MNE'}
+_valid_inverse_methods = {"dSPM", "sLORETA", "eLORETA", "MNE"}
 assert inverse_method in _valid_inverse_methods, (
     f"inverse_method must be one of {_valid_inverse_methods}; got '{inverse_method}'."
 )
 
 # -- Custom decoder --
 if _run_decoding:
-    assert isinstance(_decoder_contrasts, list), "_decoder_contrasts must be a list of dicts."
+    assert isinstance(_decoder_contrasts, list), (
+        "_decoder_contrasts must be a list of dicts."
+    )
     for _dc in _decoder_contrasts:
         assert "name" in _dc and "conditions" in _dc, (
             f"Each _decoder_contrasts entry must have 'name' and 'conditions'. Got: {list(_dc.keys())}"
@@ -779,7 +803,9 @@ if _run_decoding:
         assert len(_dc["conditions"]) == 2, (
             f"Decoder contrast '{_dc['name']}': must have exactly 2 conditions, got {len(_dc['conditions'])}."
         )
-    assert isinstance(_decoder_cross_contrasts, list), "_decoder_cross_contrasts must be a list of dicts."
+    assert isinstance(_decoder_cross_contrasts, list), (
+        "_decoder_cross_contrasts must be a list of dicts."
+    )
     for _dcc in _decoder_cross_contrasts:
         assert all(k in _dcc for k in ("name", "train", "test", "analyses")), (
             f"Each _decoder_cross_contrasts entry must have 'name', 'train', 'test', 'analyses'. Got: {list(_dcc.keys())}"
@@ -794,4 +820,4 @@ if _run_decoding:
         f"_decoder_scoring must be 'roc_auc' or 'accuracy', got '{_decoder_scoring}'."
     )
 
-print(f'    - configuration loaded and validated: {_ANALYSIS_NAME}')
+print(f"    - configuration loaded and validated: {_ANALYSIS_NAME}")

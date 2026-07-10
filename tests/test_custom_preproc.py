@@ -23,6 +23,7 @@ from custom.preprocessing._config import normalize_analysis_key
 # Registry completeness
 # ---------------------------------------------------------------------------
 
+
 class TestAnalysisRegistry:
     """Verify that the analysis registry is self-consistent."""
 
@@ -31,8 +32,7 @@ class TestAnalysisRegistry:
         for choice in ANALYSIS_CHOICES:
             key = normalize_analysis_key(choice)
             assert key in ANALYSIS_REGISTRY, (
-                f"CLI choice '{choice}' (normalized: '{key}') "
-                f"not in ANALYSIS_REGISTRY"
+                f"CLI choice '{choice}' (normalized: '{key}') not in ANALYSIS_REGISTRY"
             )
 
     def test_registry_values_are_module_names(self):
@@ -69,6 +69,7 @@ class TestAnalysisRegistry:
 # import_analysis_module
 # ---------------------------------------------------------------------------
 
+
 class TestImportAnalysisModule:
     """Tests for the import_analysis_module dispatcher."""
 
@@ -96,6 +97,7 @@ class TestImportAnalysisModule:
 # ---------------------------------------------------------------------------
 # Dynamic module import (direct)
 # ---------------------------------------------------------------------------
+
 
 class TestDynamicModuleImport:
     """Test that every registered analysis module is importable via importlib."""

@@ -21,6 +21,7 @@ from custom.preprocessing.apply_hfc import ApplyHFCAnalysis, run
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def hfc_cfg(tmp_path):
     """Config for HFC analysis."""
@@ -42,6 +43,7 @@ def hfc_cfg(tmp_path):
 # ---------------------------------------------------------------------------
 # _apply_hfc — core logic
 # ---------------------------------------------------------------------------
+
 
 class TestApplyHFC:
     """Test the core HFC projection computation and application."""
@@ -84,9 +86,7 @@ class TestApplyHFC:
         """When noise is provided, same projections applied to both."""
         n_ch = len(meg_info["ch_names"])
         n_samples = int(meg_info["sfreq"] * 5)
-        noise = mne.io.RawArray(
-            rng.randn(n_ch, n_samples) * 1e-13, meg_info
-        )
+        noise = mne.io.RawArray(rng.randn(n_ch, n_samples) * 1e-13, meg_info)
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
         raw_out, noise_out = analysis._apply_hfc(raw_meg, noise)
@@ -120,6 +120,7 @@ class TestApplyHFC:
 # run() method
 # ---------------------------------------------------------------------------
 
+
 class TestHFCRun:
     def test_run_returns_corrected_data(self, raw_meg, hfc_cfg):
         analysis = ApplyHFCAnalysis(hfc_cfg)
@@ -133,9 +134,7 @@ class TestHFCRun:
         hfc_cfg.process_empty_room = True
         n_ch = len(meg_info["ch_names"])
         n_samples = int(meg_info["sfreq"] * 5)
-        noise = mne.io.RawArray(
-            rng.randn(n_ch, n_samples) * 1e-13, meg_info
-        )
+        noise = mne.io.RawArray(rng.randn(n_ch, n_samples) * 1e-13, meg_info)
 
         analysis = ApplyHFCAnalysis(hfc_cfg)
         data = {hfc_cfg.task: raw_meg, "noise": noise}
@@ -147,6 +146,7 @@ class TestHFCRun:
 # ---------------------------------------------------------------------------
 # load_data — mocked BIDS I/O
 # ---------------------------------------------------------------------------
+
 
 class TestHFCLoadData:
     @patch("custom.preprocessing.apply_hfc.read_raw_bids_with_retry")
@@ -188,6 +188,7 @@ class TestHFCLoadData:
 # save_results — mocked BIDS I/O
 # ---------------------------------------------------------------------------
 
+
 class TestHFCSaveResults:
     @patch("custom.preprocessing.apply_hfc.write_raw_bids_custom_step")
     @patch("custom.preprocessing.apply_hfc.find_custom_input_paths")
@@ -222,6 +223,7 @@ class TestHFCSaveResults:
 # is_enabled
 # ---------------------------------------------------------------------------
 
+
 class TestHFCEnabled:
     def test_disabled_by_default(self):
         cfg = SimpleNamespace()
@@ -238,6 +240,7 @@ class TestHFCEnabled:
 # ---------------------------------------------------------------------------
 # Module-level run(cfg)
 # ---------------------------------------------------------------------------
+
 
 class TestHFCModuleRun:
     @patch("custom.preprocessing.apply_hfc.write_raw_bids_custom_step")

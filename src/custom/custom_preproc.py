@@ -135,9 +135,7 @@ def parse_args() -> argparse.Namespace:
         required=True,
         choices=ANALYSIS_CHOICES,
         metavar="ANALYSIS",
-        help=(
-            f"Analysis type to run. Choices: {', '.join(ANALYSIS_CHOICES)}"
-        ),
+        help=(f"Analysis type to run. Choices: {', '.join(ANALYSIS_CHOICES)}"),
     )
 
     parser.add_argument(
@@ -190,9 +188,7 @@ def import_analysis_module(analysis_key: str) -> Callable:
 
     # Get the run function
     if not hasattr(module, "run"):
-        raise ImportError(
-            f"Module {full_module_path} does not have a run() function"
-        )
+        raise ImportError(f"Module {full_module_path} does not have a run() function")
 
     return module.run
 
@@ -230,8 +226,10 @@ def main() -> int:
         cfg = load_config(args.config)
 
         # Extract stage suffix for staged analyses (e.g., badsegments1 -> "1")
-        if analysis_key.startswith("badsegments") and len(analysis_key) > len("badsegments"):
-            cfg._bad_segments_stage = analysis_key[len("badsegments"):]
+        if analysis_key.startswith("badsegments") and len(analysis_key) > len(
+            "badsegments"
+        ):
+            cfg._bad_segments_stage = analysis_key[len("badsegments") :]
 
         # Import and run analysis module
         run_func = import_analysis_module(analysis_key)
@@ -258,6 +256,7 @@ def main() -> int:
     except Exception as e:
         print(f"\n[ERROR] Analysis failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

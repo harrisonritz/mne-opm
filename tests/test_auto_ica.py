@@ -19,6 +19,7 @@ from custom.preprocessing.bad_ICs import BadICAnalysis, PCAGesdResult
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def ica_cfg():
     """Config for auto ICA tests.
@@ -53,7 +54,8 @@ def synthetic_ica_and_raw():
 
     info = mne.create_info(
         [f"MEG{i:03d}" for i in range(n_ch)],
-        sfreq, ["mag"] * n_ch,
+        sfreq,
+        ["mag"] * n_ch,
     )
     data = rng.randn(n_ch, n_times) * 1e-13
     raw = mne.io.RawArray(data, info)
@@ -101,6 +103,7 @@ def synthetic_ica_and_raw_full():
 # is_enabled
 # ---------------------------------------------------------------------------
 
+
 class TestAutoICAIsEnabled:
     def test_enabled_when_both_set(self, ica_cfg):
         assert BadICAnalysis(ica_cfg).is_enabled() is True
@@ -121,6 +124,7 @@ class TestAutoICAIsEnabled:
 # ---------------------------------------------------------------------------
 # _ica_component_diagnostics
 # ---------------------------------------------------------------------------
+
 
 class TestICAComponentDiagnostics:
     """Test that diagnostic metrics are computed correctly."""
@@ -187,6 +191,7 @@ class TestICAComponentDiagnostics:
 # ---------------------------------------------------------------------------
 # _prepare_metrics_for_gesd
 # ---------------------------------------------------------------------------
+
 
 class TestPrepareMetricsForGESD:
     """Test metric transformation and direction labeling."""
@@ -275,6 +280,7 @@ class TestPrepareMetricsForGESD:
 # _resolve_gesd_scores  (single unified _ica_metrics list)
 # ---------------------------------------------------------------------------
 
+
 class TestResolveGesdScores:
     def test_explicit_list_used_verbatim(self, ica_cfg):
         ica_cfg._ica_metrics = ["log_hf_ratio", "eog", "reference"]
@@ -305,6 +311,7 @@ class TestResolveGesdScores:
 # Score-reduction / sanitization helpers
 # ---------------------------------------------------------------------------
 
+
 class TestScoreHelpers:
     def test_reduce_single_array_takes_abs(self):
         scores = np.array([-2.0, 1.0, -0.5])
@@ -329,10 +336,9 @@ class TestScoreHelpers:
 # Targeted score methods
 # ---------------------------------------------------------------------------
 
+
 class TestTargetedScores:
-    def test_score_eog_none_without_eog_channel(
-        self, ica_cfg, synthetic_ica_and_raw
-    ):
+    def test_score_eog_none_without_eog_channel(self, ica_cfg, synthetic_ica_and_raw):
         """mag-only raw has no EOG channel -> graceful None."""
         ica, raw = synthetic_ica_and_raw
         out = BadICAnalysis(ica_cfg)._score_eog(ica, raw)
@@ -356,9 +362,7 @@ class TestTargetedScores:
             out.shape == (ica.n_components_,) and np.isfinite(out).all()
         )
 
-    def test_score_reference_no_mutation(
-        self, ica_cfg, synthetic_ica_and_raw_full
-    ):
+    def test_score_reference_no_mutation(self, ica_cfg, synthetic_ica_and_raw_full):
         ica, raw = synthetic_ica_and_raw_full
         n_before = len(raw.ch_names)
         out = BadICAnalysis(ica_cfg)._score_reference(ica, raw)
@@ -369,9 +373,7 @@ class TestTargetedScores:
             out.shape == (ica.n_components_,) and np.isfinite(out).all()
         )
 
-    def test_score_reference_none_without_ref(
-        self, ica_cfg, synthetic_ica_and_raw
-    ):
+    def test_score_reference_none_without_ref(self, ica_cfg, synthetic_ica_and_raw):
         """mag-only raw has no ref_meg -> graceful None."""
         ica, raw = synthetic_ica_and_raw
         out = BadICAnalysis(ica_cfg)._score_reference(ica, raw)
@@ -381,6 +383,7 @@ class TestTargetedScores:
 # ---------------------------------------------------------------------------
 # _score_corrmap (direct template correlation)
 # ---------------------------------------------------------------------------
+
 
 class TestScoreCorrmap:
     def test_none_when_no_template_dir(self, ica_cfg, synthetic_ica_and_raw):
@@ -401,9 +404,7 @@ class TestScoreCorrmap:
         ica_cfg._n_ecg_templates = 0
         assert BadICAnalysis(ica_cfg)._score_corrmap(ica, raw) is None
 
-    def test_detects_self_topography(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
+    def test_detects_self_topography(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
         """Template == component 0's topography -> score[0] ~ 1.0."""
         ica, raw = synthetic_ica_and_raw
         comps = ica.get_components()
@@ -422,9 +423,7 @@ class TestScoreCorrmap:
         assert s[target] == pytest.approx(1.0, abs=1e-6)
         assert s[target] == pytest.approx(s.max())
 
-    def test_channel_subset_alignment(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
+    def test_channel_subset_alignment(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
         """Reference with extra channels aligns to the ICA's channel subset."""
         ica, raw = synthetic_ica_and_raw
         comps = ica.get_components()
@@ -444,9 +443,7 @@ class TestScoreCorrmap:
         assert out is not None
         assert out["corrmap_eog"][0] == pytest.approx(1.0, abs=1e-6)
 
-    def test_n_templates_limits_columns(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
+    def test_n_templates_limits_columns(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
         """_n_eog_templates=1 uses only the first template column."""
         ica, raw = synthetic_ica_and_raw
         comps = ica.get_components()
@@ -469,6 +466,7 @@ class TestScoreCorrmap:
 # _compute_ic_scores
 # ---------------------------------------------------------------------------
 
+
 class TestComputeICScores:
     def test_filters_to_selected(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
@@ -485,9 +483,7 @@ class TestComputeICScores:
         ica_cfg._ica_metrics = []
         assert BadICAnalysis(ica_cfg)._compute_ic_scores(ica, raw) == []
 
-    def test_targeted_scores_fisher_z_transformed(
-        self, ica_cfg, synthetic_ica_and_raw
-    ):
+    def test_targeted_scores_fisher_z_transformed(self, ica_cfg, synthetic_ica_and_raw):
         """Targeted correlation scores are atanh-transformed, side=+1."""
         from custom.preprocessing.pca_gesd import fisher_z
 
@@ -505,6 +501,7 @@ class TestComputeICScores:
 # ---------------------------------------------------------------------------
 # _run_unified_gesd
 # ---------------------------------------------------------------------------
+
 
 class TestRunUnifiedGesd:
     def _specs(self, analysis, ica, raw):
@@ -581,6 +578,7 @@ class TestRunUnifiedGesd:
 # _build_components_tsv
 # ---------------------------------------------------------------------------
 
+
 class TestBuildComponentsTSV:
     def test_columns(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
         ica, raw = synthetic_ica_and_raw
@@ -619,6 +617,7 @@ class TestBuildComponentsTSV:
 # _auto_ica integration
 # ---------------------------------------------------------------------------
 
+
 class TestAutoICAIntegration:
     def test_runs_and_sorts(self, ica_cfg, synthetic_ica_and_raw):
         ica, raw = synthetic_ica_and_raw
@@ -641,10 +640,9 @@ class TestAutoICAIntegration:
 # Overlay
 # ---------------------------------------------------------------------------
 
+
 class TestMakeOverlayEvoked:
-    def test_builds_mag_evoked_from_raw(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
+    def test_builds_mag_evoked_from_raw(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
         _, raw = synthetic_ica_and_raw
         ica_cfg.deriv_root = str(tmp_path)  # no icafit file -> fallback
         ev = BadICAnalysis(ica_cfg)._make_overlay_evoked(raw)
@@ -673,10 +671,9 @@ class TestICAOverlay:
         analysis._save_ica_overlay(ica, None, 0, "pre-custom")
         assert list(tmp_path.rglob("*.png")) == []
 
-    def test_overlay_writes_named_png(
-        self, ica_cfg, synthetic_ica_and_raw, tmp_path
-    ):
+    def test_overlay_writes_named_png(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
         import matplotlib
+
         matplotlib.use("Agg")
 
         ica, raw = synthetic_ica_and_raw
@@ -688,7 +685,11 @@ class TestICAOverlay:
         analysis._save_ica_overlay(ica, evoked, 1, "gesd-PC1")
 
         expected = (
-            tmp_path / "sub-001" / "ses-01" / "meg" / "ICA"
+            tmp_path
+            / "sub-001"
+            / "ses-01"
+            / "meg"
+            / "ICA"
             / "sub-001_ses-01_task-restingstate_proc-ica_icaOverlay_01_gesd-PC1.png"
         )
         assert expected.exists()
@@ -697,6 +698,7 @@ class TestICAOverlay:
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
         import matplotlib
+
         matplotlib.use("Agg")
 
         ica, raw = synthetic_ica_and_raw
@@ -719,9 +721,11 @@ class TestICAOverlay:
 # Diagnostic figures
 # ---------------------------------------------------------------------------
 
+
 class TestGesdFigures:
     def test_figures_written(self, ica_cfg, synthetic_ica_and_raw, tmp_path):
         import matplotlib
+
         matplotlib.use("Agg")
 
         ica, raw = synthetic_ica_and_raw
@@ -741,6 +745,7 @@ class TestGesdFigures:
         self, ica_cfg, synthetic_ica_and_raw, tmp_path, monkeypatch
     ):
         import matplotlib
+
         matplotlib.use("Agg")
 
         ica, raw = synthetic_ica_and_raw
@@ -753,8 +758,6 @@ class TestGesdFigures:
             raise RuntimeError("boom")
 
         # A single failing figure builder must not abort labelling.
-        monkeypatch.setattr(
-            "custom.preprocessing.pca_gesd._fig_scree", _boom
-        )
+        monkeypatch.setattr("custom.preprocessing.pca_gesd._fig_scree", _boom)
         result = analysis._auto_ica(ica, raw)
         assert isinstance(result, mne.preprocessing.ICA)

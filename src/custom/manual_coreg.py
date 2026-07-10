@@ -57,6 +57,7 @@ assert os.path.isdir(FS_DIR), f"FS_DIR does not exist: {FS_DIR}"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _list_all_subjects(bids_dir: str) -> List[str]:
     """Return zero-padded subject IDs (e.g. ``'019'``) sorted numerically."""
     if not os.path.isdir(bids_dir):
@@ -106,6 +107,7 @@ def _mtime(p: Path) -> str:
 # ---------------------------------------------------------------------------
 # Per-subject driver
 # ---------------------------------------------------------------------------
+
 
 def _print_subject_status(subject: str, session: str) -> Dict[str, object]:
     """Print and return pre-coreg status info for one subject."""
@@ -201,15 +203,15 @@ def run_subject(subject: str, session: str = SESSION) -> str:
 
     try:
         trans_path = _trans_path(subject, session)
-        if trans_path.exists():              
+        if trans_path.exists():
             mne.gui.coregistration(
                 inst=str(info["raw_path"]),
                 subject=info["fs_subject"],
                 subjects_dir=FS_DIR,
                 block=True,
-                trans = trans_path,
+                trans=trans_path,
             )
-        else:                     
+        else:
             mne.gui.coregistration(
                 inst=str(info["raw_path"]),
                 subject=info["fs_subject"],
@@ -237,6 +239,7 @@ def run_subject(subject: str, session: str = SESSION) -> str:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -247,7 +250,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=["all"],
         help="Subject IDs to run, or 'all' (default). "
-             "Accepts '019', '19', or 'sub-019'.",
+        "Accepts '019', '19', or 'sub-019'.",
     )
     p.add_argument(
         "--session",

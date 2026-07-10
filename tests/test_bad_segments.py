@@ -21,6 +21,7 @@ from custom.preprocessing.bad_segments import BadSegmentsAnalysis, run
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def bad_seg_cfg(tmp_path):
     """Config appropriate for bad segment detection."""
@@ -43,23 +44,18 @@ def bad_seg_cfg(tmp_path):
 # _detect_bad_segments — core logic
 # ---------------------------------------------------------------------------
 
+
 class TestDetectBadSegments:
     """Test the two-pass detection strategy on synthetic data."""
 
-    def test_noise_mode_single_pass(
-        self, raw_with_artifact_segment, bad_seg_cfg
-    ):
+    def test_noise_mode_single_pass(self, raw_with_artifact_segment, bad_seg_cfg):
         """Noise mode uses a single pass with lenient threshold."""
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
-        result = analysis._detect_bad_segments(
-            raw_with_artifact_segment, is_noise=True
-        )
+        result = analysis._detect_bad_segments(raw_with_artifact_segment, is_noise=True)
         # Result should be a Raw with annotations
         assert isinstance(result, mne.io.BaseRaw)
 
-    def test_task_mode_two_pass(
-        self, raw_with_artifact_segment, bad_seg_cfg
-    ):
+    def test_task_mode_two_pass(self, raw_with_artifact_segment, bad_seg_cfg):
         """Task mode should detect the artifact segment."""
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         result = analysis._detect_bad_segments(
@@ -69,28 +65,21 @@ class TestDetectBadSegments:
         # With a 100x artifact, osl_bad_segments adds annotations
         # named "bad_segment_*" (lowercase) or "BAD_*"
         bad_annots = [
-            a for a in result.annotations
-            if a["description"].lower().startswith("bad")
+            a for a in result.annotations if a["description"].lower().startswith("bad")
         ]
         assert len(bad_annots) > 0, (
             "Two-pass detection should flag the 100x artifact segment"
         )
 
-    def test_clean_data_few_annotations(
-        self, raw_with_artifact_segment, bad_seg_cfg
-    ):
+    def test_clean_data_few_annotations(self, raw_with_artifact_segment, bad_seg_cfg):
         """Noise mode with uniform data should be lenient."""
         # Use noise mode on artifact data — lenient threshold
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
-        result = analysis._detect_bad_segments(
-            raw_with_artifact_segment, is_noise=True
-        )
+        result = analysis._detect_bad_segments(raw_with_artifact_segment, is_noise=True)
         # Noise mode uses 50% threshold — very lenient
         assert isinstance(result, mne.io.BaseRaw)
 
-    def test_find_breaks_annotation(
-        self, raw_with_artifact_segment, bad_seg_cfg
-    ):
+    def test_find_breaks_annotation(self, raw_with_artifact_segment, bad_seg_cfg):
         """When find_breaks=True, should annotate breaks before detection."""
         bad_seg_cfg.find_breaks = True
         bad_seg_cfg.min_break_duration = 2.0
@@ -111,12 +100,11 @@ class TestDetectBadSegments:
 # run() method
 # ---------------------------------------------------------------------------
 
+
 class TestBadSegmentsRun:
     """Test run() method processes task data."""
 
-    def test_run_returns_task_results(
-        self, raw_with_artifact_segment, bad_seg_cfg
-    ):
+    def test_run_returns_task_results(self, raw_with_artifact_segment, bad_seg_cfg):
         """run() should process each task and return annotated raw."""
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         data = {bad_seg_cfg.task: raw_with_artifact_segment}
@@ -125,9 +113,7 @@ class TestBadSegmentsRun:
         assert bad_seg_cfg.task in results
         assert isinstance(results[bad_seg_cfg.task], mne.io.BaseRaw)
 
-    def test_run_noise_and_task(
-        self, raw_meg, raw_with_artifact_segment, bad_seg_cfg
-    ):
+    def test_run_noise_and_task(self, raw_meg, raw_with_artifact_segment, bad_seg_cfg):
         """run() handles noise + task data."""
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         data = {"noise": raw_meg, bad_seg_cfg.task: raw_with_artifact_segment}
@@ -140,6 +126,7 @@ class TestBadSegmentsRun:
 # ---------------------------------------------------------------------------
 # load_data — mocked BIDS I/O
 # ---------------------------------------------------------------------------
+
 
 class TestBadSegmentsLoadData:
     """Test load_data with mocked path-resolution calls."""
@@ -186,6 +173,7 @@ class TestBadSegmentsLoadData:
 # ---------------------------------------------------------------------------
 # save_results — mocked BIDS I/O
 # ---------------------------------------------------------------------------
+
 
 class TestBadSegmentsSaveResults:
     @patch("custom.preprocessing.bad_segments.write_raw_bids_custom_step")
@@ -244,6 +232,7 @@ class TestBadSegmentsSaveResults:
 # ---------------------------------------------------------------------------
 # Module-level run(cfg)
 # ---------------------------------------------------------------------------
+
 
 class TestBadSegmentsModuleRun:
     @patch("custom.preprocessing.bad_segments.write_raw_bids_custom_step")

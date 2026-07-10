@@ -23,6 +23,7 @@ from custom.preprocessing.regress import RegressAnalysis, run
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def regress_cfg(tmp_path):
     """Config for regression."""
@@ -49,6 +50,7 @@ def regress_cfg(tmp_path):
 # _regress — standard mode
 # ---------------------------------------------------------------------------
 
+
 class TestRegressStandard:
     """Test standard (EOGRegression) regression."""
 
@@ -68,9 +70,7 @@ class TestRegressStandard:
             "by removing ref contamination"
         )
 
-    def test_standard_returns_raw(
-        self, raw_with_ref_contamination, regress_cfg
-    ):
+    def test_standard_returns_raw(self, raw_with_ref_contamination, regress_cfg):
         raw, _ = raw_with_ref_contamination
         analysis = RegressAnalysis(regress_cfg)
         result = analysis._regress(raw.copy())
@@ -80,6 +80,7 @@ class TestRegressStandard:
 # ---------------------------------------------------------------------------
 # _regress — time-varying mode
 # ---------------------------------------------------------------------------
+
 
 class TestRegressTimeVarying:
     """Test time-varying (sliding window QR) regression."""
@@ -98,9 +99,7 @@ class TestRegressTimeVarying:
 
         assert var_after < var_before
 
-    def test_timevarying_with_freq_bands(
-        self, raw_with_ref_contamination, regress_cfg
-    ):
+    def test_timevarying_with_freq_bands(self, raw_with_ref_contamination, regress_cfg):
         """Time-varying regression with frequency bands should work."""
         raw, _ = raw_with_ref_contamination
         regress_cfg._regress_timevarying = True
@@ -113,9 +112,7 @@ class TestRegressTimeVarying:
 
         assert var_after < var_before
 
-    def test_timevarying_output_shape(
-        self, raw_with_ref_contamination, regress_cfg
-    ):
+    def test_timevarying_output_shape(self, raw_with_ref_contamination, regress_cfg):
         """Output should have same number of channels and samples."""
         raw, _ = raw_with_ref_contamination
         regress_cfg._regress_timevarying = True
@@ -129,10 +126,9 @@ class TestRegressTimeVarying:
 # run() method
 # ---------------------------------------------------------------------------
 
+
 class TestRegressRun:
-    def test_run_processes_task(
-        self, raw_with_ref_contamination, regress_cfg
-    ):
+    def test_run_processes_task(self, raw_with_ref_contamination, regress_cfg):
         raw, _ = raw_with_ref_contamination
         analysis = RegressAnalysis(regress_cfg)
         data = {regress_cfg.task: raw}
@@ -141,9 +137,7 @@ class TestRegressRun:
         assert regress_cfg.task in results
         assert isinstance(results[regress_cfg.task], mne.io.BaseRaw)
 
-    def test_run_with_noise_task(
-        self, raw_with_ref_contamination, regress_cfg
-    ):
+    def test_run_with_noise_task(self, raw_with_ref_contamination, regress_cfg):
         raw, _ = raw_with_ref_contamination
         raw_noise = raw.copy()
         analysis = RegressAnalysis(regress_cfg)
@@ -157,6 +151,7 @@ class TestRegressRun:
 # ---------------------------------------------------------------------------
 # load_data — mocked BIDS I/O
 # ---------------------------------------------------------------------------
+
 
 class TestRegressLoadData:
     @patch("custom.preprocessing.regress.read_raw_bids_with_retry")
@@ -197,6 +192,7 @@ class TestRegressLoadData:
 # ---------------------------------------------------------------------------
 # save_results — mocked BIDS I/O
 # ---------------------------------------------------------------------------
+
 
 class TestRegressSaveResults:
     @patch("custom.preprocessing.regress.write_raw_bids_custom_step")
@@ -245,6 +241,7 @@ class TestRegressSaveResults:
 # ---------------------------------------------------------------------------
 # Module-level run(cfg) entry point
 # ---------------------------------------------------------------------------
+
 
 class TestRegressModuleRun:
     def test_disabled_exits_early(self, capsys):

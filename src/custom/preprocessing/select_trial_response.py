@@ -131,9 +131,7 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
         """
         paths = find_custom_input_paths(self.cfg, task=self.cfg.task)
         if not paths:
-            raise FileNotFoundError(
-                f"No raw data found for task={self.cfg.task}"
-            )
+            raise FileNotFoundError(f"No raw data found for task={self.cfg.task}")
 
         raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
         self.log(f"Loaded raw data for task={self.cfg.task} at {paths[0].fpath}")
@@ -204,9 +202,7 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
 
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
-                raise FileNotFoundError(
-                    f"No file found for task={task} to save to"
-                )
+                raise FileNotFoundError(f"No file found for task={task} to save to")
             source_bp = paths[0]
 
             output_bp = get_custom_output_path(self.cfg, source_bp)
@@ -221,17 +217,18 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
             # has already been reduced.
             _seed_sidecars(source_bp, output_bp)
 
-            events_tsv = output_bp.copy().update(
-                suffix="events", extension=".tsv", split=None, check=False
-            ).fpath
+            events_tsv = (
+                output_bp.copy()
+                .update(suffix="events", extension=".tsv", split=None, check=False)
+                .fpath
+            )
             n_removed = drop_response_rows_from_events_tsv(
                 events_tsv,
                 keep_onsets,
                 response_conditions=self.response_conditions,
             )
             self.log(
-                f"task={task}: removed {n_removed} response row(s) from "
-                f"{events_tsv}"
+                f"task={task}: removed {n_removed} response row(s) from {events_tsv}"
             )
 
             written = write_raw_bids_custom_step(raw, self.cfg, source_bp)
@@ -242,9 +239,7 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _drop_annotations(
-        raw: mne.io.BaseRaw, drop_idx: list[int]
-    ) -> mne.io.BaseRaw:
+    def _drop_annotations(raw: mne.io.BaseRaw, drop_idx: list[int]) -> mne.io.BaseRaw:
         """Return *raw* with the annotations at ``drop_idx`` removed.
 
         Parameters

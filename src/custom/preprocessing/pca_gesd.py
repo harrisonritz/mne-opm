@@ -45,6 +45,7 @@ from osl_ephys.preprocessing.osl_wrappers import gesd as osl_gesd
 # Normality-improving transforms
 # ---------------------------------------------------------------------------
 
+
 def log_transform(x: np.ndarray, eps: float = 1e-10) -> np.ndarray:
     """Natural log of a positive, right-skewed metric (``log(x + eps)``)."""
     return np.log(np.asarray(x, dtype=float) + eps)
@@ -77,6 +78,7 @@ def logit(x: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MetricSpec:
@@ -157,6 +159,7 @@ class PCAGesdResult:
 # ---------------------------------------------------------------------------
 # Core procedure
 # ---------------------------------------------------------------------------
+
 
 def sanitize_values(values: np.ndarray) -> np.ndarray:
     """Replace non-finite entries with the finite median (or 0 if all bad)."""
@@ -356,11 +359,11 @@ def run_pca_gesd(
 
     # dot product approach
     # pc_sides = np.sign(loadings.T @ sides)
-    
+
     # Per-PC tail direction: product of sign(loading * side) across metrics.
     # If any metric has side=0 (both tails), the product is 0 → test both tails.
     # pc_sides = np.prod(np.sign(loadings * sides[:, np.newaxis]), axis=0)
-    
+
     # Voting approach: sum of absolute loadings per side.
     # print("calculating vote per side")
     # vote = {s: np.sum(np.abs(loadings[sides == s, :]), axis=0) for s in [-1, 0, 1]}
@@ -368,7 +371,7 @@ def run_pca_gesd(
     # print("get pc_sides")
     # pc_sides = max(vote, key=lambda s: vote[s])  # vectorised with np.argmax
     # print(f"pc_sides: {pc_sides}")
-    
+
     # Per-PC tail direction: weighted plurality vote across metrics.
     # For each PC, sum |loading| separately for side={-1, 0, 1}; the winning
     # side becomes pc_side.  side=0 (both-tails) only wins if two-tailed metrics
@@ -421,14 +424,13 @@ def run_pca_gesd(
 # Diagnostic figures
 # ---------------------------------------------------------------------------
 
+
 def _fig_loadings(result: PCAGesdResult):
     """Heatmap of PC loadings (metrics x PCs)."""
     import matplotlib.pyplot as plt
 
     k, n_pcs = result.loadings.shape
-    fig, ax = plt.subplots(
-        figsize=(max(4, 0.6 * n_pcs + 2), max(3, 0.35 * k + 1))
-    )
+    fig, ax = plt.subplots(figsize=(max(4, 0.6 * n_pcs + 2), max(3, 0.35 * k + 1)))
     vmax = float(np.abs(result.loadings).max()) or 1.0
     im = ax.imshow(result.loadings, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
     ax.set_xticks(range(n_pcs))
@@ -559,6 +561,7 @@ def _fig_pc_outliers(result: PCAGesdResult, item_label: str):
     fig.suptitle("Per-PC GESD outliers")
     fig.tight_layout()
     return fig
+
 
 def _fig_pc_outliers_histogram(result: PCAGesdResult, item_label: str):
     """Per-PC overlaid histograms of kept vs flagged eigenscores."""

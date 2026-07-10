@@ -30,7 +30,7 @@ fwd_fname = f"{data_dir}/{sub_id}/ses-01/meg/{sub_id}_ses-01_task-TSX_fwd.fif"
 info = mne.io.read_info(epo_fname)
 with info._unlock():
     info["device_info"] = dict(type="Cerca_adult_large")
-    
+
 
 plot_kwargs = dict(
     subject=subject,

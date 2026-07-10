@@ -220,7 +220,9 @@ class BadChannelsAnalysis(BaseAnalysis):
         data: Dict[str, Any] = {}
 
         tasks = [self.cfg.task]
-        if getattr(self.cfg, "process_empty_room", False) and getattr(self.cfg, "_bad_channel_emptyroom", False):
+        if getattr(self.cfg, "process_empty_room", False) and getattr(
+            self.cfg, "_bad_channel_emptyroom", False
+        ):
             tasks.insert(0, "noise")
 
         for task in tasks:
@@ -263,12 +265,8 @@ class BadChannelsAnalysis(BaseAnalysis):
                 results[task] = raw
                 continue
 
-            result = run_pca_gesd(
-                specs, alpha=alpha, p_out=_GESD_P_OUT, log=self.log
-            )
-            flagged = [
-                ch_names[i] for i in np.where(result.flagged)[0].tolist()
-            ]
+            result = run_pca_gesd(specs, alpha=alpha, p_out=_GESD_P_OUT, log=self.log)
+            flagged = [ch_names[i] for i in np.where(result.flagged)[0].tolist()]
             self.log(f"  flagged {len(flagged)}: {sorted(flagged)}")
 
             confirmed.update(flagged)
@@ -276,9 +274,7 @@ class BadChannelsAnalysis(BaseAnalysis):
             results[task] = raw
 
         results["bads"] = sorted(confirmed)
-        self.log(
-            f"Flagged bad channels: {len(results['bads'])} ({results['bads']})"
-        )
+        self.log(f"Flagged bad channels: {len(results['bads'])} ({results['bads']})")
         return results
 
     def save_results(self, results: Dict[str, Any]) -> None:
@@ -349,7 +345,9 @@ class BadChannelsAnalysis(BaseAnalysis):
         selected = self._channel_metrics()
 
         ch_idx = np.array(
-            mne.pick_types(raw.info, meg=picks, ref_meg=False, eyetrack=False, exclude=[""])
+            mne.pick_types(
+                raw.info, meg=picks, ref_meg=False, eyetrack=False, exclude=[""]
+            )
         )
         ch_names = [raw.ch_names[i] for i in ch_idx]
         if not selected:
@@ -358,14 +356,16 @@ class BadChannelsAnalysis(BaseAnalysis):
         if ch_idx.size < 3:
             self.log("  too few channels; skipping channel metrics")
             return ch_names, []
-        
-        self.log(f"initial bad channels ({len(raw.info["bads"])}): {raw.info["bads"]}")
-        self.log(f"number of channels to test: {ch_idx.size}")
 
+        self.log(f"initial bad channels ({len(raw.info['bads'])}): {raw.info['bads']}")
+        self.log(f"number of channels to test: {ch_idx.size}")
 
         # Bandpass-filtered copy for variance/kurtosis/spatial metrics.
         filt = raw.copy().filter(
-            l_freq=self.cfg.l_freq, h_freq=self.cfg.h_freq, method="iir",n_jobs=-1,  # avoid nested parallelism
+            l_freq=self.cfg.l_freq,
+            h_freq=self.cfg.h_freq,
+            method="iir",
+            n_jobs=-1,  # avoid nested parallelism
         )
         data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")
 
@@ -389,7 +389,12 @@ class BadChannelsAnalysis(BaseAnalysis):
             if lof is not None:
                 specs.append(MetricSpec("lof", log_transform(lof), 1))
 
-        if "psd" in selected or "psd_low" in selected or "psd_med" in selected or "psd_high" in selected:
+        if (
+            "psd" in selected
+            or "psd_low" in selected
+            or "psd_med" in selected
+            or "psd_high" in selected
+        ):
             (psd, psd_low, psd_med, psd_high) = self._psd_logpower(raw, ch_idx)
             # Two-tailed: dead (low) and noisy (high) channels both flagged.
             if psd is not None and "psd" in selected:
@@ -466,9 +471,7 @@ class BadChannelsAnalysis(BaseAnalysis):
             return None
         scores = np.asarray(scores, dtype=float)
         if scores.shape[0] != n_good:
-            self.log(
-                f"  [lof] score length {scores.shape[0]} != {n_good}; skipping"
-            )
+            self.log(f"  [lof] score length {scores.shape[0]} != {n_good}; skipping")
             return None
         # Negate so larger = more outlying; shift to stay positive for the log.
         lof = -scores
@@ -492,22 +495,30 @@ class BadChannelsAnalysis(BaseAnalysis):
                 verbose=False,
             )
             pow_all = psd.get_data(picks="all", exclude=[""])  # (n_ch, n_freqs)
-            pow_low = psd.get_data(picks="all", exclude=[""], fmin=0, fmax=10)  # (n_ch, low freqs)
-            pow_med = psd.get_data(picks="all", exclude=[""], fmin=10, fmax=20)  # (n_ch, med freqs)
-            pow_high = psd.get_data(picks="all", exclude=[""], fmin=20, fmax=fmax)  # (n_ch, high freqs)
+            pow_low = psd.get_data(
+                picks="all", exclude=[""], fmin=0, fmax=10
+            )  # (n_ch, low freqs)
+            pow_med = psd.get_data(
+                picks="all", exclude=[""], fmin=10, fmax=20
+            )  # (n_ch, med freqs)
+            pow_high = psd.get_data(
+                picks="all", exclude=[""], fmin=20, fmax=fmax
+            )  # (n_ch, high freqs)
         except Exception as exc:
             self.log(f"  [psd] skipped ({exc})")
             return None
-        return np.log10(pow_all + 1e-32).mean(axis=1), np.log10(pow_low + 1e-32).mean(axis=1), np.log10(pow_med + 1e-32).mean(axis=1), np.log10(pow_high + 1e-32).mean(axis=1),
-        
+        return (
+            np.log10(pow_all + 1e-32).mean(axis=1),
+            np.log10(pow_low + 1e-32).mean(axis=1),
+            np.log10(pow_med + 1e-32).mean(axis=1),
+            np.log10(pow_high + 1e-32).mean(axis=1),
+        )
 
     # ------------------------------------------------------------------
     # Figures
     # ------------------------------------------------------------------
 
-    def _save_channel_figures(
-        self, task: str, output_bp: mne_bids.BIDSPath
-    ) -> None:
+    def _save_channel_figures(self, task: str, output_bp: mne_bids.BIDSPath) -> None:
         """Save the PCA→GESD diagnostic figures for one recording."""
         res = getattr(self, "_metric_results", {}).get(task)
         if res is None:

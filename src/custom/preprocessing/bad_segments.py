@@ -273,9 +273,7 @@ class BadSegmentsAnalysis(BaseAnalysis):
         for task, raw in ordered_tasks:
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
-                raise FileNotFoundError(
-                    f"No file found for task={task} to save to"
-                )
+                raise FileNotFoundError(f"No file found for task={task} to save to")
 
             source_bp = paths[0]
             empty_room = er_output_bp if task != "noise" else None
@@ -379,9 +377,7 @@ class BadSegmentsAnalysis(BaseAnalysis):
             raw.annotations.append(new_onsets, new_durations, new_descriptions)
 
         # Count total bad annotations on the original raw
-        bad_annots = [
-            a for a in raw.annotations if a["description"].startswith("BAD")
-        ]
+        bad_annots = [a for a in raw.annotations if a["description"].startswith("BAD")]
         self.log(
             f"Added {n_new} new bad-segment annotations "
             f"({len(bad_annots)} total BAD annotations on raw)"

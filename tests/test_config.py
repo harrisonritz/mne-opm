@@ -20,6 +20,7 @@ from custom.preprocessing._config import (
 # normalize_analysis_key
 # ---------------------------------------------------------------------------
 
+
 class TestNormalizeAnalysisKey:
     """Tests for removing underscores from analysis names."""
 
@@ -54,6 +55,7 @@ class TestNormalizeAnalysisKey:
 # get_analysis_config_flag
 # ---------------------------------------------------------------------------
 
+
 class TestGetAnalysisConfigFlag:
     """Tests for mapping analysis keys to config flags."""
 
@@ -85,6 +87,7 @@ class TestGetAnalysisConfigFlag:
 # ---------------------------------------------------------------------------
 # check_analysis_enabled
 # ---------------------------------------------------------------------------
+
 
 class TestCheckAnalysisEnabled:
     """Tests for determining whether an analysis is enabled."""
@@ -146,6 +149,7 @@ class TestCheckAnalysisEnabled:
 # validate_required_config
 # ---------------------------------------------------------------------------
 
+
 class TestValidateRequiredConfig:
     """Tests for config attribute validation."""
 
@@ -172,6 +176,7 @@ class TestValidateRequiredConfig:
 # ---------------------------------------------------------------------------
 # ICA_ANALYSES constant
 # ---------------------------------------------------------------------------
+
 
 class TestICAAnalyses:
     def test_ica_analyses_contains_expected(self):

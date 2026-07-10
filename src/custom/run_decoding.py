@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import Optional
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import mne
@@ -52,6 +53,7 @@ from mne_bids_pipeline._config_utils import sanitize_cond_name
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def save_fig(fig, path_stem, formats, dpi=300):
     """Save a figure in each requested format."""
@@ -143,6 +145,7 @@ def _prep_contrast(epochs, contrast, decim=1, group_column="run"):
 # Pipeline factories
 # ---------------------------------------------------------------------------
 
+
 def _make_time_clf(n_components):
     """Fresh per-time-step pipeline (for SlidingEstimator / GeneralizingEstimator).
 
@@ -175,9 +178,16 @@ def _make_epoch_clf(n_components):
 # Decoding functions
 # ---------------------------------------------------------------------------
 
-def run_subject_time_decoding(epochs, contrast, scoring="roc_auc",
-                               n_jobs=1, decim=1, group_column="run",
-                               time_n_components="rank"):
+
+def run_subject_time_decoding(
+    epochs,
+    contrast,
+    scoring="roc_auc",
+    n_jobs=1,
+    decim=1,
+    group_column="run",
+    time_n_components="rank",
+):
     """Sliding-window decoding for one subject x contrast (LOGO cross-validation).
 
     Returns
@@ -200,9 +210,13 @@ def run_subject_time_decoding(epochs, contrast, scoring="roc_auc",
 
     print(f"      Running time decoding (LOGO CV): {contrast['name']} ...")
     cv_scores = cross_val_multiscore(
-        sliding, X=X, y=y,
-        cv=LeaveOneGroupOut(), groups=groups,
-        n_jobs=1, verbose=False,
+        sliding,
+        X=X,
+        y=y,
+        cv=LeaveOneGroupOut(),
+        groups=groups,
+        n_jobs=1,
+        verbose=False,
     )
     mean_scores = cv_scores.mean(axis=0)
 
@@ -216,15 +230,26 @@ def run_subject_time_decoding(epochs, contrast, scoring="roc_auc",
         f"at t = {times[mean_scores.argmax()]:.3f}s"
     )
     return dict(
-        times=times, scores=mean_scores, cv_scores=cv_scores,
-        patterns=patterns, filters=filters_,
-        info=ep_all.info, n_cond1=n1, n_cond2=n2,
+        times=times,
+        scores=mean_scores,
+        cv_scores=cv_scores,
+        patterns=patterns,
+        filters=filters_,
+        info=ep_all.info,
+        n_cond1=n1,
+        n_cond2=n2,
     )
 
 
-def run_subject_temporal_gen(epochs, contrast, scoring="roc_auc",
-                              n_jobs=1, decim=1, group_column="run",
-                              time_n_components="rank"):
+def run_subject_temporal_gen(
+    epochs,
+    contrast,
+    scoring="roc_auc",
+    n_jobs=1,
+    decim=1,
+    group_column="run",
+    time_n_components="rank",
+):
     """Temporal-generalization decoding for one subject x contrast (LOGO CV).
 
     Returns
@@ -247,24 +272,33 @@ def run_subject_temporal_gen(epochs, contrast, scoring="roc_auc",
 
     print(f"      Running temporal generalization (LOGO CV): {contrast['name']} ...")
     cv_scores = cross_val_multiscore(
-        tg, X=X, y=y,
-        cv=LeaveOneGroupOut(), groups=groups,
-        n_jobs=1, verbose=False,
+        tg,
+        X=X,
+        y=y,
+        cv=LeaveOneGroupOut(),
+        groups=groups,
+        n_jobs=1,
+        verbose=False,
     )
 
-    print(
-        f"      {contrast['name']}: TG peak = {cv_scores.mean(axis=0).max():.3f}"
-    )
+    print(f"      {contrast['name']}: TG peak = {cv_scores.mean(axis=0).max():.3f}")
     return dict(
-        times=times, cv_scores=cv_scores, scores_mean=cv_scores.mean(axis=0),
-        n_cond1=n1, n_cond2=n2,
+        times=times,
+        cv_scores=cv_scores,
+        scores_mean=cv_scores.mean(axis=0),
+        n_cond1=n1,
+        n_cond2=n2,
     )
 
 
-def run_subject_epoch_decoding(epochs, contrast, scoring="roc_auc",
-                                group_column="run",
-                                epoch_n_components=0.99,
-                                epoch_C_grid=None):
+def run_subject_epoch_decoding(
+    epochs,
+    contrast,
+    scoring="roc_auc",
+    group_column="run",
+    epoch_n_components=0.99,
+    epoch_C_grid=None,
+):
     """Full-epoch decoding for one subject x contrast (nested LOGO cross-validation).
 
     Outer loop: LeaveOneGroupOut (leave one run out).
@@ -321,15 +355,20 @@ def run_subject_epoch_decoding(epochs, contrast, scoring="roc_auc",
             best_C = 1.0
         else:
             clf_gs = GridSearchCV(
-                _make_epoch_clf(n_comp), param_grid,
-                cv=LeaveOneGroupOut(), scoring=scoring,
-                refit=True, n_jobs=1,
+                _make_epoch_clf(n_comp),
+                param_grid,
+                cv=LeaveOneGroupOut(),
+                scoring=scoring,
+                refit=True,
+                n_jobs=1,
             )
             clf_gs.fit(X_train, y_train, groups=groups_train)
             fold_score = scorer(clf_gs, X_test, y_test)
             best_C = clf_gs.best_params_["linearsvc__C"]
-            print(f"        fold {fold_i}: best C = {best_C:.4g}, "
-                  f"score = {fold_score:.3f}")
+            print(
+                f"        fold {fold_i}: best C = {best_C:.4g}, "
+                f"score = {fold_score:.3f}"
+            )
 
         cv_scores.append(fold_score)
         best_C_per_fold.append(best_C)
@@ -344,16 +383,25 @@ def run_subject_epoch_decoding(epochs, contrast, scoring="roc_auc",
         f"best C per fold: {best_C_per_fold}  (mode = {modal_C:.4g})"
     )
     return dict(
-        score=mean_score, cv_scores=cv_scores,
-        best_C_per_fold=best_C_per_fold, epoch_C_grid=epoch_C_grid,
-        n_cond1=n1, n_cond2=n2,
+        score=mean_score,
+        cv_scores=cv_scores,
+        best_C_per_fold=best_C_per_fold,
+        epoch_C_grid=epoch_C_grid,
+        n_cond1=n1,
+        n_cond2=n2,
     )
 
 
-def run_subject_cross_decoding(epochs, cross_contrast, scoring="roc_auc",
-                                n_jobs=1, decim=1, group_column="run",
-                                time_n_components="rank",
-                                epoch_n_components=0.99):
+def run_subject_cross_decoding(
+    epochs,
+    cross_contrast,
+    scoring="roc_auc",
+    n_jobs=1,
+    decim=1,
+    group_column="run",
+    time_n_components="rank",
+    epoch_n_components=0.99,
+):
     """Cross-condition decoding: fit on condition A, evaluate on condition B.
 
     No CV is used -- training and test conditions are independent datasets.
@@ -404,8 +452,12 @@ def run_subject_cross_decoding(epochs, cross_contrast, scoring="roc_auc",
         filters_ = get_coef(sliding, "filters_", inverse_transform=True)
         print(f"      peak = {scores.max():.3f} at t={times[scores.argmax()]:.3f}s")
         out["time"] = dict(
-            times=times, scores=scores, patterns=patterns, filters=filters_,
-            info=ep_train.info, **counts,
+            times=times,
+            scores=scores,
+            patterns=patterns,
+            filters=filters_,
+            info=ep_train.info,
+            **counts,
         )
 
     if "tg" in analyses:
@@ -433,32 +485,43 @@ def run_subject_cross_decoding(epochs, cross_contrast, scoring="roc_auc",
 # BIDS save functions
 # ---------------------------------------------------------------------------
 
+
 def save_time_results(bids_path, contrast, result, scoring, out_dir):
     """Save time-by-time decoding results as TSV and patterns as NPZ."""
     cond_san = sanitize_cond_name(contrast["name"])
     cond_1, cond_2 = contrast["conditions"]
     times = result["times"]
 
-    tsv_name = bids_path.copy().update(
-        processing=cond_san,
-        suffix=f"decode-time+{scoring}",
-        extension=".tsv",
-    ).fpath.name
+    tsv_name = (
+        bids_path.copy()
+        .update(
+            processing=cond_san,
+            suffix=f"decode-time+{scoring}",
+            extension=".tsv",
+        )
+        .fpath.name
+    )
     tsv_save_path = out_dir / tsv_name
-    pd.DataFrame({
-        "cond_1": [cond_1] * len(times),
-        "cond_2": [cond_2] * len(times),
-        "time": times,
-        "mean_crossval_score": result["scores"],
-        "metric": [scoring] * len(times),
-    }).to_csv(tsv_save_path, sep="\t", index=False)
+    pd.DataFrame(
+        {
+            "cond_1": [cond_1] * len(times),
+            "cond_2": [cond_2] * len(times),
+            "time": times,
+            "mean_crossval_score": result["scores"],
+            "metric": [scoring] * len(times),
+        }
+    ).to_csv(tsv_save_path, sep="\t", index=False)
     print(f"      Saved: {tsv_save_path}")
 
-    npz_name = bids_path.copy().update(
-        processing=cond_san,
-        suffix="decode-patterns",
-        extension=".npz",
-    ).fpath.name
+    npz_name = (
+        bids_path.copy()
+        .update(
+            processing=cond_san,
+            suffix="decode-patterns",
+            extension=".npz",
+        )
+        .fpath.name
+    )
     npz_save_path = out_dir / npz_name
     np.savez(
         npz_save_path,
@@ -475,26 +538,32 @@ def save_epoch_results(bids_path, contrast, result, scoring, out_dir):
     cond_san = sanitize_cond_name(contrast["name"])
     cond_1, cond_2 = contrast["conditions"]
 
-    tsv_name = bids_path.copy().update(
-        processing=cond_san,
-        suffix=f"decode-epoch+{scoring}",
-        extension=".tsv",
-    ).fpath.name
+    tsv_name = (
+        bids_path.copy()
+        .update(
+            processing=cond_san,
+            suffix=f"decode-epoch+{scoring}",
+            extension=".tsv",
+        )
+        .fpath.name
+    )
     tsv_save_path = out_dir / tsv_name
 
     cv_scores = result["cv_scores"]
     n_folds = len(cv_scores)
     best_C = result.get("best_C_per_fold", [None] * n_folds)
 
-    pd.DataFrame({
-        "cond_1": [cond_1] * n_folds,
-        "cond_2": [cond_2] * n_folds,
-        "fold": list(range(n_folds)),
-        "fold_score": cv_scores,
-        "best_C": best_C,
-        "mean_score": [result["score"]] * n_folds,
-        "metric": [scoring] * n_folds,
-    }).to_csv(tsv_save_path, sep="\t", index=False)
+    pd.DataFrame(
+        {
+            "cond_1": [cond_1] * n_folds,
+            "cond_2": [cond_2] * n_folds,
+            "fold": list(range(n_folds)),
+            "fold_score": cv_scores,
+            "best_C": best_C,
+            "mean_score": [result["score"]] * n_folds,
+            "metric": [scoring] * n_folds,
+        }
+    ).to_csv(tsv_save_path, sep="\t", index=False)
     print(f"      Saved: {tsv_save_path}")
 
 
@@ -502,11 +571,15 @@ def save_tg_results(bids_path, contrast, result, out_dir):
     """Save temporal generalization results as NPZ."""
     cond_san = sanitize_cond_name(contrast["name"])
 
-    npz_name = bids_path.copy().update(
-        processing=cond_san,
-        suffix="decode-tg",
-        extension=".npz",
-    ).fpath.name
+    npz_name = (
+        bids_path.copy()
+        .update(
+            processing=cond_san,
+            suffix="decode-tg",
+            extension=".npz",
+        )
+        .fpath.name
+    )
     npz_save_path = out_dir / npz_name
     np.savez(
         npz_save_path,
@@ -522,28 +595,38 @@ def save_cross_time_results(bids_path, cross_contrast, result, scoring, out_dir)
     cc_san = sanitize_cond_name(cross_contrast["name"])
     times = result["times"]
 
-    tsv_name = bids_path.copy().update(
-        processing=cc_san,
-        suffix=f"decode-crosstime+{scoring}",
-        extension=".tsv",
-    ).fpath.name
+    tsv_name = (
+        bids_path.copy()
+        .update(
+            processing=cc_san,
+            suffix=f"decode-crosstime+{scoring}",
+            extension=".tsv",
+        )
+        .fpath.name
+    )
     tsv_save_path = out_dir / tsv_name
-    pd.DataFrame({
-        "train_cond_1": [cross_contrast["train"]["conditions"][0]] * len(times),
-        "train_cond_2": [cross_contrast["train"]["conditions"][1]] * len(times),
-        "test_cond_1": [cross_contrast["test"]["conditions"][0]] * len(times),
-        "test_cond_2": [cross_contrast["test"]["conditions"][1]] * len(times),
-        "time": times,
-        "score": result["scores"],
-        "metric": [scoring] * len(times),
-    }).to_csv(tsv_save_path, sep="\t", index=False)
+    pd.DataFrame(
+        {
+            "train_cond_1": [cross_contrast["train"]["conditions"][0]] * len(times),
+            "train_cond_2": [cross_contrast["train"]["conditions"][1]] * len(times),
+            "test_cond_1": [cross_contrast["test"]["conditions"][0]] * len(times),
+            "test_cond_2": [cross_contrast["test"]["conditions"][1]] * len(times),
+            "time": times,
+            "score": result["scores"],
+            "metric": [scoring] * len(times),
+        }
+    ).to_csv(tsv_save_path, sep="\t", index=False)
     print(f"      Saved: {tsv_save_path}")
 
-    npz_name = bids_path.copy().update(
-        processing=cc_san,
-        suffix="decode-crosspatterns",
-        extension=".npz",
-    ).fpath.name
+    npz_name = (
+        bids_path.copy()
+        .update(
+            processing=cc_san,
+            suffix="decode-crosspatterns",
+            extension=".npz",
+        )
+        .fpath.name
+    )
     npz_save_path = out_dir / npz_name
     np.savez(
         npz_save_path,
@@ -559,20 +642,26 @@ def save_cross_epoch_results(bids_path, cross_contrast, result, scoring, out_dir
     """Save cross-condition epoch decoding results."""
     cc_san = sanitize_cond_name(cross_contrast["name"])
 
-    tsv_name = bids_path.copy().update(
-        processing=cc_san,
-        suffix=f"decode-crossepoch+{scoring}",
-        extension=".tsv",
-    ).fpath.name
+    tsv_name = (
+        bids_path.copy()
+        .update(
+            processing=cc_san,
+            suffix=f"decode-crossepoch+{scoring}",
+            extension=".tsv",
+        )
+        .fpath.name
+    )
     tsv_save_path = out_dir / tsv_name
-    pd.DataFrame({
-        "train_cond_1": [cross_contrast["train"]["conditions"][0]],
-        "train_cond_2": [cross_contrast["train"]["conditions"][1]],
-        "test_cond_1": [cross_contrast["test"]["conditions"][0]],
-        "test_cond_2": [cross_contrast["test"]["conditions"][1]],
-        "score": [result["score"]],
-        "metric": [scoring],
-    }).to_csv(tsv_save_path, sep="\t", index=False)
+    pd.DataFrame(
+        {
+            "train_cond_1": [cross_contrast["train"]["conditions"][0]],
+            "train_cond_2": [cross_contrast["train"]["conditions"][1]],
+            "test_cond_1": [cross_contrast["test"]["conditions"][0]],
+            "test_cond_2": [cross_contrast["test"]["conditions"][1]],
+            "score": [result["score"]],
+            "metric": [scoring],
+        }
+    ).to_csv(tsv_save_path, sep="\t", index=False)
     print(f"      Saved: {tsv_save_path}")
 
 
@@ -580,11 +669,15 @@ def save_cross_tg_results(bids_path, cross_contrast, cc_res, result, out_dir):
     """Save cross-condition temporal generalization results."""
     cc_san = sanitize_cond_name(cross_contrast["name"])
 
-    npz_name = bids_path.copy().update(
-        processing=cc_san,
-        suffix="decode-crosstg",
-        extension=".npz",
-    ).fpath.name
+    npz_name = (
+        bids_path.copy()
+        .update(
+            processing=cc_san,
+            suffix="decode-crosstg",
+            extension=".npz",
+        )
+        .fpath.name
+    )
     npz_save_path = out_dir / npz_name
     np.savez(
         npz_save_path,
@@ -600,8 +693,8 @@ def save_cross_tg_results(bids_path, cross_contrast, cc_res, result, out_dir):
 # Plotting functions
 # ---------------------------------------------------------------------------
 
-def plot_subject_time_ribbon(time_results, subject, out_dir, save_formats,
-                              chance=0.5):
+
+def plot_subject_time_ribbon(time_results, subject, out_dir, save_formats, chance=0.5):
     """Ribbon plot of time-resolved decoding for a single subject."""
     contrast_names = sorted(time_results.keys())
     n_c = len(contrast_names)
@@ -613,9 +706,12 @@ def plot_subject_time_ribbon(time_results, subject, out_dir, save_formats,
     palette = sns.color_palette("deep", n_c)
 
     fig, axes = plt.subplots(
-        n_rows, n_cols,
+        n_rows,
+        n_cols,
         figsize=(5 * n_cols, 4 * n_rows),
-        squeeze=False, sharex=True, sharey=True,
+        squeeze=False,
+        sharex=True,
+        sharey=True,
     )
 
     for ci, cname in enumerate(contrast_names):
@@ -627,16 +723,30 @@ def plot_subject_time_ribbon(time_results, subject, out_dir, save_formats,
         std_sc = cv_scores.std(axis=0)
 
         for fi in range(cv_scores.shape[0]):
-            ax.plot(times, cv_scores[fi, :], color="gray", alpha=0.25,
-                    linewidth=0.6, zorder=1)
+            ax.plot(
+                times,
+                cv_scores[fi, :],
+                color="gray",
+                alpha=0.25,
+                linewidth=0.6,
+                zorder=1,
+            )
 
         ax.fill_between(
-            times, mean_sc - std_sc, mean_sc + std_sc,
-            alpha=0.35, color=palette[ci], zorder=2,
+            times,
+            mean_sc - std_sc,
+            mean_sc + std_sc,
+            alpha=0.35,
+            color=palette[ci],
+            zorder=2,
         )
         ax.plot(
-            times, mean_sc, color=palette[ci], linewidth=2,
-            label=f"Mean (n_folds={cv_scores.shape[0]})", zorder=3,
+            times,
+            mean_sc,
+            color=palette[ci],
+            linewidth=2,
+            label=f"Mean (n_folds={cv_scores.shape[0]})",
+            zorder=3,
         )
 
         ax.axhline(chance, color="red", linestyle="--", linewidth=1, zorder=0)
@@ -654,15 +764,15 @@ def plot_subject_time_ribbon(time_results, subject, out_dir, save_formats,
     fig.suptitle(
         f"Time-Resolved Decoding -- {subject}\n"
         f"(ribbon = +/-1 SD across folds, gray = individual folds)",
-        fontsize=11, y=1.02,
+        fontsize=11,
+        y=1.02,
     )
     fig.tight_layout()
     save_fig(fig, out_dir / f"{subject}__time_ribbon", save_formats)
     plt.close(fig)
 
 
-def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
-                            chance=0.5):
+def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats, chance=0.5):
     """Bar plot of full-epoch decoding for a single subject.
 
     Subplot 1 — accuracy: mean +/- 95 % CI bar + per-fold strip plot.
@@ -677,9 +787,7 @@ def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
     n_rows = 2 if has_C else 1
     fig_w = max(6, len(contrast_names) * 1.2)
 
-    fig, axes_arr = plt.subplots(
-        n_rows, 1, figsize=(fig_w, 5 * n_rows), squeeze=False
-    )
+    fig, axes_arr = plt.subplots(n_rows, 1, figsize=(fig_w, 5 * n_rows), squeeze=False)
     ax = axes_arr[0, 0]
 
     # ---- Subplot 1: decoding accuracy ----
@@ -690,23 +798,32 @@ def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
     df = pd.DataFrame(records)
 
     sns.barplot(
-        data=df, x="contrast", y="score",
-        errorbar=("ci", 95), capsize=0.15,
-        color="steelblue", edgecolor="black", ax=ax,
+        data=df,
+        x="contrast",
+        y="score",
+        errorbar=("ci", 95),
+        capsize=0.15,
+        color="steelblue",
+        edgecolor="black",
+        ax=ax,
         order=contrast_names,
     )
     sns.stripplot(
-        data=df, x="contrast", y="score",
-        color="black", alpha=0.6, size=5, jitter=True, ax=ax,
+        data=df,
+        x="contrast",
+        y="score",
+        color="black",
+        alpha=0.6,
+        size=5,
+        jitter=True,
+        ax=ax,
         order=contrast_names,
     )
-    ax.axhline(chance, color="red", linestyle="--", linewidth=1,
-               label="chance (0.5)")
+    ax.axhline(chance, color="red", linestyle="--", linewidth=1, label="chance (0.5)")
     ax.set_xlabel("Contrast")
     ax.set_ylabel("ROC-AUC")
     ax.set_title(
-        f"Epoch Decoding -- {subject}\n"
-        f"(bar = mean +/- 95% CI, dots = individual folds)"
+        f"Epoch Decoding -- {subject}\n(bar = mean +/- 95% CI, dots = individual folds)"
     )
     ax.legend(fontsize=8)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
@@ -729,8 +846,12 @@ def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
         x_pos = np.arange(len(contrast_names))
         modal_vals = [modal_C_per_contrast.get(n, np.nan) for n in contrast_names]
         ax2.bar(
-            x_pos, modal_vals,
-            color="steelblue", edgecolor="black", alpha=0.7, label="mode",
+            x_pos,
+            modal_vals,
+            color="steelblue",
+            edgecolor="black",
+            alpha=0.7,
+            label="mode",
         )
 
         rng_jitter = np.random.default_rng(42)
@@ -738,14 +859,21 @@ def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
             c_fold = df_C.loc[df_C["contrast"] == cname, "best_C"].values
             jitter = rng_jitter.uniform(-0.2, 0.2, len(c_fold))
             ax2.scatter(
-                xi + jitter, c_fold,
-                color="black", alpha=0.7, s=40, zorder=3,
+                xi + jitter,
+                c_fold,
+                color="black",
+                alpha=0.7,
+                s=40,
+                zorder=3,
             )
 
         # Y-axis: log scale, ticks at the searched C values
         all_c_vals = sorted(
-            set(c for res in epoch_results.values()
-                for c in res.get("best_C_per_fold", []))
+            set(
+                c
+                for res in epoch_results.values()
+                for c in res.get("best_C_per_fold", [])
+            )
         )
         if all_c_vals:
             ax2.set_yscale("log")
@@ -755,8 +883,7 @@ def plot_subject_epoch_bar(epoch_results, subject, out_dir, save_formats,
         ax2.set_xticklabels(contrast_names, rotation=45, ha="right", fontsize=8)
         ax2.set_ylabel("Optimal C (log scale)")
         ax2.set_title(
-            "Optimal SVM regularisation C\n"
-            "(bar = mode across folds, dots = per fold)"
+            "Optimal SVM regularisation C\n(bar = mode across folds, dots = per fold)"
         )
 
     fig.tight_layout()
@@ -775,7 +902,8 @@ def plot_subject_tg_heatmap(tg_results, subject, out_dir, save_formats):
     n_rows = int(np.ceil(n_c / n_cols))
 
     fig, axes = plt.subplots(
-        n_rows, n_cols,
+        n_rows,
+        n_cols,
         figsize=(5.5 * n_cols, 5 * n_rows),
         squeeze=False,
     )
@@ -793,16 +921,22 @@ def plot_subject_tg_heatmap(tg_results, subject, out_dir, save_formats):
 
         tick_step = max(1, int(round(0.1 / abs(dt))))
         tick_pos_set = set(range(0, n_test, tick_step))
-        col_labels = [f"{times[j]:.1f}" if j in tick_pos_set else ""
-                      for j in range(n_test)]
-        row_labels = [f"{times[n_train - 1 - i]:.1f}" if i in tick_pos_set else ""
-                      for i in range(n_train)]
+        col_labels = [
+            f"{times[j]:.1f}" if j in tick_pos_set else "" for j in range(n_test)
+        ]
+        row_labels = [
+            f"{times[n_train - 1 - i]:.1f}" if i in tick_pos_set else ""
+            for i in range(n_train)
+        ]
 
         sns.heatmap(
             mat_flip,
-            cmap="coolwarm", center=0.5,
-            vmin=0.5 - half_range, vmax=0.5 + half_range,
-            xticklabels=col_labels, yticklabels=row_labels,
+            cmap="coolwarm",
+            center=0.5,
+            vmin=0.5 - half_range,
+            vmax=0.5 + half_range,
+            xticklabels=col_labels,
+            yticklabels=row_labels,
             cbar_kws={"label": "ROC-AUC", "shrink": 0.8},
             ax=ax,
         )
@@ -811,8 +945,7 @@ def plot_subject_tg_heatmap(tg_results, subject, out_dir, save_formats):
 
         t0_idx = int(np.argmin(np.abs(times)))
         ax.axvline(t0_idx + 0.5, color="gray", linewidth=0.6, linestyle=":")
-        ax.axhline(n_train - t0_idx - 0.5, color="gray", linewidth=0.6,
-                    linestyle=":")
+        ax.axhline(n_train - t0_idx - 0.5, color="gray", linewidth=0.6, linestyle=":")
 
         ax.set_title(cname, fontsize=9)
         ax.set_xlabel("Testing time (s)", fontsize=8)
@@ -827,15 +960,17 @@ def plot_subject_tg_heatmap(tg_results, subject, out_dir, save_formats):
     fig.suptitle(
         f"Temporal Generalization -- {subject}\n"
         f"(coolwarm centered at 0.5, dashed = train=test diagonal)",
-        fontsize=11, y=1.02,
+        fontsize=11,
+        y=1.02,
     )
     fig.tight_layout()
     save_fig(fig, out_dir / f"{subject}__tg_heatmaps", save_formats)
     plt.close(fig)
 
 
-def plot_subject_cross_ribbon(cross_time_results, subject, out_dir,
-                               save_formats, chance=0.5):
+def plot_subject_cross_ribbon(
+    cross_time_results, subject, out_dir, save_formats, chance=0.5
+):
     """Time-score line plots for cross-condition decoding."""
     names = sorted(cross_time_results.keys())
     n_c = len(names)
@@ -847,9 +982,12 @@ def plot_subject_cross_ribbon(cross_time_results, subject, out_dir,
     palette = sns.color_palette("deep", n_c)
 
     fig, axes = plt.subplots(
-        n_rows, n_cols,
+        n_rows,
+        n_cols,
         figsize=(5 * n_cols, 4 * n_rows),
-        squeeze=False, sharex=True, sharey=True,
+        squeeze=False,
+        sharex=True,
+        sharey=True,
     )
 
     for ci, name in enumerate(names):
@@ -875,38 +1013,35 @@ def plot_subject_cross_ribbon(cross_time_results, subject, out_dir,
         axes[ci // n_cols, ci % n_cols].set_visible(False)
 
     fig.suptitle(
-        f"Cross-Condition Time Decoding -- {subject}\n"
-        f"(fit-all/score-all, no CV)",
-        fontsize=11, y=1.02,
+        f"Cross-Condition Time Decoding -- {subject}\n(fit-all/score-all, no CV)",
+        fontsize=11,
+        y=1.02,
     )
     fig.tight_layout()
     save_fig(fig, out_dir / f"{subject}__cross_time_ribbon", save_formats)
     plt.close(fig)
 
 
-def plot_subject_cross_epoch_bar(cross_epoch_results, subject, out_dir,
-                                  save_formats, chance=0.5):
+def plot_subject_cross_epoch_bar(
+    cross_epoch_results, subject, out_dir, save_formats, chance=0.5
+):
     """Bar chart of cross-condition epoch scores."""
     names = sorted(cross_epoch_results.keys())
     if not names:
         return
 
-    records = [
-        {"name": n, "score": cross_epoch_results[n]["score"]}
-        for n in names
-    ]
+    records = [{"name": n, "score": cross_epoch_results[n]["score"]} for n in names]
     df = pd.DataFrame(records)
 
     fig, ax = plt.subplots(figsize=(max(5, len(names) * 1.2), 5))
-    sns.barplot(data=df, x="name", y="score", color="steelblue",
-                edgecolor="black", ax=ax)
-    ax.axhline(chance, color="red", linestyle="--", linewidth=1,
-               label="chance (0.5)")
+    sns.barplot(
+        data=df, x="name", y="score", color="steelblue", edgecolor="black", ax=ax
+    )
+    ax.axhline(chance, color="red", linestyle="--", linewidth=1, label="chance (0.5)")
     ax.set_xlabel("Cross-contrast")
     ax.set_ylabel("ROC-AUC")
     ax.set_title(
-        f"Cross-Condition Epoch Decoding -- {subject}\n"
-        f"(fit-all/score-all, no CV)"
+        f"Cross-Condition Epoch Decoding -- {subject}\n(fit-all/score-all, no CV)"
     )
     ax.legend(fontsize=8)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=8)
@@ -915,8 +1050,7 @@ def plot_subject_cross_epoch_bar(cross_epoch_results, subject, out_dir,
     plt.close(fig)
 
 
-def plot_subject_cross_tg_heatmap(cross_tg_results, subject, out_dir,
-                                    save_formats):
+def plot_subject_cross_tg_heatmap(cross_tg_results, subject, out_dir, save_formats):
     """TG heatmaps for cross-condition decoding."""
     names = sorted(cross_tg_results.keys())
     n_c = len(names)
@@ -927,7 +1061,8 @@ def plot_subject_cross_tg_heatmap(cross_tg_results, subject, out_dir,
     n_rows = int(np.ceil(n_c / n_cols))
 
     fig, axes = plt.subplots(
-        n_rows, n_cols,
+        n_rows,
+        n_cols,
         figsize=(5.5 * n_cols, 5 * n_rows),
         squeeze=False,
     )
@@ -945,16 +1080,22 @@ def plot_subject_cross_tg_heatmap(cross_tg_results, subject, out_dir,
 
         tick_step = max(1, int(round(0.1 / abs(dt))))
         tick_pos_set = set(range(0, n_test, tick_step))
-        col_labels = [f"{times[j]:.1f}" if j in tick_pos_set else ""
-                      for j in range(n_test)]
-        row_labels = [f"{times[n_train - 1 - i]:.1f}" if i in tick_pos_set else ""
-                      for i in range(n_train)]
+        col_labels = [
+            f"{times[j]:.1f}" if j in tick_pos_set else "" for j in range(n_test)
+        ]
+        row_labels = [
+            f"{times[n_train - 1 - i]:.1f}" if i in tick_pos_set else ""
+            for i in range(n_train)
+        ]
 
         sns.heatmap(
             mat_flip,
-            cmap="coolwarm", center=0.5,
-            vmin=0.5 - half_range, vmax=0.5 + half_range,
-            xticklabels=col_labels, yticklabels=row_labels,
+            cmap="coolwarm",
+            center=0.5,
+            vmin=0.5 - half_range,
+            vmax=0.5 + half_range,
+            xticklabels=col_labels,
+            yticklabels=row_labels,
             cbar_kws={"label": "ROC-AUC", "shrink": 0.8},
             ax=ax,
         )
@@ -962,16 +1103,11 @@ def plot_subject_cross_tg_heatmap(cross_tg_results, subject, out_dir,
         t0_idx = int(np.argmin(np.abs(times)))
         ax.plot([0, n_test], [n_train, 0], "k--", linewidth=0.8, alpha=0.5)
         ax.axvline(t0_idx + 0.5, color="gray", linewidth=0.6, linestyle=":")
-        ax.axhline(n_train - t0_idx - 0.5, color="gray", linewidth=0.6,
-                    linestyle=":")
+        ax.axhline(n_train - t0_idx - 0.5, color="gray", linewidth=0.6, linestyle=":")
 
         ax.set_title(f"{name}", fontsize=9)
-        ax.set_xlabel(
-            f"Testing time -- {res.get('test_name', '')} (s)", fontsize=8
-        )
-        ax.set_ylabel(
-            f"Training time -- {res.get('train_name', '')} (s)", fontsize=8
-        )
+        ax.set_xlabel(f"Testing time -- {res.get('test_name', '')} (s)", fontsize=8)
+        ax.set_ylabel(f"Training time -- {res.get('train_name', '')} (s)", fontsize=8)
         ax.tick_params(axis="both", labelsize=7)
         ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
         ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
@@ -982,15 +1118,22 @@ def plot_subject_cross_tg_heatmap(cross_tg_results, subject, out_dir,
     fig.suptitle(
         f"Cross-Condition Temporal Generalization -- {subject}\n"
         f"(coolwarm centered at 0.5, dashed = train-time = test-time diagonal)",
-        fontsize=11, y=1.02,
+        fontsize=11,
+        y=1.02,
     )
     fig.tight_layout()
     save_fig(fig, out_dir / f"{subject}__cross_tg_heatmaps", save_formats)
     plt.close(fig)
 
 
-def plot_subject_time_patterns(results, subject, out_dir, save_formats,
-                               pattern_times=None, file_prefix="time_patterns"):
+def plot_subject_time_patterns(
+    results,
+    subject,
+    out_dir,
+    save_formats,
+    pattern_times=None,
+    file_prefix="time_patterns",
+):
     """Plot decoder patterns as a topographic joint plot (EvokedArray.plot_joint).
 
     One figure per contrast.  Patterns are mapped back to sensor space via
@@ -1020,7 +1163,7 @@ def plot_subject_time_patterns(results, subject, out_dir, save_formats,
     for cname, res in results.items():
         if "patterns" not in res or "info" not in res:
             continue
-        patterns = res["patterns"]   # (n_channels, n_times)
+        patterns = res["patterns"]  # (n_channels, n_times)
         info = res["info"]
         times = res["times"]
 
@@ -1045,6 +1188,7 @@ def plot_subject_time_patterns(results, subject, out_dir, save_formats,
 # ---------------------------------------------------------------------------
 # Per-subject orchestration
 # ---------------------------------------------------------------------------
+
 
 def process_subject(cfg):
     """Load epochs, run all decoding analyses, save results and plots.
@@ -1077,8 +1221,7 @@ def process_subject(cfg):
     )
     if not epochs_path.fpath.exists():
         raise FileNotFoundError(
-            f"Clean epochs not found at {epochs_path.fpath}\n"
-            f"Run preprocessing first."
+            f"Clean epochs not found at {epochs_path.fpath}\nRun preprocessing first."
         )
     print(f"  Loading epochs: {epochs_path.fpath}")
     epochs = mne.read_epochs(epochs_path, preload=True)
@@ -1122,8 +1265,11 @@ def process_subject(cfg):
         # Time-resolved decoding
         print(f"  [time decoding]")
         t_res = run_subject_time_decoding(
-            epochs, contrast,
-            scoring=scoring, n_jobs=n_jobs, decim=decim,
+            epochs,
+            contrast,
+            scoring=scoring,
+            n_jobs=n_jobs,
+            decim=decim,
             group_column=group_column,
             time_n_components=time_n_components,
         )
@@ -1135,8 +1281,11 @@ def process_subject(cfg):
         if run_tg:
             print(f"  [temporal generalization]")
             tg_res = run_subject_temporal_gen(
-                epochs, contrast,
-                scoring=scoring, n_jobs=n_jobs, decim=decim,
+                epochs,
+                contrast,
+                scoring=scoring,
+                n_jobs=n_jobs,
+                decim=decim,
                 group_column=group_column,
                 time_n_components=time_n_components,
             )
@@ -1147,7 +1296,8 @@ def process_subject(cfg):
         # Full-epoch decoding
         print(f"  [epoch decoding]")
         e_res = run_subject_epoch_decoding(
-            epochs, contrast,
+            epochs,
+            contrast,
             scoring=scoring,
             group_column=group_column,
             epoch_n_components=epoch_n_components,
@@ -1162,8 +1312,11 @@ def process_subject(cfg):
         ccname = cc["name"]
         print(f"\n  {subject} -- cross: {ccname}")
         cc_res = run_subject_cross_decoding(
-            epochs, cc,
-            scoring=scoring, n_jobs=n_jobs, decim=decim,
+            epochs,
+            cc,
+            scoring=scoring,
+            n_jobs=n_jobs,
+            decim=decim,
             group_column=group_column,
             time_n_components=time_n_components,
             epoch_n_components=epoch_n_components,
@@ -1172,14 +1325,18 @@ def process_subject(cfg):
             continue
 
         if "time" in cc_res:
-            save_cross_time_results(bids_path, cc, cc_res["time"], scoring, decoding_dir)
+            save_cross_time_results(
+                bids_path, cc, cc_res["time"], scoring, decoding_dir
+            )
             # Add metadata for plot labels
             cc_res["time"]["train_name"] = cc_res["train_name"]
             cc_res["time"]["test_name"] = cc_res["test_name"]
             cross_time_results[ccname] = cc_res["time"]
 
         if "epoch" in cc_res:
-            save_cross_epoch_results(bids_path, cc, cc_res["epoch"], scoring, decoding_dir)
+            save_cross_epoch_results(
+                bids_path, cc, cc_res["epoch"], scoring, decoding_dir
+            )
             cross_epoch_results[ccname] = cc_res["epoch"]
 
         if "tg" in cc_res:
@@ -1192,27 +1349,38 @@ def process_subject(cfg):
     # ---- Per-subject plots ----
     print(f"\n  Plotting individual results for {subject} ...")
     if time_results:
-        plot_subject_time_ribbon(time_results, subject, decoding_dir,
-                                  save_formats, chance)
-        plot_subject_time_patterns(time_results, subject, decoding_dir,
-                                   save_formats, pattern_times)
+        plot_subject_time_ribbon(
+            time_results, subject, decoding_dir, save_formats, chance
+        )
+        plot_subject_time_patterns(
+            time_results, subject, decoding_dir, save_formats, pattern_times
+        )
     if epoch_results:
-        plot_subject_epoch_bar(epoch_results, subject, decoding_dir,
-                                save_formats, chance)
+        plot_subject_epoch_bar(
+            epoch_results, subject, decoding_dir, save_formats, chance
+        )
     if tg_results:
         plot_subject_tg_heatmap(tg_results, subject, decoding_dir, save_formats)
     if cross_time_results:
-        plot_subject_cross_ribbon(cross_time_results, subject, decoding_dir,
-                                   save_formats, chance)
-        plot_subject_time_patterns(cross_time_results, subject, decoding_dir,
-                                   save_formats, pattern_times,
-                                   file_prefix="cross_time_patterns")
+        plot_subject_cross_ribbon(
+            cross_time_results, subject, decoding_dir, save_formats, chance
+        )
+        plot_subject_time_patterns(
+            cross_time_results,
+            subject,
+            decoding_dir,
+            save_formats,
+            pattern_times,
+            file_prefix="cross_time_patterns",
+        )
     if cross_epoch_results:
-        plot_subject_cross_epoch_bar(cross_epoch_results, subject, decoding_dir,
-                                      save_formats, chance)
+        plot_subject_cross_epoch_bar(
+            cross_epoch_results, subject, decoding_dir, save_formats, chance
+        )
     if cross_tg_results:
-        plot_subject_cross_tg_heatmap(cross_tg_results, subject, decoding_dir,
-                                        save_formats)
+        plot_subject_cross_tg_heatmap(
+            cross_tg_results, subject, decoding_dir, save_formats
+        )
 
     del epochs
     print(f"\n  Done: {subject}")
@@ -1221,6 +1389,7 @@ def process_subject(cfg):
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def parse_args():
     p = argparse.ArgumentParser(

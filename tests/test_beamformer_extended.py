@@ -30,6 +30,7 @@ from custom.run_beamformer import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def beam_cfg(tmp_path):
     """Minimal beamformer config."""
@@ -44,11 +45,13 @@ def beam_cfg(tmp_path):
         n_jobs=1,
         noise_cov="ad-hoc",
         conditions=["stim_a", "stim_b"],
-        contrasts=[{
-            "name": "a_vs_b",
-            "conditions": ["stim_a", "stim_b"],
-            "weights": [1.0, -1.0],
-        }],
+        contrasts=[
+            {
+                "name": "a_vs_b",
+                "conditions": ["stim_a", "stim_b"],
+                "weights": [1.0, -1.0],
+            }
+        ],
         ch_types=["mag"],
         _run_beamformer=True,
         _beamformer_reg=0.05,
@@ -67,6 +70,7 @@ def beam_cfg(tmp_path):
 # load_beamformer_data
 # ---------------------------------------------------------------------------
 
+
 class TestLoadBeamformerData:
     def test_missing_forward_raises(self, beam_cfg, tmp_path):
         """Should raise FileNotFoundError when forward file missing."""
@@ -83,16 +87,19 @@ class TestLoadBeamformerData:
         fwd_path = meg_dir / "sub-001_ses-01_task-restingstate_fwd.fif"
         epo_path = meg_dir / "sub-001_ses-01_task-restingstate_proc-clean_epo.fif"
 
-        with patch("custom.run_beamformer.mne.read_forward_solution") as mock_fwd, \
-             patch("custom.run_beamformer.mne.read_epochs") as mock_epo, \
-             patch("custom.run_beamformer.mne.io.read_info") as mock_info:
-
+        with (
+            patch("custom.run_beamformer.mne.read_forward_solution") as mock_fwd,
+            patch("custom.run_beamformer.mne.read_epochs") as mock_epo,
+            patch("custom.run_beamformer.mne.io.read_info") as mock_info,
+        ):
             # Create mock fwd path
             fwd_path.touch()
             epo_path.touch()
 
             mock_fwd.return_value = MagicMock(spec=mne.Forward)
-            mock_fwd.return_value.__getitem__ = lambda self, key: [1, 2] if key == "src" else None
+            mock_fwd.return_value.__getitem__ = (
+                lambda self, key: [1, 2] if key == "src" else None
+            )
 
             info = mne.create_info(["MEG001"], 300.0, ["mag"])
             mock_epochs = MagicMock(spec=mne.Epochs)
@@ -108,6 +115,7 @@ class TestLoadBeamformerData:
 # ---------------------------------------------------------------------------
 # save_beamformer_results
 # ---------------------------------------------------------------------------
+
 
 class TestSaveBeamformerResults:
     def test_saves_stc_files(self, beam_cfg, tmp_path):
@@ -168,6 +176,7 @@ class TestSaveBeamformerResults:
 # add_to_report
 # ---------------------------------------------------------------------------
 
+
 class TestAddToReport:
     def test_disabled_report_skips(self, beam_cfg, capsys):
         """When _beamformer_add_to_report=False, should skip."""
@@ -181,6 +190,7 @@ class TestAddToReport:
 # run_beamformer_timecourse — contrast paths
 # ---------------------------------------------------------------------------
 
+
 class TestBeamformerTimecourseContrasts:
     """Test the contrast computation branch in run_beamformer_timecourse."""
 
@@ -191,8 +201,14 @@ class TestBeamformerTimecourseContrasts:
             np.random.RandomState(0).randn(6, 1, 100) * 1e-13,
             info,
             events=np.array(
-                [[0, 0, 1], [100, 0, 1], [200, 0, 1],
-                 [300, 0, 2], [400, 0, 2], [500, 0, 2]]
+                [
+                    [0, 0, 1],
+                    [100, 0, 1],
+                    [200, 0, 1],
+                    [300, 0, 2],
+                    [400, 0, 2],
+                    [500, 0, 2],
+                ]
             ),
             event_id={"stim_a": 1, "stim_b": 2},
         )
@@ -204,9 +220,7 @@ class TestBeamformerTimecourseContrasts:
                 mock_stc.data = np.ones((5, 100))
                 mock_apply.return_value = mock_stc
 
-                stcs = run_beamformer_timecourse(
-                    epochs, MagicMock(), beam_cfg
-                )
+                stcs = run_beamformer_timecourse(epochs, MagicMock(), beam_cfg)
 
         assert "stim_a" in stcs
         assert "stim_b" in stcs
@@ -231,9 +245,7 @@ class TestBeamformerTimecourseContrasts:
                 mock_stc.data = np.zeros((5, 100))
                 mock_apply.return_value = mock_stc
 
-                stcs = run_beamformer_timecourse(
-                    epochs, MagicMock(), beam_cfg
-                )
+                stcs = run_beamformer_timecourse(epochs, MagicMock(), beam_cfg)
 
         assert "undefined_contrast" not in stcs
         assert "WARNING" in capsys.readouterr().out
@@ -242,6 +254,7 @@ class TestBeamformerTimecourseContrasts:
 # ---------------------------------------------------------------------------
 # run_beamformer_power — contrast paths
 # ---------------------------------------------------------------------------
+
 
 class TestBeamformerPowerContrasts:
     """Test contrast computation in run_beamformer_power."""
@@ -253,23 +266,29 @@ class TestBeamformerPowerContrasts:
             np.random.RandomState(0).randn(6, 1, 100) * 1e-13,
             info,
             events=np.array(
-                [[0, 0, 1], [100, 0, 1], [200, 0, 1],
-                 [300, 0, 2], [400, 0, 2], [500, 0, 2]]
+                [
+                    [0, 0, 1],
+                    [100, 0, 1],
+                    [200, 0, 1],
+                    [300, 0, 2],
+                    [400, 0, 2],
+                    [500, 0, 2],
+                ]
             ),
             event_id={"stim_a": 1, "stim_b": 2},
         )
 
-        with patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply, \
-             patch("custom.run_beamformer.mne.compute_covariance") as mock_cov:
+        with (
+            patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply,
+            patch("custom.run_beamformer.mne.compute_covariance") as mock_cov,
+        ):
             mock_stc = MagicMock()
             mock_stc.data = np.ones((5, 1))
             mock_stc.copy.return_value = MagicMock(data=np.ones((5, 1)))
             mock_apply.return_value = mock_stc
             mock_cov.return_value = MagicMock()
 
-            stcs = run_beamformer_power(
-                epochs, MagicMock(), beam_cfg
-            )
+            stcs = run_beamformer_power(epochs, MagicMock(), beam_cfg)
 
         assert "stim_a" in stcs
         assert "stim_b" in stcs
@@ -279,6 +298,7 @@ class TestBeamformerPowerContrasts:
 # ---------------------------------------------------------------------------
 # parse_args
 # ---------------------------------------------------------------------------
+
 
 class TestBeamformerParseArgs:
     def test_requires_config(self):

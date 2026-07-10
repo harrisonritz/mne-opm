@@ -43,6 +43,7 @@ Run:
     uv run fs_qa.py --subjects-dir /path/to/SUBJECTS_DIR
     uv run fs_qa.py --subjects-dir $SUBJECTS_DIR --subjects sub-01 sub-02
 """
+
 from __future__ import annotations
 
 import argparse
@@ -59,6 +60,7 @@ import numba
 
 # Headless plotting.
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
@@ -75,7 +77,7 @@ DO_BEM = True
 STATUS_PASS = "PASS"
 STATUS_WARN = "WARN"
 STATUS_FAIL = "FAIL"
-STATUS_SKIP = "SKIP"   # test not applicable / inputs missing
+STATUS_SKIP = "SKIP"  # test not applicable / inputs missing
 STATUS_ERROR = "ERROR"  # the test harness itself threw
 
 SEV_NONE = "none"
@@ -84,18 +86,23 @@ SEV_MAJOR = "major"
 SEV_CRIT = "critical"
 
 # ranking for roll-up of an overall subject verdict
-_STATUS_RANK = {STATUS_PASS: 0, STATUS_SKIP: 0, STATUS_WARN: 1,
-                STATUS_ERROR: 2, STATUS_FAIL: 3}
+_STATUS_RANK = {
+    STATUS_PASS: 0,
+    STATUS_SKIP: 0,
+    STATUS_WARN: 1,
+    STATUS_ERROR: 2,
+    STATUS_FAIL: 3,
+}
 
 
 @dataclass
 class TestResult:
-    category: str          # "log" | "cortical" | "bem"
-    test: str              # short test name
-    status: str            # one of STATUS_*
+    category: str  # "log" | "cortical" | "bem"
+    test: str  # short test name
+    status: str  # one of STATUS_*
     severity: str = SEV_NONE
-    value: object = ""     # numeric / short value for the CSV
-    detail: str = ""       # free-text explanation
+    value: object = ""  # numeric / short value for the CSV
+    detail: str = ""  # free-text explanation
 
     def row(self, subject: str) -> dict:
         return {
@@ -114,16 +121,16 @@ class Config:
     subjects_dir: Path
     subjects: Optional[list] = None
     # cortical
-    euler_holes_warn: int = 150      # per-subject soft flag on total nofix holes
+    euler_holes_warn: int = 150  # per-subject soft flag on total nofix holes
     # bem
-    gap_warn_mm: float = 1.0         # min inter-surface gap below this -> WARN
+    gap_warn_mm: float = 1.0  # min inter-surface gap below this -> WARN
     pial_out_warn_frac: float = 0.0  # any pial vertex outside inner_skull -> WARN
     pial_out_fail_frac: float = 0.01  # >1% outside -> FAIL
-    nest_tol_frac: float = 0.999     # fraction-inside above this counts as nested
-    bem_ico: int = 4                 # downsampling for make_bem_model validation
+    nest_tol_frac: float = 0.999  # fraction-inside above this counts as nested
+    bem_ico: int = 4  # downsampling for make_bem_model validation
     conductivity = (0.3, 0.006, 0.3)
     # group
-    mad_k: float = 3.0               # robust-z threshold for cohort outliers
+    mad_k: float = 3.0  # robust-z threshold for cohort outliers
     # behaviour
     do_3d: bool = False
     do_cnr: bool = True
@@ -136,6 +143,7 @@ class Config:
 def _read_geometry(path: Path):
     """Read a FreeSurfer surface -> (vertices[n,3] float64, faces[m,3] int)."""
     import nibabel.freesurfer.io as fsio
+
     verts, faces = fsio.read_geometry(str(path))
     return np.asarray(verts, dtype=np.float64), np.asarray(faces, dtype=np.int64)
 
@@ -167,7 +175,7 @@ def surface_topology(verts: np.ndarray, faces: np.ndarray) -> dict:
     uniq, counts = np.unique(e, axis=0, return_counts=True)
     n_e = int(len(uniq))
 
-    n_boundary = int(np.count_nonzero(counts == 1))   # holes / open edges
+    n_boundary = int(np.count_nonzero(counts == 1))  # holes / open edges
     n_nonmanifold = int(np.count_nonzero(counts > 2))  # >2 faces share an edge
     watertight = bool(np.all(counts == 2))
 
@@ -185,10 +193,16 @@ def surface_topology(verts: np.ndarray, faces: np.ndarray) -> dict:
     n_defects = (2 - euler) / 2.0  # genus / holes for a closed orientable surf
 
     return dict(
-        n_vert=n_v, n_face=n_f, n_edge=n_e, euler=int(euler),
-        n_defects=n_defects, n_boundary_edges=n_boundary,
-        n_nonmanifold_edges=n_nonmanifold, watertight=watertight,
-        n_lowdeg_vert=n_lowdeg, n_isolated_vert=n_isolated,
+        n_vert=n_v,
+        n_face=n_f,
+        n_edge=n_e,
+        euler=int(euler),
+        n_defects=n_defects,
+        n_boundary_edges=n_boundary,
+        n_nonmanifold_edges=n_nonmanifold,
+        watertight=watertight,
+        n_lowdeg_vert=n_lowdeg,
+        n_isolated_vert=n_isolated,
         n_degenerate_tri=n_degenerate,
     )
 
@@ -228,7 +242,6 @@ def _solid_angle_sum(points, verts, faces, chunk=4096):
     return mne.surface._get_solids(tris, points)
 
 
-
 @numba.njit(parallel=True, fastmath=True)
 def _solid_angle_sum_numba(points, ta, tb, tc):
     P = points.shape[0]
@@ -240,24 +253,28 @@ def _solid_angle_sum_numba(points, ta, tb, tc):
             a = ta[f] - points[p]
             b = tb[f] - points[p]
             c = tc[f] - points[p]
-            la = np.sqrt(a[0]**2 + a[1]**2 + a[2]**2)
-            lb = np.sqrt(b[0]**2 + b[1]**2 + b[2]**2)
-            lc = np.sqrt(c[0]**2 + c[1]**2 + c[2]**2)
-            numer = (a[0]*(b[1]*c[2]-b[2]*c[1])
-                   + a[1]*(b[2]*c[0]-b[0]*c[2])
-                   + a[2]*(b[0]*c[1]-b[1]*c[0]))
-            denom = (la*lb*lc
-                   + (a[0]*b[0]+a[1]*b[1]+a[2]*b[2])*lc
-                   + (a[0]*c[0]+a[1]*c[1]+a[2]*c[2])*lb
-                   + (b[0]*c[0]+b[1]*c[1]+b[2]*c[2])*la)
+            la = np.sqrt(a[0] ** 2 + a[1] ** 2 + a[2] ** 2)
+            lb = np.sqrt(b[0] ** 2 + b[1] ** 2 + b[2] ** 2)
+            lc = np.sqrt(c[0] ** 2 + c[1] ** 2 + c[2] ** 2)
+            numer = (
+                a[0] * (b[1] * c[2] - b[2] * c[1])
+                + a[1] * (b[2] * c[0] - b[0] * c[2])
+                + a[2] * (b[0] * c[1] - b[1] * c[0])
+            )
+            denom = (
+                la * lb * lc
+                + (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) * lc
+                + (a[0] * c[0] + a[1] * c[1] + a[2] * c[2]) * lb
+                + (b[0] * c[0] + b[1] * c[1] + b[2] * c[2]) * la
+            )
             s += 2.0 * np.arctan2(numer, denom)
         out[p] = s
     return out
 
 
-
-def fraction_inside(points: np.ndarray, verts: np.ndarray,
-                    faces: np.ndarray) -> tuple[float, np.ndarray]:
+def fraction_inside(
+    points: np.ndarray, verts: np.ndarray, faces: np.ndarray
+) -> tuple[float, np.ndarray]:
     """Fraction of `points` inside the closed surface (verts, faces).
 
     Uses |solid angle| > 2*pi as the interior test, so it is insensitive to a
@@ -266,9 +283,12 @@ def fraction_inside(points: np.ndarray, verts: np.ndarray,
     points = np.asarray(points, dtype=np.float64)
     # sa = _solid_angle_sum(points, np.asarray(verts, dtype=np.float64),
     #                       np.asarray(faces))
-    sa = _solid_angle_sum_numba(points, np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 0]],
-                                np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 1]],
-                                np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 2]])
+    sa = _solid_angle_sum_numba(
+        points,
+        np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 0]],
+        np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 1]],
+        np.asarray(verts, dtype=np.float64)[np.asarray(faces)[:, 2]],
+    )
     inside = np.abs(sa) > 2.0 * np.pi
     return float(inside.mean()), inside
 
@@ -276,6 +296,7 @@ def fraction_inside(points: np.ndarray, verts: np.ndarray,
 def min_gap_mm(verts_a: np.ndarray, verts_b: np.ndarray) -> float:
     """Approximate minimum gap between two surfaces (nearest-vertex distance)."""
     from scipy.spatial import cKDTree
+
     d, _ = cKDTree(verts_b).query(verts_a, k=1)
     return float(d.min())
 
@@ -284,29 +305,46 @@ def min_gap_mm(verts_a: np.ndarray, verts_b: np.ndarray) -> float:
 # Cortical recon tests
 # ----------------------------------------------------------------------------
 _HARD_LOG_PATTERNS = (
-    "exited with errors", "segmentation fault", " killed", "core dumped",
-    "no such file or directory", "cannot allocate", "error:", "fatal error",
+    "exited with errors",
+    "segmentation fault",
+    " killed",
+    "core dumped",
+    "no such file or directory",
+    "cannot allocate",
+    "error:",
+    "fatal error",
 )
 _SOFT_LOG_PATTERNS = ("warning", "talairach failed", "defect", "skipping")
 
 
 def test_recon_log(subj_dir: Path, qa_dir: Path) -> TestResult:
-
     print(f"    Running recon log test")
 
     log = _find_first(subj_dir / "scripts" / "recon-all.log")
     status_log = _find_first(subj_dir / "scripts" / "recon-all-status.log")
     if log is None:
-        return TestResult("log", "recon_log_present", STATUS_FAIL, SEV_MAJOR,
-                          "missing", "scripts/recon-all.log not found")
+        return TestResult(
+            "log",
+            "recon_log_present",
+            STATUS_FAIL,
+            SEV_MAJOR,
+            "missing",
+            "scripts/recon-all.log not found",
+        )
 
     text = log.read_text(errors="ignore")
     low = text.lower()
     finished = "finished without error" in low
-    hard = [ln for ln in text.splitlines()
-            if any(p in ln.lower() for p in _HARD_LOG_PATTERNS)]
-    soft = [ln for ln in text.splitlines()
-            if any(p in ln.lower() for p in _SOFT_LOG_PATTERNS)]
+    hard = [
+        ln
+        for ln in text.splitlines()
+        if any(p in ln.lower() for p in _HARD_LOG_PATTERNS)
+    ]
+    soft = [
+        ln
+        for ln in text.splitlines()
+        if any(p in ln.lower() for p in _SOFT_LOG_PATTERNS)
+    ]
 
     # FreeSurfer build/version, if present
     version = "unknown"
@@ -322,23 +360,41 @@ def test_recon_log(subj_dir: Path, qa_dir: Path) -> TestResult:
         f.write(f"finished_without_error: {finished}\n\n")
         if status_log is not None:
             f.write("## last status lines\n")
-            f.write("\n".join(status_log.read_text(errors='ignore')
-                              .splitlines()[-15:]) + "\n\n")
+            f.write(
+                "\n".join(status_log.read_text(errors="ignore").splitlines()[-15:])
+                + "\n\n"
+            )
         f.write(f"## hard error lines ({len(hard)})\n")
         f.write("\n".join(hard[:200]) + "\n\n")
         f.write(f"## soft warning lines ({len(soft)})\n")
         f.write("\n".join(soft[:200]) + "\n")
 
     if hard or not finished:
-        return TestResult("log", "recon_log", STATUS_FAIL, SEV_CRIT,
-                          f"{len(hard)} errors",
-                          f"finished={finished}; see recon_log_issues.txt")
+        return TestResult(
+            "log",
+            "recon_log",
+            STATUS_FAIL,
+            SEV_CRIT,
+            f"{len(hard)} errors",
+            f"finished={finished}; see recon_log_issues.txt",
+        )
     if soft:
-        return TestResult("log", "recon_log", STATUS_WARN, SEV_MINOR,
-                          f"{len(soft)} warnings",
-                          "soft warnings present; see recon_log_issues.txt")
-    return TestResult("log", "recon_log", STATUS_PASS, SEV_NONE, "ok",
-                      f"finished without error ({version})")
+        return TestResult(
+            "log",
+            "recon_log",
+            STATUS_WARN,
+            SEV_MINOR,
+            f"{len(soft)} warnings",
+            "soft warnings present; see recon_log_issues.txt",
+        )
+    return TestResult(
+        "log",
+        "recon_log",
+        STATUS_PASS,
+        SEV_NONE,
+        "ok",
+        f"finished without error ({version})",
+    )
 
 
 def test_euler_nofix(subj_dir: Path, qa_dir: Path, cfg: Config):
@@ -350,8 +406,10 @@ def test_euler_nofix(subj_dir: Path, qa_dir: Path, cfg: Config):
     """
     print(f"    Running Euler number test")
     surf = subj_dir / "surf"
-    lines = [f"# Euler / defect summary for {subj_dir.name}",
-             "# chi = V - E + F ; defects n = (2 - chi)/2 (genus of nofix surf)"]
+    lines = [
+        f"# Euler / defect summary for {subj_dir.name}",
+        "# chi = V - E + F ; defects n = (2 - chi)/2 (genus of nofix surf)",
+    ]
     holes = {}
     for hemi in ("lh", "rh"):
         p = surf / f"{hemi}.orig.nofix"
@@ -362,23 +420,39 @@ def test_euler_nofix(subj_dir: Path, qa_dir: Path, cfg: Config):
         v, f = _read_geometry(p)
         t = surface_topology(v, f)
         holes[hemi] = t["n_defects"]
-        lines.append(f"{hemi}.orig.nofix: chi={t['euler']:>6d}  "
-                     f"defects(holes)={t['n_defects']:.0f}  "
-                     f"V={t['n_vert']} E={t['n_edge']} F={t['n_face']}")
+        lines.append(
+            f"{hemi}.orig.nofix: chi={t['euler']:>6d}  "
+            f"defects(holes)={t['n_defects']:.0f}  "
+            f"V={t['n_vert']} E={t['n_edge']} F={t['n_face']}"
+        )
     (qa_dir / "euler.txt").write_text("\n".join(lines) + "\n")
 
     have = [h for h in holes.values() if h is not None]
     if not have:
-        return (TestResult("cortical", "euler_nofix", STATUS_SKIP, SEV_NONE,
-                           "n/a", "orig.nofix surfaces not found"),
-                holes.get("lh"), holes.get("rh"))
+        return (
+            TestResult(
+                "cortical",
+                "euler_nofix",
+                STATUS_SKIP,
+                SEV_NONE,
+                "n/a",
+                "orig.nofix surfaces not found",
+            ),
+            holes.get("lh"),
+            holes.get("rh"),
+        )
     total = float(np.nansum([h for h in have]))
     status = STATUS_WARN if total > cfg.euler_holes_warn else STATUS_PASS
     sev = SEV_MINOR if status == STATUS_WARN else SEV_NONE
-    detail = (f"lh={holes['lh']} rh={holes['rh']} total={total:.0f}; "
-              "cohort outlier flagged at group level")
-    return (TestResult("cortical", "euler_nofix", status, sev, total, detail),
-            holes.get("lh"), holes.get("rh"))
+    detail = (
+        f"lh={holes['lh']} rh={holes['rh']} total={total:.0f}; "
+        "cohort outlier flagged at group level"
+    )
+    return (
+        TestResult("cortical", "euler_nofix", status, sev, total, detail),
+        holes.get("lh"),
+        holes.get("rh"),
+    )
 
 
 def test_fixed_surface_topology(subj_dir: Path) -> list[TestResult]:
@@ -394,9 +468,16 @@ def test_fixed_surface_topology(subj_dir: Path) -> list[TestResult]:
     for hemi in ("lh", "rh"):
         p = _find_first(surf / f"{hemi}.white", surf / f"{hemi}.orig")
         if p is None:
-            results.append(TestResult("cortical", f"{hemi}_white_topology",
-                                      STATUS_SKIP, SEV_NONE, "missing",
-                                      f"{hemi}.white/orig not found"))
+            results.append(
+                TestResult(
+                    "cortical",
+                    f"{hemi}_white_topology",
+                    STATUS_SKIP,
+                    SEV_NONE,
+                    "missing",
+                    f"{hemi}.white/orig not found",
+                )
+            )
             continue
         v, f = _read_geometry(p)
         t = surface_topology(v, f)
@@ -408,19 +489,40 @@ def test_fixed_surface_topology(subj_dir: Path) -> list[TestResult]:
         if t["n_nonmanifold_edges"]:
             problems.append(f"{t['n_nonmanifold_edges']} non-manifold edges")
         if problems:
-            results.append(TestResult(
-                "cortical", f"{hemi}_white_topology", STATUS_FAIL, SEV_MAJOR,
-                f"chi={t['euler']}", "; ".join(problems)))
+            results.append(
+                TestResult(
+                    "cortical",
+                    f"{hemi}_white_topology",
+                    STATUS_FAIL,
+                    SEV_MAJOR,
+                    f"chi={t['euler']}",
+                    "; ".join(problems),
+                )
+            )
         else:
-            results.append(TestResult(
-                "cortical", f"{hemi}_white_topology", STATUS_PASS, SEV_NONE,
-                "chi=2", "closed genus-0 manifold"))
+            results.append(
+                TestResult(
+                    "cortical",
+                    f"{hemi}_white_topology",
+                    STATUS_PASS,
+                    SEV_NONE,
+                    "chi=2",
+                    "closed genus-0 manifold",
+                )
+            )
     return results
 
 
-_GLOBAL_MEASURES = ("BrainSegVol", "BrainSegVolNotVent", "lhCortexVol",
-                    "rhCortexVol", "CortexVol", "TotalGrayVol",
-                    "SupraTentorialVol", "EstimatedTotalIntraCranialVol")
+_GLOBAL_MEASURES = (
+    "BrainSegVol",
+    "BrainSegVolNotVent",
+    "lhCortexVol",
+    "rhCortexVol",
+    "CortexVol",
+    "TotalGrayVol",
+    "SupraTentorialVol",
+    "EstimatedTotalIntraCranialVol",
+)
 
 
 def parse_global_stats(subj_dir: Path) -> dict:
@@ -447,17 +549,34 @@ def test_cnr(subj_dir: Path, cfg: Config) -> TestResult:
     print(f"    Running gray/white CNR test")
     import shutil
     import subprocess
+
     if not cfg.do_cnr or shutil.which("mri_cnr") is None:
-        return TestResult("cortical", "gray_white_cnr", STATUS_SKIP, SEV_NONE,
-                          "n/a", "mri_cnr not on PATH (optional)")
+        return TestResult(
+            "cortical",
+            "gray_white_cnr",
+            STATUS_SKIP,
+            SEV_NONE,
+            "n/a",
+            "mri_cnr not on PATH (optional)",
+        )
     surf = subj_dir / "surf"
     norm = subj_dir / "mri" / "norm.mgz"
     if not norm.exists():
-        return TestResult("cortical", "gray_white_cnr", STATUS_SKIP, SEV_NONE,
-                          "n/a", "mri/norm.mgz missing")
+        return TestResult(
+            "cortical",
+            "gray_white_cnr",
+            STATUS_SKIP,
+            SEV_NONE,
+            "n/a",
+            "mri/norm.mgz missing",
+        )
     try:
-        res = subprocess.run(["mri_cnr", str(surf), str(norm)],
-                             capture_output=True, text=True, timeout=300)
+        res = subprocess.run(
+            ["mri_cnr", str(surf), str(norm)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
         out = res.stdout + res.stderr
         # mri_cnr prints "total CNR = X"
         cnr = None
@@ -465,14 +584,32 @@ def test_cnr(subj_dir: Path, cfg: Config) -> TestResult:
             if "total CNR" in ln:
                 cnr = float(ln.split("=")[-1])
         if cnr is None:
-            return TestResult("cortical", "gray_white_cnr", STATUS_SKIP,
-                              SEV_NONE, "n/a", "could not parse mri_cnr output")
-        return TestResult("cortical", "gray_white_cnr", STATUS_PASS, SEV_NONE,
-                          round(cnr, 3), "lower values may indicate motion; "
-                          "flagged relative to cohort at group level")
+            return TestResult(
+                "cortical",
+                "gray_white_cnr",
+                STATUS_SKIP,
+                SEV_NONE,
+                "n/a",
+                "could not parse mri_cnr output",
+            )
+        return TestResult(
+            "cortical",
+            "gray_white_cnr",
+            STATUS_PASS,
+            SEV_NONE,
+            round(cnr, 3),
+            "lower values may indicate motion; "
+            "flagged relative to cohort at group level",
+        )
     except Exception as exc:  # pragma: no cover
-        return TestResult("cortical", "gray_white_cnr", STATUS_SKIP, SEV_NONE,
-                          "n/a", f"mri_cnr failed: {exc}")
+        return TestResult(
+            "cortical",
+            "gray_white_cnr",
+            STATUS_SKIP,
+            SEV_NONE,
+            "n/a",
+            f"mri_cnr failed: {exc}",
+        )
 
 
 # ----------------------------------------------------------------------------
@@ -505,8 +642,10 @@ def test_bem_surface_topology(name: str, path: Path) -> tuple[TestResult, dict]:
     problems, sev = [], SEV_NONE
     status = STATUS_PASS
     if not t["watertight"]:
-        problems.append(f"not watertight ({t['n_boundary_edges']} boundary, "
-                        f"{t['n_nonmanifold_edges']} non-manifold edges)")
+        problems.append(
+            f"not watertight ({t['n_boundary_edges']} boundary, "
+            f"{t['n_nonmanifold_edges']} non-manifold edges)"
+        )
         status, sev = STATUS_FAIL, SEV_CRIT
     if t["n_lowdeg_vert"]:
         problems.append(f"{t['n_lowdeg_vert']} verts with <3 triangles")
@@ -520,11 +659,15 @@ def test_bem_surface_topology(name: str, path: Path) -> tuple[TestResult, dict]:
         problems.append(f"{t['n_degenerate_tri']} zero-area triangles")
         if status == STATUS_PASS:
             status, sev = STATUS_WARN, SEV_MINOR
-    detail = "; ".join(problems) if problems else \
-        f"closed genus-0 manifold (V={t['n_vert']}, F={t['n_face']})"
-    return (TestResult("bem", f"{name}_topology", status, sev,
-                       f"chi={t['euler']}", detail),
-            {"verts": v, "faces": f, "topo": t})
+    detail = (
+        "; ".join(problems)
+        if problems
+        else f"closed genus-0 manifold (V={t['n_vert']}, F={t['n_face']})"
+    )
+    return (
+        TestResult("bem", f"{name}_topology", status, sev, f"chi={t['euler']}", detail),
+        {"verts": v, "faces": f, "topo": t},
+    )
 
 
 def test_bem_nesting(meshes: dict, cfg: Config) -> list[TestResult]:
@@ -535,40 +678,70 @@ def test_bem_nesting(meshes: dict, cfg: Config) -> list[TestResult]:
     for inner, outer in pairs:
         print(f"        {inner} in {outer}")
         if inner not in meshes or outer not in meshes:
-            results.append(TestResult("bem", f"nest_{inner}_in_{outer}",
-                                      STATUS_SKIP, SEV_NONE, "n/a",
-                                      "surface missing"))
+            results.append(
+                TestResult(
+                    "bem",
+                    f"nest_{inner}_in_{outer}",
+                    STATUS_SKIP,
+                    SEV_NONE,
+                    "n/a",
+                    "surface missing",
+                )
+            )
             continue
         if not meshes[outer]["topo"]["watertight"]:
-            results.append(TestResult("bem", f"nest_{inner}_in_{outer}",
-                                      STATUS_SKIP, SEV_MAJOR, "n/a",
-                                      f"{outer} not watertight; containment "
-                                      "test unreliable"))
+            results.append(
+                TestResult(
+                    "bem",
+                    f"nest_{inner}_in_{outer}",
+                    STATUS_SKIP,
+                    SEV_MAJOR,
+                    "n/a",
+                    f"{outer} not watertight; containment test unreliable",
+                )
+            )
             continue
         outer_v = meshes[outer]["verts"]
         outer_f = meshes[outer]["faces"]
         frac, mask = fraction_inside(meshes[inner]["verts"], outer_v, outer_f)
         n_out = int((~mask).sum())
         if frac >= cfg.nest_tol_frac:
-            results.append(TestResult("bem", f"nest_{inner}_in_{outer}",
-                                      STATUS_PASS, SEV_NONE, f"{frac:.4f}",
-                                      f"{inner} inside {outer}"))
+            results.append(
+                TestResult(
+                    "bem",
+                    f"nest_{inner}_in_{outer}",
+                    STATUS_PASS,
+                    SEV_NONE,
+                    f"{frac:.4f}",
+                    f"{inner} inside {outer}",
+                )
+            )
         else:
-            results.append(TestResult("bem", f"nest_{inner}_in_{outer}",
-                                      STATUS_FAIL, SEV_CRIT, f"{frac:.4f}",
-                                      f"{n_out} {inner} verts outside {outer} "
-                                      "(surfaces intersect)"))
+            results.append(
+                TestResult(
+                    "bem",
+                    f"nest_{inner}_in_{outer}",
+                    STATUS_FAIL,
+                    SEV_CRIT,
+                    f"{frac:.4f}",
+                    f"{n_out} {inner} verts outside {outer} (surfaces intersect)",
+                )
+            )
     return results
 
 
-def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
-        -> TestResult:
+def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) -> TestResult:
     """Every cortical (pial) vertex must lie inside the inner_skull surface."""
     print(f"    Running pial in inner skull test")
-    if "inner_skull" not in meshes or \
-            not meshes["inner_skull"]["topo"]["watertight"]:
-        return TestResult("bem", "pial_in_inner_skull", STATUS_SKIP, SEV_MAJOR,
-                          "n/a", "inner_skull missing/not watertight")
+    if "inner_skull" not in meshes or not meshes["inner_skull"]["topo"]["watertight"]:
+        return TestResult(
+            "bem",
+            "pial_in_inner_skull",
+            STATUS_SKIP,
+            SEV_MAJOR,
+            "n/a",
+            "inner_skull missing/not watertight",
+        )
     surf = subj_dir / "surf"
     pial = []
     for hemi in ("lh", "rh"):
@@ -578,8 +751,14 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
             v, _ = _read_geometry(p)
             pial.append(v)
     if not pial:
-        return TestResult("bem", "pial_in_inner_skull", STATUS_SKIP, SEV_NONE,
-                          "n/a", "pial surfaces not found")
+        return TestResult(
+            "bem",
+            "pial_in_inner_skull",
+            STATUS_SKIP,
+            SEV_NONE,
+            "n/a",
+            "pial surfaces not found",
+        )
     pial = np.vstack(pial)
     print(f"      Reading inner skull surface")
     inner_v = meshes["inner_skull"]["verts"]
@@ -589,26 +768,42 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) \
     n_out = int((~mask).sum())
     out_frac = 1.0 - frac
     if n_out == 0:
-        return TestResult("bem", "pial_in_inner_skull", STATUS_PASS, SEV_NONE,
-                          "0", "all cortex inside inner skull")
+        return TestResult(
+            "bem",
+            "pial_in_inner_skull",
+            STATUS_PASS,
+            SEV_NONE,
+            "0",
+            "all cortex inside inner skull",
+        )
     # approximate protrusion depth: distance from outside pial verts to the
     # nearest inner_skull vertex (KDTree; an upper bound on true signed depth)
     try:
         from scipy.spatial import KDTree
+
         print(f"      Computing distances from outside pial verts to inner skull")
         d, _ = KDTree(inner_v).query(pial[~mask], k=1, workers=-1)
         max_out = float(d.max())
     except Exception:
         max_out = float("nan")
     if out_frac > cfg.pial_out_fail_frac:
-        return TestResult("bem", "pial_in_inner_skull", STATUS_FAIL, SEV_CRIT,
-                          f"{n_out} ({out_frac:.2%})",
-                          f"cortex protrudes outside inner skull; "
-                          f"max ~{max_out:.1f} mm — forward model invalid there")
-    return TestResult("bem", "pial_in_inner_skull", STATUS_WARN, SEV_MAJOR,
-                      f"{n_out} ({out_frac:.2%})",
-                      f"a few cortical verts outside inner skull; "
-                      f"max ~{max_out:.1f} mm")
+        return TestResult(
+            "bem",
+            "pial_in_inner_skull",
+            STATUS_FAIL,
+            SEV_CRIT,
+            f"{n_out} ({out_frac:.2%})",
+            f"cortex protrudes outside inner skull; "
+            f"max ~{max_out:.1f} mm — forward model invalid there",
+        )
+    return TestResult(
+        "bem",
+        "pial_in_inner_skull",
+        STATUS_WARN,
+        SEV_MAJOR,
+        f"{n_out} ({out_frac:.2%})",
+        f"a few cortical verts outside inner skull; max ~{max_out:.1f} mm",
+    )
 
 
 def test_bem_gaps(meshes: dict, cfg: Config) -> list[TestResult]:
@@ -617,22 +812,47 @@ def test_bem_gaps(meshes: dict, cfg: Config) -> list[TestResult]:
     pairs = [("inner_skull", "outer_skull"), ("outer_skull", "outer_skin")]
     for a, b in pairs:
         if a not in meshes or b not in meshes:
-            results.append(TestResult("bem", f"gap_{a}_{b}", STATUS_SKIP,
-                                      SEV_NONE, "n/a", "surface missing"))
+            results.append(
+                TestResult(
+                    "bem",
+                    f"gap_{a}_{b}",
+                    STATUS_SKIP,
+                    SEV_NONE,
+                    "n/a",
+                    "surface missing",
+                )
+            )
             continue
         gap = min_gap_mm(meshes[a]["verts"], meshes[b]["verts"])
         if gap <= 1e-3:
-            results.append(TestResult("bem", f"gap_{a}_{b}", STATUS_FAIL,
-                                      SEV_CRIT, f"{gap:.2f} mm",
-                                      "surfaces touch/cross (zero gap)"))
+            results.append(
+                TestResult(
+                    "bem",
+                    f"gap_{a}_{b}",
+                    STATUS_FAIL,
+                    SEV_CRIT,
+                    f"{gap:.2f} mm",
+                    "surfaces touch/cross (zero gap)",
+                )
+            )
         elif gap < cfg.gap_warn_mm:
-            results.append(TestResult("bem", f"gap_{a}_{b}", STATUS_WARN,
-                                      SEV_MAJOR, f"{gap:.2f} mm",
-                                      f"thin compartment (<{cfg.gap_warn_mm} mm)"
-                                      "; BEM may be ill-conditioned"))
+            results.append(
+                TestResult(
+                    "bem",
+                    f"gap_{a}_{b}",
+                    STATUS_WARN,
+                    SEV_MAJOR,
+                    f"{gap:.2f} mm",
+                    f"thin compartment (<{cfg.gap_warn_mm} mm)"
+                    "; BEM may be ill-conditioned",
+                )
+            )
         else:
-            results.append(TestResult("bem", f"gap_{a}_{b}", STATUS_PASS,
-                                      SEV_NONE, f"{gap:.2f} mm", "ok"))
+            results.append(
+                TestResult(
+                    "bem", f"gap_{a}_{b}", STATUS_PASS, SEV_NONE, f"{gap:.2f} mm", "ok"
+                )
+            )
     return results
 
 
@@ -647,66 +867,111 @@ def test_make_bem_model(subj_dir: Path, cfg: Config) -> list[TestResult]:
     results = []
     subjects_dir = str(cfg.subjects_dir)
     subject = subj_dir.name
-    configs = [("bem_model_3layer", cfg.conductivity, SEV_CRIT),
-               ("bem_model_1layer", (0.3,), SEV_MAJOR)]
+    configs = [
+        ("bem_model_3layer", cfg.conductivity, SEV_CRIT),
+        ("bem_model_1layer", (0.3,), SEV_MAJOR),
+    ]
     for tname, cond, sev in configs:
         try:
-            mne.make_bem_model(subject=subject, ico=cfg.bem_ico,
-                               conductivity=cond, subjects_dir=subjects_dir,
-                               verbose="ERROR")
-            results.append(TestResult("bem", tname, STATUS_PASS, SEV_NONE, "ok",
-                                      f"MNE accepted geometry ({len(cond)}-layer)"))
+            mne.make_bem_model(
+                subject=subject,
+                ico=cfg.bem_ico,
+                conductivity=cond,
+                subjects_dir=subjects_dir,
+                verbose="ERROR",
+            )
+            results.append(
+                TestResult(
+                    "bem",
+                    tname,
+                    STATUS_PASS,
+                    SEV_NONE,
+                    "ok",
+                    f"MNE accepted geometry ({len(cond)}-layer)",
+                )
+            )
         except Exception as exc:
             msg = str(exc).strip().splitlines()[-1] if str(exc) else repr(exc)
-            results.append(TestResult("bem", tname, STATUS_FAIL, sev, "raised",
-                                      f"make_bem_model: {msg[:300]}"))
+            results.append(
+                TestResult(
+                    "bem",
+                    tname,
+                    STATUS_FAIL,
+                    sev,
+                    "raised",
+                    f"make_bem_model: {msg[:300]}",
+                )
+            )
     return results
 
 
-def plot_bem_images(subj_dir: Path, qa_dir: Path, cfg: Config,
-                    meshes: dict) -> TestResult:
+def plot_bem_images(
+    subj_dir: Path, qa_dir: Path, cfg: Config, meshes: dict
+) -> TestResult:
     """Save BEM-on-T1 overlays. Try mne.viz.plot_bem; fall back to a manual
     nibabel + matplotlib scatter overlay if that fails."""
     print(f"    Running BEM image plotting")
     saved = []
     try:
         for orientation in ("axial", "coronal", "sagittal"):
-            fig = mne.viz.plot_bem(subject=subj_dir.name,
-                                   subjects_dir=str(cfg.subjects_dir),
-                                   orientation=orientation, show=False)
+            fig = mne.viz.plot_bem(
+                subject=subj_dir.name,
+                subjects_dir=str(cfg.subjects_dir),
+                orientation=orientation,
+                show=False,
+            )
             out = qa_dir / f"bem_{orientation}.png"
             fig.savefig(out, dpi=120, bbox_inches="tight")
             plt.close(fig)
             saved.append(out.name)
-        return TestResult("bem", "bem_visualization", STATUS_PASS, SEV_NONE,
-                          ",".join(saved), "mne.viz.plot_bem overlays saved")
+        return TestResult(
+            "bem",
+            "bem_visualization",
+            STATUS_PASS,
+            SEV_NONE,
+            ",".join(saved),
+            "mne.viz.plot_bem overlays saved",
+        )
     except Exception as exc:
         # ---- fallback: overlay surface vertices on T1 slices manually ----
         try:
             saved = _manual_bem_plot(subj_dir, qa_dir, meshes)
-            return TestResult("bem", "bem_visualization", STATUS_WARN, SEV_MINOR,
-                              ",".join(saved),
-                              f"plot_bem failed ({str(exc)[:120]}); "
-                              "used fallback scatter overlay")
+            return TestResult(
+                "bem",
+                "bem_visualization",
+                STATUS_WARN,
+                SEV_MINOR,
+                ",".join(saved),
+                f"plot_bem failed ({str(exc)[:120]}); used fallback scatter overlay",
+            )
         except Exception as exc2:
-            return TestResult("bem", "bem_visualization", STATUS_WARN, SEV_MINOR,
-                              "none", f"visualization failed: {exc2}")
+            return TestResult(
+                "bem",
+                "bem_visualization",
+                STATUS_WARN,
+                SEV_MINOR,
+                "none",
+                f"visualization failed: {exc2}",
+            )
 
 
 def _manual_bem_plot(subj_dir: Path, qa_dir: Path, meshes: dict) -> list[str]:
     """Overlay BEM surface vertices (surface RAS) on T1 slices."""
     print(f"    Running manual BEM plot")
     import nibabel as nib
-    t1 = _find_first(subj_dir / "mri" / "T1.mgz",
-                     subj_dir / "mri" / "brain.mgz")
+
+    t1 = _find_first(subj_dir / "mri" / "T1.mgz", subj_dir / "mri" / "brain.mgz")
     if t1 is None:
         raise FileNotFoundError("no T1.mgz/brain.mgz for fallback plot")
     img = nib.load(str(t1))
     data = np.asarray(img.dataobj)
     vox2tkr = img.header.get_vox2ras_tkr()
     tkr2vox = np.linalg.inv(vox2tkr)
-    colors = {"inner_skull": "tab:red", "outer_skull": "tab:olive",
-              "outer_skin": "tab:cyan"}
+    colors = {
+        "inner_skull": "tab:red",
+        "outer_skull": "tab:olive",
+        "outer_skin": "tab:cyan",
+    }
     axes = {"axial": 2, "coronal": 1, "sagittal": 0}
     saved = []
     for orientation, ax in axes.items():
@@ -726,8 +991,13 @@ def _manual_bem_plot(subj_dir: Path, qa_dir: Path, meshes: dict) -> list[str]:
             if near.sum() == 0:
                 continue
             other = [i for i in range(3) if i != ax]
-            a.scatter(vox[near, other[0]], vox[near, other[1]], s=1,
-                      c=colors.get(name, "y"), label=name)
+            a.scatter(
+                vox[near, other[0]],
+                vox[near, other[1]],
+                s=1,
+                c=colors.get(name, "y"),
+                label=name,
+            )
         a.set_title(f"{subj_dir.name} — {orientation}")
         a.legend(markerscale=4, fontsize=7, loc="lower right")
         a.axis("off")
@@ -744,18 +1014,34 @@ def plot_alignment_3d(subj_dir: Path, qa_dir: Path, cfg: Config) -> TestResult:
     try:
         mne.viz.set_3d_backend("pyvista")
         import pyvista
+
         pyvista.OFF_SCREEN = True
         fig = mne.viz.plot_alignment(
-            subject=subj_dir.name, subjects_dir=str(cfg.subjects_dir),
-            surfaces=["inner_skull", "outer_skull", "head"], coord_frame="mri",
-            show_axes=True)
+            subject=subj_dir.name,
+            subjects_dir=str(cfg.subjects_dir),
+            surfaces=["inner_skull", "outer_skull", "head"],
+            coord_frame="mri",
+            show_axes=True,
+        )
         out = qa_dir / "bem_alignment_3d.png"
         fig.plotter.screenshot(str(out))
-        return TestResult("bem", "alignment_3d", STATUS_PASS, SEV_NONE,
-                          out.name, "3D alignment snapshot saved")
+        return TestResult(
+            "bem",
+            "alignment_3d",
+            STATUS_PASS,
+            SEV_NONE,
+            out.name,
+            "3D alignment snapshot saved",
+        )
     except Exception as exc:
-        return TestResult("bem", "alignment_3d", STATUS_SKIP, SEV_NONE, "n/a",
-                          f"3D render unavailable: {str(exc)[:150]}")
+        return TestResult(
+            "bem",
+            "alignment_3d",
+            STATUS_SKIP,
+            SEV_NONE,
+            "n/a",
+            f"3D render unavailable: {str(exc)[:150]}",
+        )
 
 
 # ----------------------------------------------------------------------------
@@ -774,9 +1060,14 @@ def run_subject(subject: str, cfg: Config) -> dict:
             return fn(*a, **k)
         except Exception as exc:
             tb = traceback.format_exc(limit=2)
-            return TestResult("harness", getattr(fn, "__name__", "test"),
-                              STATUS_ERROR, SEV_MAJOR, "exception",
-                              f"{exc} :: {tb.splitlines()[-1]}")
+            return TestResult(
+                "harness",
+                getattr(fn, "__name__", "test"),
+                STATUS_ERROR,
+                SEV_MAJOR,
+                "exception",
+                f"{exc} :: {tb.splitlines()[-1]}",
+            )
 
     def safe_list(fn, *a, **k):
         """Like safe(), but for tests that return a list[TestResult]."""
@@ -805,18 +1096,39 @@ def run_subject(subject: str, cfg: Config) -> dict:
         surfaces = locate_bem_surfaces(subj_dir)
         missing = [n for n, p in surfaces.items() if p is None]
         if set(missing) == set(_BEM_NAMES):
-            results.append(TestResult("bem", "watershed_present", STATUS_FAIL,
-                                    SEV_CRIT, "missing",
-                                    "no watershed BEM surfaces found in bem/ or "
-                                    "bem/watershed/"))
+            results.append(
+                TestResult(
+                    "bem",
+                    "watershed_present",
+                    STATUS_FAIL,
+                    SEV_CRIT,
+                    "missing",
+                    "no watershed BEM surfaces found in bem/ or bem/watershed/",
+                )
+            )
         else:
             if missing:
-                results.append(TestResult("bem", "watershed_present", STATUS_WARN,
-                                        SEV_MAJOR, f"missing {missing}",
-                                        "some BEM surfaces absent"))
+                results.append(
+                    TestResult(
+                        "bem",
+                        "watershed_present",
+                        STATUS_WARN,
+                        SEV_MAJOR,
+                        f"missing {missing}",
+                        "some BEM surfaces absent",
+                    )
+                )
             else:
-                results.append(TestResult("bem", "watershed_present", STATUS_PASS,
-                                        SEV_NONE, "ok", "3 BEM surfaces present"))
+                results.append(
+                    TestResult(
+                        "bem",
+                        "watershed_present",
+                        STATUS_PASS,
+                        SEV_NONE,
+                        "ok",
+                        "3 BEM surfaces present",
+                    )
+                )
             meshes = {}
             for name, path in surfaces.items():
                 if path is None:
@@ -852,8 +1164,17 @@ def safe_topology(name, path):
     try:
         return test_bem_surface_topology(name, path)
     except Exception as exc:
-        return (TestResult("bem", f"{name}_topology", STATUS_ERROR, SEV_MAJOR,
-                           "exception", str(exc)), {})
+        return (
+            TestResult(
+                "bem",
+                f"{name}_topology",
+                STATUS_ERROR,
+                SEV_MAJOR,
+                "exception",
+                str(exc),
+            ),
+            {},
+        )
 
 
 def _overall(results: list[TestResult]) -> str:
@@ -867,6 +1188,7 @@ def _overall(results: list[TestResult]) -> str:
 def _write_subject_outputs(subject, qa_dir, results, extras):
     print(f"    Writing subject outputs for {subject} to {qa_dir}")
     import pandas as pd
+
     df = pd.DataFrame([r.row(subject) for r in results])
     df.to_csv(qa_dir / f"{subject}_qa.csv", index=False)
 
@@ -876,16 +1198,17 @@ def _write_subject_outputs(subject, qa_dir, results, extras):
     with (qa_dir / f"{subject}_qa_report.txt").open("w") as f:
         f.write(f"FreeSurfer / BEM QA report — {subject}\n")
         f.write("=" * 60 + "\n")
-        f.write(f"OVERALL: {overall}    "
-                f"(FAIL={len(fails)}, WARN={len(warns)})\n\n")
+        f.write(f"OVERALL: {overall}    (FAIL={len(fails)}, WARN={len(warns)})\n\n")
         for cat in ("log", "cortical", "bem", "harness"):
             rows = [r for r in results if r.category == cat]
             if not rows:
                 continue
             f.write(f"[{cat}]\n")
             for r in rows:
-                f.write(f"  {r.status:5s} {r.severity:8s} {r.test:28s} "
-                        f"{str(r.value):>14s}  {r.detail}\n")
+                f.write(
+                    f"  {r.status:5s} {r.severity:8s} {r.test:28s} "
+                    f"{str(r.value):>14s}  {r.detail}\n"
+                )
             f.write("\n")
 
 
@@ -910,6 +1233,7 @@ def _mad_outliers(values: dict, k: float):
 
 def write_group_outputs(all_subjects: list[dict], cfg: Config):
     import pandas as pd
+
     group_dir = cfg.subjects_dir / "QA_group"
     group_dir.mkdir(exist_ok=True)
 
@@ -931,8 +1255,7 @@ def write_group_outputs(all_subjects: list[dict], cfg: Config):
 
     measure_outliers = {s["subject"]: [] for s in all_subjects}
     for meas in _GLOBAL_MEASURES:
-        vals = {s["subject"]: s.get("global_stats", {}).get(meas)
-                for s in all_subjects}
+        vals = {s["subject"]: s.get("global_stats", {}).get(meas) for s in all_subjects}
         _, outs = _mad_outliers(vals, cfg.mad_k)
         for sub in outs:
             measure_outliers[sub].append(meas)
@@ -957,22 +1280,27 @@ def write_group_outputs(all_subjects: list[dict], cfg: Config):
             concerns.append("morph_outlier:" + ",".join(measure_outliers[sub]))
         if warns:
             concerns.append(f"WARN: {','.join(warns)}")
-        flagged = bool(fails or errs or warns or sub in holes_out
-                       or measure_outliers[sub])
-        summary.append({
-            "subject": sub,
-            "overall": overall,
-            "flagged": flagged,
-            "n_fail": len(fails),
-            "n_warn": len(warns),
-            "n_error": len(errs),
-            "euler_holes_total": holes_total[sub],
-            "euler_holes_robust_z": round(holes_rz.get(sub, float("nan")), 2)
-            if sub in holes_rz else "",
-            "concerns": " | ".join(concerns),
-        })
+        flagged = bool(
+            fails or errs or warns or sub in holes_out or measure_outliers[sub]
+        )
+        summary.append(
+            {
+                "subject": sub,
+                "overall": overall,
+                "flagged": flagged,
+                "n_fail": len(fails),
+                "n_warn": len(warns),
+                "n_error": len(errs),
+                "euler_holes_total": holes_total[sub],
+                "euler_holes_robust_z": round(holes_rz.get(sub, float("nan")), 2)
+                if sub in holes_rz
+                else "",
+                "concerns": " | ".join(concerns),
+            }
+        )
     summary_df = pd.DataFrame(summary).sort_values(
-        ["flagged", "n_fail", "n_warn"], ascending=[False, False, False])
+        ["flagged", "n_fail", "n_warn"], ascending=[False, False, False]
+    )
     summary_df.to_csv(group_dir / "group_qa_summary.csv", index=False)
     return summary_df, group_dir
 
@@ -992,21 +1320,33 @@ def discover_subjects(subjects_dir: Path) -> list[str]:
 
 
 def parse_args(argv=None):
-    ap = argparse.ArgumentParser(
-        description="Automated FreeSurfer + watershed BEM QA.")
-    ap.add_argument("--subjects-dir", required=True, type=Path,
-                    help="FreeSurfer SUBJECTS_DIR")
-    ap.add_argument("--subjects", nargs="*", default=None,
-                    help="subset of subjects (default: auto-discover all)")
+    ap = argparse.ArgumentParser(description="Automated FreeSurfer + watershed BEM QA.")
+    ap.add_argument(
+        "--subjects-dir", required=True, type=Path, help="FreeSurfer SUBJECTS_DIR"
+    )
+    ap.add_argument(
+        "--subjects",
+        nargs="*",
+        default=None,
+        help="subset of subjects (default: auto-discover all)",
+    )
     ap.add_argument("--euler-holes-warn", type=int, default=150)
     ap.add_argument("--gap-warn-mm", type=float, default=1.0)
-    ap.add_argument("--mad-k", type=float, default=3.0,
-                    help="robust-z threshold for cohort outliers")
+    ap.add_argument(
+        "--mad-k",
+        type=float,
+        default=3.0,
+        help="robust-z threshold for cohort outliers",
+    )
     ap.add_argument("--bem-ico", type=int, default=4)
-    ap.add_argument("--alignment-3d", action="store_true",
-                    help="also attempt a headless 3D alignment snapshot")
-    ap.add_argument("--no-cnr", action="store_true",
-                    help="skip mri_cnr even if available")
+    ap.add_argument(
+        "--alignment-3d",
+        action="store_true",
+        help="also attempt a headless 3D alignment snapshot",
+    )
+    ap.add_argument(
+        "--no-cnr", action="store_true", help="skip mri_cnr even if available"
+    )
     return ap.parse_args(argv)
 
 
@@ -1039,10 +1379,24 @@ def main(argv=None):
             all_results.append(run_subject(sub, cfg))
         except Exception as exc:
             print(f"    !! subject-level failure: {exc}", file=sys.stderr)
-            all_results.append({"subject": sub, "results": [TestResult(
-                "harness", "subject_run", STATUS_ERROR, SEV_CRIT, "exception",
-                str(exc))], "lh_holes": None, "rh_holes": None,
-                "global_stats": {}})
+            all_results.append(
+                {
+                    "subject": sub,
+                    "results": [
+                        TestResult(
+                            "harness",
+                            "subject_run",
+                            STATUS_ERROR,
+                            SEV_CRIT,
+                            "exception",
+                            str(exc),
+                        )
+                    ],
+                    "lh_holes": None,
+                    "rh_holes": None,
+                    "global_stats": {},
+                }
+            )
 
     summary_df, group_dir = write_group_outputs(all_results, cfg)
     n_flag = int(summary_df["flagged"].sum())

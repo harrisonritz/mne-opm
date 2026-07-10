@@ -181,7 +181,9 @@ class ZCAFilterAnalysis(BaseAnalysis):
                 "No noise recording found. ZCA requires task='noise' data "
                 "for computing the noise covariance matrix."
             )
-        data["noise"] = read_raw_bids_with_retry(paths_noise[0], extra_params={"preload": True})
+        data["noise"] = read_raw_bids_with_retry(
+            paths_noise[0], extra_params={"preload": True}
+        )
         self.log(f"Loaded noise recording at {paths_noise[0].fpath}")
 
         # Load BEM solution
@@ -464,7 +466,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
         coils = _prep_mf_coils(sss_info, ignore_ref=True, accuracy="accurate")
 
         ext_basis = _sss_basis(exp, coils)
-        ext_basis /= (np.linalg.norm(ext_basis, axis=0) ** 0.8)
+        ext_basis /= np.linalg.norm(ext_basis, axis=0) ** 0.8
 
         # Step 5: Build signal and noise transforms
         self.log("Building signal and noise transforms...")
@@ -479,19 +481,20 @@ class ZCAFilterAnalysis(BaseAnalysis):
 
         # Step 6: Compute GED
         self.log("Computing generalized eigendecomposition...")
-        
 
         # Symmetrize for numerical stability
         signal_cov_mat = (signal_cov_mat + signal_cov_mat.T) / 2
         signal_cov_mat = (
-            cov_reg * np.eye(signal_cov_mat.shape[0])
+            cov_reg
+            * np.eye(signal_cov_mat.shape[0])
             * (np.trace(signal_cov_mat) / signal_cov_mat.shape[0])
             + (1 - cov_reg) * signal_cov_mat
         )
 
         noise_cov_mat = (noise_cov_mat + noise_cov_mat.T) / 2
         noise_cov_mat = (
-            cov_reg * np.eye(noise_cov_mat.shape[0])
+            cov_reg
+            * np.eye(noise_cov_mat.shape[0])
             * (np.trace(noise_cov_mat) / noise_cov_mat.shape[0])
             + (1 - cov_reg) * noise_cov_mat
         )
@@ -512,11 +515,13 @@ class ZCAFilterAnalysis(BaseAnalysis):
             n_noise = eigenvectors_noise.shape[1] - n_signal
             idx = np.argsort(eigenvalues_noise)[::-1][:n_noise]
             U_noise = eigenvectors_noise[:, idx]
-            U_signal = eigenvectors_noise[:, ~np.isin(np.arange(eigenvectors_noise.shape[1]), idx)]
+            U_signal = eigenvectors_noise[
+                :, ~np.isin(np.arange(eigenvectors_noise.shape[1]), idx)
+            ]
 
         n_channels = U_signal.shape[0]
         n_signal = U_signal.shape[1]
-        n_noise =  U_noise.shape[1]
+        n_noise = U_noise.shape[1]
 
         self.log(f"Signal subspace: {n_signal} dimensions")
         self.log(f"Noise subspace: {n_noise} dimensions")
@@ -530,10 +535,7 @@ class ZCAFilterAnalysis(BaseAnalysis):
 
         # Step 9: Create SSP projectors
         desc_prefix = f"ZCA_ext{ext_order}_thresh{threshold:.2f}"
-        ch_names = [
-            ch for ch in sss_info["ch_names"]
-            if ch in raw.ch_names
-        ]
+        ch_names = [ch for ch in sss_info["ch_names"] if ch in raw.ch_names]
 
         projs = []
         for k in range(U_noise.shape[1]):
@@ -673,10 +675,6 @@ class ZCAFilterAnalysis(BaseAnalysis):
             use_cps=True,
         )
 
-        
-
-
-
         # Step 5: Build refCOV = U S² Uᵀ (whitened + depth-weighted Gramian)
         # This is G_wd @ G_wd.T where G_wd is the noise-whitened,
         # depth-weighted gain matrix from the inverse operator.
@@ -711,16 +709,14 @@ class ZCAFilterAnalysis(BaseAnalysis):
 
         # Step 7: Regularize (Tikhonov, Cohen 2022 style)
         refCOV = (refCOV + refCOV.T) / 2
-        refCOV_reg = (
-            (1 - cov_reg) * refCOV
-            + cov_reg * (np.trace(refCOV) / refCOV.shape[0]) * np.eye(refCOV.shape[0])
-        )
+        refCOV_reg = (1 - cov_reg) * refCOV + cov_reg * (
+            np.trace(refCOV) / refCOV.shape[0]
+        ) * np.eye(refCOV.shape[0])
 
         dataCOV = (dataCOV + dataCOV.T) / 2
-        dataCOV_reg = (
-            (1 - cov_reg) * dataCOV
-            + cov_reg * (np.trace(dataCOV) / dataCOV.shape[0]) * np.eye(dataCOV.shape[0])
-        )
+        dataCOV_reg = (1 - cov_reg) * dataCOV + cov_reg * (
+            np.trace(dataCOV) / dataCOV.shape[0]
+        ) * np.eye(dataCOV.shape[0])
 
         # Step 7: GEDAI generalized eigendecomposition
         # eigh(dataCOV, refCOV + dataCOV): eigenvalues in [0, 1]

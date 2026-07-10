@@ -211,9 +211,7 @@ class RegressAnalysis(BaseAnalysis):
 
             self.log(f"Saved task={task} → {output_bp.fpath}")
 
-    def _regress(
-        self, raw: mne.io.BaseRaw, is_noise: bool = False
-    ) -> mne.io.BaseRaw:
+    def _regress(self, raw: mne.io.BaseRaw, is_noise: bool = False) -> mne.io.BaseRaw:
         """Perform regression on raw data.
 
         Parameters
@@ -297,14 +295,14 @@ class RegressAnalysis(BaseAnalysis):
                 f"Using delay-embedded ridge regression ({n_lags} lags, "
                 f"{n_lags / raw.info['sfreq'] * 1000:.1f} ms)"
             )
-            
+
             # # print channel names for debugging
             # self.log(f"  Target channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg.ch_types[0])]}")
             # # print all channel names
             # self.log(f"  Info: {raw.info}")
             # self.log(f"  All channels: {raw.ch_names}")
             # self.log(f"  Predictor channels: {[raw.ch_names[i] for i in _picks_to_idx(raw.info, self.cfg._regress_preds)]}")
-            
+
             raw_clean = self._regress_delay_embedded(raw, n_lags)
 
         return raw_clean
@@ -431,9 +429,7 @@ class RegressAnalysis(BaseAnalysis):
             Qd = Q[: (end - start), :]  # Extract data portion
 
             # Regress out predictors from MEG channels
-            raw_data[mag_idx, start:end] -= (
-                raw_data[mag_idx, start:end] @ Qd
-            ) @ Qd.T
+            raw_data[mag_idx, start:end] -= (raw_data[mag_idx, start:end] @ Qd) @ Qd.T
 
             # Progress logging (every 10%)
             if w % max(n_windows // 10, 1) == 0:

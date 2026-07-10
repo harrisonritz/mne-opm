@@ -24,6 +24,7 @@ from custom.custom_preproc import (
 # parse_args
 # ---------------------------------------------------------------------------
 
+
 class TestParseArgs:
     """Test CLI argument parsing."""
 
@@ -34,33 +35,51 @@ class TestParseArgs:
             parse_args()
 
     def test_valid_args(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", [
-            "custom_preproc.py",
-            "--analysis", "bad_channels",
-            "--config", "/tmp/config.py",
-        ])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "custom_preproc.py",
+                "--analysis",
+                "bad_channels",
+                "--config",
+                "/tmp/config.py",
+            ],
+        )
         args = parse_args()
         assert args.analysis == "bad_channels"
         assert args.config == "/tmp/config.py"
 
     def test_analysis_choices_validated(self, monkeypatch):
         """Invalid analysis names should be rejected by argparse."""
-        monkeypatch.setattr(sys, "argv", [
-            "custom_preproc.py",
-            "--analysis", "nonexistent",
-            "--config", "/tmp/config.py",
-        ])
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "custom_preproc.py",
+                "--analysis",
+                "nonexistent",
+                "--config",
+                "/tmp/config.py",
+            ],
+        )
         with pytest.raises(SystemExit):
             parse_args()
 
     def test_all_choices_accepted(self, monkeypatch):
         """Every ANALYSIS_CHOICES value should be accepted by argparse."""
         for choice in ANALYSIS_CHOICES:
-            monkeypatch.setattr(sys, "argv", [
-                "custom_preproc.py",
-                "--analysis", choice,
-                "--config", "/tmp/config.py",
-            ])
+            monkeypatch.setattr(
+                sys,
+                "argv",
+                [
+                    "custom_preproc.py",
+                    "--analysis",
+                    choice,
+                    "--config",
+                    "/tmp/config.py",
+                ],
+            )
             args = parse_args()
             assert args.analysis == choice
 
@@ -68,6 +87,7 @@ class TestParseArgs:
 # ---------------------------------------------------------------------------
 # main()
 # ---------------------------------------------------------------------------
+
 
 class TestMain:
     """Test the main() entry point with mocked dependencies."""
@@ -100,9 +120,7 @@ class TestMain:
     @patch("custom.custom_preproc.parse_args")
     @patch("custom.custom_preproc.load_config")
     @patch("custom.custom_preproc.import_analysis_module")
-    def test_main_prints_header(
-        self, mock_import, mock_config, mock_args, capsys
-    ):
+    def test_main_prints_header(self, mock_import, mock_config, mock_args, capsys):
         """main() should print formatted header and footer."""
         from custom.custom_preproc import main
 
@@ -123,15 +141,14 @@ class TestMain:
 # main() — error handling branches
 # ---------------------------------------------------------------------------
 
+
 class TestMainErrorHandling:
     """Test that main() handles errors gracefully."""
 
     @patch("custom.custom_preproc.parse_args")
     @patch("custom.custom_preproc.load_config")
     @patch("custom.custom_preproc.import_analysis_module")
-    def test_main_file_not_found(
-        self, mock_import, mock_config, mock_args, capsys
-    ):
+    def test_main_file_not_found(self, mock_import, mock_config, mock_args, capsys):
         from custom.custom_preproc import main
 
         mock_args.return_value = SimpleNamespace(
@@ -150,18 +167,14 @@ class TestMainErrorHandling:
     @patch("custom.custom_preproc.parse_args")
     @patch("custom.custom_preproc.load_config")
     @patch("custom.custom_preproc.import_analysis_module")
-    def test_main_value_error(
-        self, mock_import, mock_config, mock_args, capsys
-    ):
+    def test_main_value_error(self, mock_import, mock_config, mock_args, capsys):
         from custom.custom_preproc import main
 
         mock_args.return_value = SimpleNamespace(
             analysis="bad_channels", config="/tmp/config.py"
         )
         mock_config.return_value = SimpleNamespace()
-        mock_import.return_value = MagicMock(
-            side_effect=ValueError("Bad config")
-        )
+        mock_import.return_value = MagicMock(side_effect=ValueError("Bad config"))
 
         result = main()
         captured = capsys.readouterr()
@@ -171,9 +184,7 @@ class TestMainErrorHandling:
     @patch("custom.custom_preproc.parse_args")
     @patch("custom.custom_preproc.load_config")
     @patch("custom.custom_preproc.import_analysis_module")
-    def test_main_generic_error(
-        self, mock_import, mock_config, mock_args, capsys
-    ):
+    def test_main_generic_error(self, mock_import, mock_config, mock_args, capsys):
         from custom.custom_preproc import main
 
         mock_args.return_value = SimpleNamespace(
@@ -194,11 +205,13 @@ class TestMainErrorHandling:
 # load_config
 # ---------------------------------------------------------------------------
 
+
 class TestLoadConfig:
     """Test the load_config function."""
 
     def test_missing_config_raises(self):
         from custom.preprocessing._config import load_config
+
         with pytest.raises(FileNotFoundError, match="not found"):
             load_config("/nonexistent/path/config.py")
 
@@ -206,6 +219,7 @@ class TestLoadConfig:
 # ---------------------------------------------------------------------------
 # import_analysis_module — edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestImportAnalysisModuleExtended:
     def test_applyzca_and_zcafilter_return_same_module(self):
@@ -217,6 +231,7 @@ class TestImportAnalysisModuleExtended:
     def test_all_registered_run_functions_take_cfg(self):
         """Every registered module's run() must accept a cfg parameter."""
         import inspect
+
         for key in ANALYSIS_REGISTRY:
             run_fn = import_analysis_module(key)
             sig = inspect.signature(run_fn)

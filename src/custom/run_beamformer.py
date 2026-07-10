@@ -144,15 +144,13 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
     # Load noise covariance
     if cfg.noise_cov == "ad-hoc":
         print("[load_beamformer_data] Using ad-hoc noise covariance")
-        data["noise_cov"] = None
+        data["noise_path"] = None
     else:
-        noise_cov_path = bids_path.copy().update(
-            task="noise", processing="clean", suffix="cov", extension=".fif"
+        noise_path = bids_path.copy().update(
+            task="noise", processing="clean", suffix="raw", extension=".fif"
         )
-        print(
-            f"[load_beamformer_data] Loading noise covariance: {noise_cov_path.fpath}"
-        )
-        data["noise_cov"] = mne.read_cov(noise_cov_path)
+        print(f"[load_beamformer_data] Loading noise data: {noise_path.fpath}")
+        data["noise_path"] = noise_path
 
     print(f"[load_beamformer_data] Data loading complete")
     print(f"  - Forward: {len(data['forward']['src'])} source spaces")
@@ -160,7 +158,7 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
         f"  - Epochs: {len(data['epochs'])} epochs, {len(data['epochs'].ch_names)} channels"
     )
     print(
-        f"  - Noise cov: {'ad-hoc' if data['noise_cov'] is None else 'loaded from file'}"
+        f"  - Noise cov: {'ad-hoc' if data['noise_path'] is None else 'loaded from file'}"
     )
 
     return data
@@ -175,6 +173,7 @@ def compute_lcmv_filters(
     forward: mne.Forward,
     data_cov: mne.Covariance,
     noise_cov: mne.Covariance | None,
+    rank: int | str,
     info: mne.Info,
     cfg: SimpleNamespace,
 ) -> dict:
@@ -188,6 +187,8 @@ def compute_lcmv_filters(
         Data covariance matrix.
     noise_cov : mne.Covariance or None
         Noise covariance matrix. If None, uses ad-hoc.
+    rank : int or str
+        Rank of the covariance matrix (int or 'info' for MNE default).
     info : mne.Info
         Measurement info.
     cfg : SimpleNamespace
@@ -203,7 +204,7 @@ def compute_lcmv_filters(
     print(f"  - Pick orientation: {cfg._beamformer_pick_ori}")
     print(f"  - Weight normalization: {cfg._beamformer_weight_norm}")
     print(f"  - Depth weighting: {cfg._beamformer_depth}")
-    print(f"  - Rank: {cfg._beamformer_rank}")
+    print(f"  - Rank: {rank}")
 
     # Validate parameters
     valid_ori = ["max-power", "vector", None]
@@ -243,7 +244,7 @@ def compute_lcmv_filters(
         pick_ori=cfg._beamformer_pick_ori,
         weight_norm=cfg._beamformer_weight_norm,
         depth=cfg._beamformer_depth,
-        rank=cfg._beamformer_rank,
+        rank=rank,
         reduce_rank=cfg._reduce_rank,  # Always reduce rank for stability
         verbose=True,
     )
@@ -699,16 +700,42 @@ def main():
 
     # Compute data covariance (shared by both analyses)
     print("\n[main] Computing data covariance matrix...")
+    rank = mne.compute_rank(data["epochs"], info=data["info"], tol="auto")
     data_cov = mne.compute_covariance(
-        data["epochs"], method="shrunk", n_jobs=cfg.n_jobs
+        data["epochs"],
+        method="shrunk",
+        rank=rank,
+        n_jobs=cfg.n_jobs,
     )
     print(f"[main] Data covariance computed from {len(data['epochs'])} epochs")
+
+    if data["noise_path"] is None:
+        rank = "info"
+        noise_cov = None
+    else:
+        print(f"\n[main] Loading noise covariance from: {data['noise_path']}")
+        noise_raw = mne.io.read_raw_fif(data["noise_path"], preload=True)
+        rank = mne.compute_rank(noise_raw, info=noise_raw.info, tol="auto")
+        noise_cov = mne.compute_raw_covariance(
+            noise_raw,
+            method="shrunk",
+            rank=rank,
+            n_jobs=cfg.n_jobs,
+        )
+        print(f"[main] Noise covariance computed from raw data: {data['noise_path']}")
+
+    if getattr(cfg, "_beamformer_rank", "info") == "empty_room":
+        print(f"[main] Using empty-room noise covariance rank: {rank}")
+    else:
+        rank = cfg._beamformer_rank
+        print(f"[main] Using specified beamformer rank: {rank}")
 
     # Compute LCMV filters (shared by both analyses)
     filters = compute_lcmv_filters(
         forward=data["forward"],
         data_cov=data_cov,
-        noise_cov=data["noise_cov"],
+        noise_cov=noise_cov,
+        rank=rank,
         info=data["info"],
         cfg=cfg,
     )

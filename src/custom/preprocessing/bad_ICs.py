@@ -154,8 +154,16 @@ class BadICAnalysis(BaseAnalysis):
         self.log("Loading data...")
 
         # Construct BIDSPath for cleaned raw data
-        subject = self.cfg.subjects[0] if isinstance(self.cfg.subjects, list) else self.cfg.subjects
-        session = self.cfg.sessions[0] if isinstance(self.cfg.sessions, list) else self.cfg.sessions
+        subject = (
+            self.cfg.subjects[0]
+            if isinstance(self.cfg.subjects, list)
+            else self.cfg.subjects
+        )
+        session = (
+            self.cfg.sessions[0]
+            if isinstance(self.cfg.sessions, list)
+            else self.cfg.sessions
+        )
 
         # Find cleaned raw files using mne_bids
         matching_files = find_matching_paths(
@@ -246,9 +254,7 @@ class BadICAnalysis(BaseAnalysis):
         save_ica_bids(ica, self.cfg, components_df=components_df)
 
         self.log(f"Saved ICA with {len(ica.exclude)} excluded components")
-        self.log(
-            f"Components TSV columns: {list(components_df.columns)}"
-        )
+        self.log(f"Components TSV columns: {list(components_df.columns)}")
 
     def _bad_ICs(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
@@ -299,10 +305,9 @@ class BadICAnalysis(BaseAnalysis):
             return ica
 
         # Unified PCA-whitened GESD across all scores.
-        ica, gesd = self._run_unified_gesd(ica, 
-                                           raw, 
-                                           score_specs, 
-                                           alpha = getattr(self.cfg, "_bad_ICs_alpha", 0.05))
+        ica, gesd = self._run_unified_gesd(
+            ica, raw, score_specs, alpha=getattr(self.cfg, "_bad_ICs_alpha", 0.05)
+        )
         self._gesd_result = gesd
 
         # (b) Cumulative per-PC (per-eigenscore) overlays.
@@ -495,10 +500,7 @@ class BadICAnalysis(BaseAnalysis):
                 inst=evoked, show=False, on_baseline="reapply", title=title
             )
         except Exception as exc:  # plotting must never break labelling
-            self.log(
-                f"Overlay plot '{step_label}' failed: "
-                f"{type(exc).__name__}: {exc}"
-            )
+            self.log(f"Overlay plot '{step_label}' failed: {type(exc).__name__}: {exc}")
             return
 
         try:
@@ -613,16 +615,10 @@ class BadICAnalysis(BaseAnalysis):
         if "corrmap_eog" in selected or "corrmap_ecg" in selected:
             corr = self._score_corrmap(ica, raw)
             for key in ("corrmap_eog", "corrmap_ecg"):
-                if (
-                    key in selected
-                    and corr is not None
-                    and corr.get(key) is not None
-                ):
+                if key in selected and corr is not None and corr.get(key) is not None:
                     specs.append(MetricSpec(key, fisher_z(corr[key]), 1))
 
-        self.log(
-            f"Computed {len(specs)} per-IC scores: {[s.name for s in specs]}"
-        )
+        self.log(f"Computed {len(specs)} per-IC scores: {[s.name for s in specs]}")
         return specs
 
     def _score_eog(
@@ -674,8 +670,10 @@ class BadICAnalysis(BaseAnalysis):
         """
         try:
             work = raw.copy()
-            ref_raw = work.copy().pick("ref_meg").filter(
-                l_freq=1, h_freq=None, verbose="ERROR"
+            ref_raw = (
+                work.copy()
+                .pick("ref_meg")
+                .filter(l_freq=1, h_freq=None, verbose="ERROR")
             )
             ref_ica = mne.preprocessing.ICA(
                 n_components=0.99,
@@ -684,9 +682,7 @@ class BadICAnalysis(BaseAnalysis):
                 max_iter=256,
                 allow_ref_meg=True,
             )
-            ref_ica.fit(
-                ref_raw, decim=2, reject_by_annotation=True, verbose="ERROR"
-            )
+            ref_ica.fit(ref_raw, decim=2, reject_by_annotation=True, verbose="ERROR")
             ref_src = ref_ica.get_sources(ref_raw)
             ref_src.rename_channels(lambda x: f"REF_{x}")
             work.add_channels([ref_src], force_update_info=True)
@@ -733,9 +729,7 @@ class BadICAnalysis(BaseAnalysis):
             ch_names_path = template_dir / f"{artifact_type}_channel_names.npy"
             templates_path = template_dir / f"{artifact_type}_templates.npy"
             if not ch_names_path.exists() or not templates_path.exists():
-                self.log(
-                    f"Corrmap {artifact_type}: template files missing; skipping."
-                )
+                self.log(f"Corrmap {artifact_type}: template files missing; skipping.")
                 continue
 
             ref_channels = np.load(str(ch_names_path), allow_pickle=True).tolist()
@@ -787,6 +781,7 @@ class BadICAnalysis(BaseAnalysis):
         num = m.T @ t
         den = np.linalg.norm(m, axis=0) * np.linalg.norm(t)
         return num / (den + 1e-30)
+
     # ------------------------------------------------------------------
     # Unified PCA-whitened GESD (delegates to the generic pca_gesd utility)
     # ------------------------------------------------------------------
@@ -862,9 +857,7 @@ class BadICAnalysis(BaseAnalysis):
         if outlier_idx:
             ica.exclude.extend(outlier_idx)
 
-        self.log(
-            f"After unified GESD: {len(set(ica.exclude))} excluded components"
-        )
+        self.log(f"After unified GESD: {len(set(ica.exclude))} excluded components")
         return ica, result
 
     def _save_gesd_figures(self, gesd: "PCAGesdResult | None") -> None:
@@ -936,9 +929,7 @@ class BadICAnalysis(BaseAnalysis):
             line_freq = inst.info.get("line_freq", None)
         if line_freq is None:
             line_freq = 60.0
-            self.log(
-                "line_freq not set in info; defaulting to 60.0 Hz for line_ratio"
-            )
+            self.log("line_freq not set in info; defaulting to 60.0 Hz for line_ratio")
 
         # === Get topographies ===
         topos = ica.get_components()  # (n_channels, n_components)
@@ -1062,9 +1053,7 @@ class BadICAnalysis(BaseAnalysis):
     # Full set of per-IC scores selectable via ``cfg._ica_metrics``.
     AVAILABLE_ICA_SCORES = AVAILABLE_ICA_METRICS + AVAILABLE_ICA_TARGETED
 
-    def _build_components_tsv(
-        self, ica: mne.preprocessing.ICA
-    ) -> "pd.DataFrame":
+    def _build_components_tsv(self, ica: mne.preprocessing.ICA) -> "pd.DataFrame":
         """Build a detailed components TSV from the unified GESD result.
 
         Reads the existing pipeline-generated TSV (from
@@ -1128,9 +1117,8 @@ class BadICAnalysis(BaseAnalysis):
                     continue
                 desc = str(row.get("status_description", "n/a"))
                 if "(MNE-ICALabel)" in desc:
-                    label = (
-                        desc.replace("Auto-detected ", "")
-                        .replace(" (MNE-ICALabel)", "")
+                    label = desc.replace("Auto-detected ", "").replace(
+                        " (MNE-ICALabel)", ""
                     )
                     pipeline_icalabel[comp] = label
                     self._component_labels[comp].append(f"icalabel_{label}")
@@ -1152,18 +1140,12 @@ class BadICAnalysis(BaseAnalysis):
             "type": ["ica"] * n_comps,
             "description": ["Independent Component"] * n_comps,
             "status": [
-                "bad" if i in set(ica.exclude) else "good"
-                for i in range(n_comps)
+                "bad" if i in set(ica.exclude) else "good" for i in range(n_comps)
             ],
             "status_description": status_descriptions,
             # --- Attribution ---
             "method_gesd": [
-                int(
-                    any(
-                        lbl.startswith("GESD_PC")
-                        for lbl in self._component_labels[i]
-                    )
-                )
+                int(any(lbl.startswith("GESD_PC") for lbl in self._component_labels[i]))
                 for i in range(n_comps)
             ],
             "method_pipeline_icalabel": pipeline_icalabel,
@@ -1284,7 +1266,9 @@ class BadICAnalysis(BaseAnalysis):
         # 2. Temporal kurtosis: high = non-Gaussian artifact
         if "temporal_kurtosis_sqrt" in use:
             source_kurt = diagnostics["source_kurtosis"]
-            signed_sqrt_kurt = np.sign(source_kurt) * np.sqrt(np.abs(source_kurt)  + 1e-10)
+            signed_sqrt_kurt = np.sign(source_kurt) * np.sqrt(
+                np.abs(source_kurt) + 1e-10
+            )
             metrics.append(("temporal_kurtosis_sqrt", signed_sqrt_kurt, 1))
 
         # 3. Autocorrelation: low = white noise artifact
@@ -1301,7 +1285,9 @@ class BadICAnalysis(BaseAnalysis):
         # 5. Spatial kurtosis: high = focal/single-channel artifact
         if "spatial_kurtosis_sqrt" in use:
             spatial_kurt = diagnostics["spatial_kurtosis"]
-            signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(np.abs(spatial_kurt) + 1e-10)
+            signed_sqrt_spatial = np.sign(spatial_kurt) * np.sqrt(
+                np.abs(spatial_kurt) + 1e-10
+            )
             metrics.append(("spatial_kurtosis_sqrt", signed_sqrt_spatial, 1))
 
         # 6. Spectral derivative kurtosis: high = sharp narrow-band transitions.
@@ -1309,7 +1295,9 @@ class BadICAnalysis(BaseAnalysis):
         # edges (boxcar-like artifact). Natural 1/f spectra are smooth → low kurtosis.
         if "spectral_deriv_kurtosis_sqrt" in use:
             spec_deriv_kurt = diagnostics["spectral_deriv_kurtosis"]
-            signed_sqrt_spec_deriv = np.sign(spec_deriv_kurt) * np.sqrt(np.abs(spec_deriv_kurt) + 1e-10)
+            signed_sqrt_spec_deriv = np.sign(spec_deriv_kurt) * np.sqrt(
+                np.abs(spec_deriv_kurt) + 1e-10
+            )
             metrics.append(("spectral_deriv_kurtosis_sqrt", signed_sqrt_spec_deriv, 1))
 
         # 7. Spectral residual kurtosis: high = concentrated deviation from 1/f.
@@ -1318,15 +1306,22 @@ class BadICAnalysis(BaseAnalysis):
         # → heavy-tailed residuals → high kurtosis.
         if "spectral_resid_kurtosis_sqrt" in use:
             spec_resid_kurt = diagnostics["spectral_resid_kurtosis"]
-            signed_sqrt_spec_resid = np.sign(spec_resid_kurt) * np.sqrt(np.abs(spec_resid_kurt) + 1e-10)
+            signed_sqrt_spec_resid = np.sign(spec_resid_kurt) * np.sqrt(
+                np.abs(spec_resid_kurt) + 1e-10
+            )
             metrics.append(("spectral_resid_kurtosis_sqrt", signed_sqrt_spec_resid, 1))
 
         # 8. Mean absolute gradient (FASTER): high = temporally rough signal.
         # Brain sources are smooth (dominated by low-freq oscillations);
         # muscle and spike artifacts have rapid moment-to-moment fluctuations.
         if "log_mean_abs_gradient" in use:
-            metrics.append(("log_mean_abs_gradient",
-                            np.log(diagnostics["mean_abs_gradient"] + 1e-10), 1))
+            metrics.append(
+                (
+                    "log_mean_abs_gradient",
+                    np.log(diagnostics["mean_abs_gradient"] + 1e-10),
+                    1,
+                )
+            )
 
         return metrics
 

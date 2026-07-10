@@ -31,6 +31,7 @@ from custom.preprocessing._io import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_cfg(tmp_path, **overrides):
     bids_root = tmp_path / "bids"
     deriv_root = bids_root / "derivatives" / "analysis"
@@ -55,6 +56,7 @@ def _meg_dir(cfg, subject="011", session="01"):
 # ---------------------------------------------------------------------------
 # init_derivatives.run
 # ---------------------------------------------------------------------------
+
 
 class TestInitDerivatives:
     """Tests for clearing stale proc-<custom_proc> derivatives."""
@@ -134,14 +136,20 @@ class TestInitDerivatives:
 # assert_not_raw_bids_write
 # ---------------------------------------------------------------------------
 
+
 class TestAssertNotRawBidsWrite:
     """Tests for the raw-BIDS write guard."""
 
     def test_allows_deriv_root_write(self, tmp_path):
         cfg = _make_cfg(tmp_path)
         target = (
-            tmp_path / "bids" / "derivatives" / "analysis"
-            / "sub-011" / "ses-01" / "meg"
+            tmp_path
+            / "bids"
+            / "derivatives"
+            / "analysis"
+            / "sub-011"
+            / "ses-01"
+            / "meg"
             / "sub-011_ses-01_task-TSX_run-01_proc-init_raw.fif"
         )
         # Should not raise.
@@ -150,7 +158,11 @@ class TestAssertNotRawBidsWrite:
     def test_blocks_raw_bids_write(self, tmp_path):
         cfg = _make_cfg(tmp_path)
         target = (
-            tmp_path / "bids" / "sub-011" / "ses-01" / "meg"
+            tmp_path
+            / "bids"
+            / "sub-011"
+            / "ses-01"
+            / "meg"
             / "sub-011_ses-01_task-TSX_run-01_meg.fif"
         )
         with pytest.raises(RuntimeError, match="raw BIDS"):
@@ -182,6 +194,7 @@ class TestAssertNotRawBidsWrite:
 # _seed_sidecars JSON suffix
 # ---------------------------------------------------------------------------
 
+
 class TestSeedSidecarsJsonSuffix:
     """The data JSON sidecar must follow the output FIF suffix."""
 
@@ -207,20 +220,20 @@ class TestSeedSidecarsJsonSuffix:
         )
 
         # Create the source meg.json (and a channels.tsv) to be seeded.
-        src_json = source_bp.copy().update(
-            suffix="meg", extension=".json", check=False
-        ).fpath
+        src_json = (
+            source_bp.copy().update(suffix="meg", extension=".json", check=False).fpath
+        )
         src_json.parent.mkdir(parents=True, exist_ok=True)
         src_json.write_text("{}")
 
         _seed_sidecars(source_bp, output_bp)
 
-        raw_json = output_bp.copy().update(
-            suffix="raw", extension=".json", check=False
-        ).fpath
-        meg_json = output_bp.copy().update(
-            suffix="meg", extension=".json", check=False
-        ).fpath
+        raw_json = (
+            output_bp.copy().update(suffix="raw", extension=".json", check=False).fpath
+        )
+        meg_json = (
+            output_bp.copy().update(suffix="meg", extension=".json", check=False).fpath
+        )
 
         assert raw_json.exists(), "derivative JSON should be named *_raw.json"
         assert not meg_json.exists(), "no stray *_meg.json should be created"

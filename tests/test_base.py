@@ -19,6 +19,7 @@ from custom.preprocessing._base import (
 # Concrete subclass for testing the abstract base
 # ---------------------------------------------------------------------------
 
+
 class _DummyAnalysis(BaseAnalysis):
     """Minimal concrete implementation for testing BaseAnalysis."""
 
@@ -49,6 +50,7 @@ class _DummyAnalysis(BaseAnalysis):
 # Constants
 # ---------------------------------------------------------------------------
 
+
 class TestConstants:
     def test_segment_len_sec(self):
         assert SEGMENT_LEN_SEC == 1.0
@@ -59,6 +61,7 @@ class TestConstants:
 # have_qt_browser
 # ---------------------------------------------------------------------------
 
+
 class TestHaveQtBrowser:
     def test_returns_bool(self):
         result = have_qt_browser()
@@ -68,6 +71,7 @@ class TestHaveQtBrowser:
 # ---------------------------------------------------------------------------
 # BaseAnalysis
 # ---------------------------------------------------------------------------
+
 
 class TestBaseAnalysis:
     """Tests for the BaseAnalysis abstract base class via _DummyAnalysis."""
@@ -123,9 +127,7 @@ class TestBaseAnalysis:
                 assert data == load_return
                 return run_return
 
-        analysis = _TrackerAnalysis(
-            SimpleNamespace(), load_val=load_return
-        )
+        analysis = _TrackerAnalysis(SimpleNamespace(), load_val=load_return)
         analysis.execute()
         assert analysis.save_called_with == run_return
 

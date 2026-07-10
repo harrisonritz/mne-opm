@@ -15,6 +15,7 @@ from custom.preprocessing._io import get_bids_path_for_task
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_cfg(tmp_path, **overrides):
     defaults = dict(
         bids_root=str(tmp_path / "bids"),
@@ -31,8 +32,13 @@ def _suffix_raw_allowed() -> bool:
     """Check whether the installed mne-bids allows suffix='raw' without check=False."""
     try:
         BIDSPath(
-            root="/tmp", subject="001", session="01", task="test",
-            datatype="meg", suffix="raw", extension=".fif",
+            root="/tmp",
+            subject="001",
+            session="01",
+            task="test",
+            datatype="meg",
+            suffix="raw",
+            extension=".fif",
         )
         return True
     except ValueError:
@@ -45,6 +51,7 @@ _RAW_SUFFIX_OK = _suffix_raw_allowed()
 # ---------------------------------------------------------------------------
 # get_bids_path (from _bids_utils)
 # ---------------------------------------------------------------------------
+
 
 class TestGetBidsPath:
     """Tests for the _bids_utils.get_bids_path convenience function."""
@@ -118,6 +125,7 @@ class TestGetBidsPath:
 # get_bids_path_for_task (from _io)
 # ---------------------------------------------------------------------------
 
+
 class TestGetBidsPathForTask:
     """Tests for the _io.get_bids_path_for_task function."""
 
@@ -135,9 +143,7 @@ class TestGetBidsPathForTask:
     )
     def test_derivatives_switch(self, tmp_path):
         cfg = _make_cfg(tmp_path)
-        bp = get_bids_path_for_task(
-            cfg, task="restingstate", from_derivatives=True
-        )
+        bp = get_bids_path_for_task(cfg, task="restingstate", from_derivatives=True)
         assert str(bp.root) == cfg.deriv_root
         assert bp.suffix == "raw"
 

@@ -173,19 +173,31 @@ class TestSignedVolume:
         # Triangulate a unit cube — divergence theorem should give volume == 1.
         verts = np.array(
             [
-                [0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
-                [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
+                [0, 0, 0],
+                [1, 0, 0],
+                [1, 1, 0],
+                [0, 1, 0],
+                [0, 0, 1],
+                [1, 0, 1],
+                [1, 1, 1],
+                [0, 1, 1],
             ],
             dtype=float,
         )
         tris = np.array(
             [
-                [0, 2, 1], [0, 3, 2],          # bottom
-                [4, 5, 6], [4, 6, 7],          # top
-                [0, 1, 5], [0, 5, 4],          # front
-                [2, 3, 7], [2, 7, 6],          # back
-                [1, 2, 6], [1, 6, 5],          # right
-                [3, 0, 4], [3, 4, 7],          # left
+                [0, 2, 1],
+                [0, 3, 2],  # bottom
+                [4, 5, 6],
+                [4, 6, 7],  # top
+                [0, 1, 5],
+                [0, 5, 4],  # front
+                [2, 3, 7],
+                [2, 7, 6],  # back
+                [1, 2, 6],
+                [1, 6, 5],  # right
+                [3, 0, 4],
+                [3, 4, 7],  # left
             ]
         )
         vol = _signed_volume(verts, tris)
@@ -200,8 +212,9 @@ class TestSignedVolume:
 class TestRunBemDiagnostics:
     def test_renders_per_orientation(self, coreg_cfg, fake_fs_subject, tmp_path):
         subjects_dir, fs_subject = fake_fs_subject
-        with patch("custom.coreg_diagnostics.mne.viz.plot_bem") as mock_plot, patch(
-            "custom.coreg_diagnostics._surface_metrics", return_value={}
+        with (
+            patch("custom.coreg_diagnostics.mne.viz.plot_bem") as mock_plot,
+            patch("custom.coreg_diagnostics._surface_metrics", return_value={}),
         ):
             mock_plot.side_effect = lambda **kw: plt.figure()
             out = run_bem_diagnostics(
@@ -222,9 +235,10 @@ class TestRunBemDiagnostics:
                 raise RuntimeError("boom")
             return plt.figure()
 
-        with patch(
-            "custom.coreg_diagnostics.mne.viz.plot_bem", side_effect=_maybe_fail
-        ), patch("custom.coreg_diagnostics._surface_metrics", return_value={}):
+        with (
+            patch("custom.coreg_diagnostics.mne.viz.plot_bem", side_effect=_maybe_fail),
+            patch("custom.coreg_diagnostics._surface_metrics", return_value={}),
+        ):
             out = run_bem_diagnostics(
                 coreg_cfg, fs_subject, subjects_dir, tmp_path, "stem"
             )
@@ -243,13 +257,21 @@ class TestRunAlignmentDiagnostics:
         coreg_cfg._coreg_diag_alignment_views = ["frontal", "lateral_left"]
 
         fake_fig = MagicMock()
-        with patch(
-            "custom.coreg_diagnostics.mne.viz.plot_alignment",
-            return_value=fake_fig,
-        ), patch("custom.coreg_diagnostics.mne.viz.set_3d_view") as mock_view:
+        with (
+            patch(
+                "custom.coreg_diagnostics.mne.viz.plot_alignment",
+                return_value=fake_fig,
+            ),
+            patch("custom.coreg_diagnostics.mne.viz.set_3d_view") as mock_view,
+        ):
             out = run_alignment_diagnostics(
-                coreg_cfg, MagicMock(), MagicMock(),
-                fs_subject, subjects_dir, tmp_path, "stem",
+                coreg_cfg,
+                MagicMock(),
+                MagicMock(),
+                fs_subject,
+                subjects_dir,
+                tmp_path,
+                "stem",
             )
         assert mock_view.call_count == 2
         assert fake_fig.plotter.screenshot.call_count == 2
@@ -260,13 +282,21 @@ class TestRunAlignmentDiagnostics:
         coreg_cfg._coreg_diag_alignment_views = ["frontal", "totally_made_up"]
 
         fake_fig = MagicMock()
-        with patch(
-            "custom.coreg_diagnostics.mne.viz.plot_alignment",
-            return_value=fake_fig,
-        ), patch("custom.coreg_diagnostics.mne.viz.set_3d_view"):
+        with (
+            patch(
+                "custom.coreg_diagnostics.mne.viz.plot_alignment",
+                return_value=fake_fig,
+            ),
+            patch("custom.coreg_diagnostics.mne.viz.set_3d_view"),
+        ):
             out = run_alignment_diagnostics(
-                coreg_cfg, MagicMock(), MagicMock(),
-                fs_subject, subjects_dir, tmp_path, "stem",
+                coreg_cfg,
+                MagicMock(),
+                MagicMock(),
+                fs_subject,
+                subjects_dir,
+                tmp_path,
+                "stem",
             )
         assert len(out["plot_alignment"]) == 1
 
@@ -279,8 +309,13 @@ class TestRunAlignmentDiagnostics:
             side_effect=RuntimeError("no display"),
         ):
             out = run_alignment_diagnostics(
-                coreg_cfg, MagicMock(), MagicMock(),
-                fs_subject, subjects_dir, tmp_path, "stem",
+                coreg_cfg,
+                MagicMock(),
+                MagicMock(),
+                fs_subject,
+                subjects_dir,
+                tmp_path,
+                "stem",
             )
         assert "error" in out
 
@@ -305,9 +340,13 @@ class TestHeadpointDistance:
     def test_skip_no_trans(self, coreg_cfg, fake_fs_subject, tmp_path):
         subjects_dir, fs_subject = fake_fs_subject
         out = run_headpoint_distance_diagnostic(
-            coreg_cfg, MagicMock(get=lambda k: []), trans=None,
-            fs_subject=fs_subject, fs_subjects_dir=subjects_dir,
-            out_dir=tmp_path, basename="stem",
+            coreg_cfg,
+            MagicMock(get=lambda k: []),
+            trans=None,
+            fs_subject=fs_subject,
+            fs_subjects_dir=subjects_dir,
+            out_dir=tmp_path,
+            basename="stem",
         )
         assert out == {"skipped": "no trans"}
 
@@ -316,9 +355,13 @@ class TestHeadpointDistance:
         info = MagicMock()
         info.get = lambda k: [] if k == "dig" else None
         out = run_headpoint_distance_diagnostic(
-            coreg_cfg, info, trans=MagicMock(),
-            fs_subject=fs_subject, fs_subjects_dir=subjects_dir,
-            out_dir=tmp_path, basename="stem",
+            coreg_cfg,
+            info,
+            trans=MagicMock(),
+            fs_subject=fs_subject,
+            fs_subjects_dir=subjects_dir,
+            out_dir=tmp_path,
+            basename="stem",
         )
         assert out == {"skipped": "no dig points in info"}
 
@@ -335,9 +378,13 @@ class TestHeadpointDistance:
             return_value=fake_coreg,
         ):
             out = run_headpoint_distance_diagnostic(
-                coreg_cfg, info, trans=MagicMock(),
-                fs_subject=fs_subject, fs_subjects_dir=subjects_dir,
-                out_dir=tmp_path, basename="stem",
+                coreg_cfg,
+                info,
+                trans=MagicMock(),
+                fs_subject=fs_subject,
+                fs_subjects_dir=subjects_dir,
+                out_dir=tmp_path,
+                basename="stem",
             )
         assert out["n_points"] == 3
         assert abs(out["mean_mm"] - 2.0) < 1e-6
@@ -355,8 +402,12 @@ class TestRunSensitivityDiagnostics:
     def test_skip_no_forward(self, coreg_cfg, fake_fs_subject, tmp_path):
         subjects_dir, fs_subject = fake_fs_subject
         out = run_sensitivity_diagnostics(
-            coreg_cfg, forward=None, fs_subject=fs_subject,
-            fs_subjects_dir=subjects_dir, out_dir=tmp_path, basename="stem",
+            coreg_cfg,
+            forward=None,
+            fs_subject=fs_subject,
+            fs_subjects_dir=subjects_dir,
+            out_dir=tmp_path,
+            basename="stem",
         )
         assert out == {"skipped": "no forward"}
 
@@ -369,8 +420,12 @@ class TestRunSensitivityDiagnostics:
             "custom.coreg_diagnostics.mne.sensitivity_map", return_value=fake_stc
         ):
             out = run_sensitivity_diagnostics(
-                coreg_cfg, forward=MagicMock(), fs_subject=fs_subject,
-                fs_subjects_dir=subjects_dir, out_dir=tmp_path, basename="stem",
+                coreg_cfg,
+                forward=MagicMock(),
+                fs_subject=fs_subject,
+                fs_subjects_dir=subjects_dir,
+                out_dir=tmp_path,
+                basename="stem",
             )
         # mag × {free, radiality} × 4 hemi/view combinations = 8 plots.
         assert "mag_free" in out
@@ -389,8 +444,12 @@ class TestRunSensitivityDiagnostics:
             side_effect=RuntimeError("singular"),
         ):
             out = run_sensitivity_diagnostics(
-                coreg_cfg, forward=MagicMock(), fs_subject=fs_subject,
-                fs_subjects_dir=subjects_dir, out_dir=tmp_path, basename="stem",
+                coreg_cfg,
+                forward=MagicMock(),
+                fs_subject=fs_subject,
+                fs_subjects_dir=subjects_dir,
+                out_dir=tmp_path,
+                basename="stem",
             )
         assert out["mag_free"]["error"] == "singular"
 
@@ -413,18 +472,15 @@ class TestLoadDiagnosticData:
         return defaults
 
     def test_happy_path(self, coreg_cfg):
-        with patch(
-            "custom.coreg_diagnostics.mne.io.read_info"
-        ) as mock_info, patch(
-            "custom.coreg_diagnostics.mne.read_forward_solution"
-        ) as mock_fwd, patch(
-            "custom.coreg_diagnostics.get_head_mri_trans"
-        ) as mock_trans, patch(
-            "custom.coreg_diagnostics.get_fs_subject", return_value="sub-001_ses-01"
-        ), patch(
-            "custom.coreg_diagnostics.get_fs_subjects_dir", return_value="/fs"
-        ), patch(
-            "custom.coreg_diagnostics.Path.exists", return_value=True
+        with (
+            patch("custom.coreg_diagnostics.mne.io.read_info") as mock_info,
+            patch("custom.coreg_diagnostics.mne.read_forward_solution") as mock_fwd,
+            patch("custom.coreg_diagnostics.get_head_mri_trans") as mock_trans,
+            patch(
+                "custom.coreg_diagnostics.get_fs_subject", return_value="sub-001_ses-01"
+            ),
+            patch("custom.coreg_diagnostics.get_fs_subjects_dir", return_value="/fs"),
+            patch("custom.coreg_diagnostics.Path.exists", return_value=True),
         ):
             mock_info.return_value = MagicMock()
             mock_fwd.return_value = MagicMock(name="fwd")
@@ -443,17 +499,18 @@ class TestLoadDiagnosticData:
                 load_diagnostic_data(coreg_cfg)
 
     def test_trans_failure_sets_none(self, coreg_cfg):
-        with patch("custom.coreg_diagnostics.mne.io.read_info"), patch(
-            "custom.coreg_diagnostics.mne.read_forward_solution"
-        ) as mock_fwd, patch(
-            "custom.coreg_diagnostics.get_head_mri_trans",
-            side_effect=RuntimeError("no landmarks"),
-        ), patch(
-            "custom.coreg_diagnostics.get_fs_subject", return_value="sub-001_ses-01"
-        ), patch(
-            "custom.coreg_diagnostics.get_fs_subjects_dir", return_value="/fs"
-        ), patch(
-            "custom.coreg_diagnostics.Path.exists", return_value=True
+        with (
+            patch("custom.coreg_diagnostics.mne.io.read_info"),
+            patch("custom.coreg_diagnostics.mne.read_forward_solution") as mock_fwd,
+            patch(
+                "custom.coreg_diagnostics.get_head_mri_trans",
+                side_effect=RuntimeError("no landmarks"),
+            ),
+            patch(
+                "custom.coreg_diagnostics.get_fs_subject", return_value="sub-001_ses-01"
+            ),
+            patch("custom.coreg_diagnostics.get_fs_subjects_dir", return_value="/fs"),
+            patch("custom.coreg_diagnostics.Path.exists", return_value=True),
         ):
             mock_fwd.return_value = MagicMock()
             data = load_diagnostic_data(coreg_cfg)
@@ -468,20 +525,21 @@ class TestLoadDiagnosticData:
             # epochs path should be reported as existing here.
             return any(token in str(self) for token in existing)
 
-        with patch(
-            "custom.coreg_diagnostics.mne.io.read_info"
-        ), patch(
-            "custom.coreg_diagnostics.get_head_mri_trans",
-            return_value=MagicMock(name="trans"),
-        ), patch(
-            "custom.coreg_diagnostics.get_fs_subject", return_value="sub-001_ses-01"
-        ), patch(
-            "custom.coreg_diagnostics.get_fs_subjects_dir", return_value="/fs"
-        ), patch(
-            "custom.coreg_diagnostics._compute_forward",
-            return_value=MagicMock(name="fwd"),
-        ) as mock_compute, patch.object(
-            Path, "exists", autospec=True, side_effect=fake_exists
+        with (
+            patch("custom.coreg_diagnostics.mne.io.read_info"),
+            patch(
+                "custom.coreg_diagnostics.get_head_mri_trans",
+                return_value=MagicMock(name="trans"),
+            ),
+            patch(
+                "custom.coreg_diagnostics.get_fs_subject", return_value="sub-001_ses-01"
+            ),
+            patch("custom.coreg_diagnostics.get_fs_subjects_dir", return_value="/fs"),
+            patch(
+                "custom.coreg_diagnostics._compute_forward",
+                return_value=MagicMock(name="fwd"),
+            ) as mock_compute,
+            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
         ):
             data = load_diagnostic_data(coreg_cfg)
         mock_compute.assert_called_once()
@@ -502,7 +560,10 @@ class TestBuildJsonReport:
             "basename": "sub-001_ses-01_task-task",
         }
         results = {
-            "bem": {"plot_bem": [Path(tmp_path / "x.png")], "metrics": {"v": np.float64(1.5)}},
+            "bem": {
+                "plot_bem": [Path(tmp_path / "x.png")],
+                "metrics": {"v": np.float64(1.5)},
+            },
             "headpoint": {"skipped": "no trans"},
         }
         out = build_json_report(coreg_cfg, results, paths)
@@ -530,17 +591,15 @@ class TestMainEarlyExit:
         cfg = SimpleNamespace(**vars(coreg_cfg))
         cfg._run_coreg_diagnostics = False
 
-        with patch(
-            "custom.coreg_diagnostics._import_config", return_value=cfg
-        ), patch(
-            "custom.coreg_diagnostics._update_config_from_path"
-        ), patch(
-            "custom.coreg_diagnostics.parse_args",
-            return_value=SimpleNamespace(config=str(config_path)),
-        ), patch(
-            "custom.coreg_diagnostics.load_diagnostic_data"
-        ) as mock_load, patch(
-            "custom.coreg_diagnostics._setup_3d_backend"
+        with (
+            patch("custom.coreg_diagnostics._import_config", return_value=cfg),
+            patch("custom.coreg_diagnostics._update_config_from_path"),
+            patch(
+                "custom.coreg_diagnostics.parse_args",
+                return_value=SimpleNamespace(config=str(config_path)),
+            ),
+            patch("custom.coreg_diagnostics.load_diagnostic_data") as mock_load,
+            patch("custom.coreg_diagnostics._setup_3d_backend"),
         ):
             from custom.coreg_diagnostics import main
 

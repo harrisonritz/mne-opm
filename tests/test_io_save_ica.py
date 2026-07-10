@@ -21,6 +21,7 @@ from custom.preprocessing._io import save_ica_bids
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def ica_setup(tmp_path, meg_info, rng):
     """Create a fitted ICA, matching TSV, and config pointing to tmp dirs."""
@@ -45,14 +46,14 @@ def ica_setup(tmp_path, meg_info, rng):
     )
 
     # Create components TSV
-    tsv_path = (
-        deriv / "sub-001_ses-01_task-restingstate_proc-ica_components.tsv"
+    tsv_path = deriv / "sub-001_ses-01_task-restingstate_proc-ica_components.tsv"
+    df = pd.DataFrame(
+        {
+            "component": list(range(5)),
+            "status": ["good"] * 5,
+            "status_description": [""] * 5,
+        }
     )
-    df = pd.DataFrame({
-        "component": list(range(5)),
-        "status": ["good"] * 5,
-        "status_description": [""] * 5,
-    })
     df.to_csv(tsv_path, sep="\t", index=False)
 
     return ica, cfg, tsv_path, deriv
@@ -61,6 +62,7 @@ def ica_setup(tmp_path, meg_info, rng):
 # ---------------------------------------------------------------------------
 # save_ica_bids
 # ---------------------------------------------------------------------------
+
 
 class TestSaveIcaBids:
     """Test that save_ica_bids updates TSV and saves ICA object."""
@@ -83,11 +85,13 @@ class TestSaveIcaBids:
         ica, cfg, tsv_path, _ = ica_setup
 
         # Re-create TSV with explicitly-typed string column
-        df = pd.DataFrame({
-            "component": list(range(5)),
-            "status": ["good"] * 5,
-            "status_description": ["none"] * 5,  # String values, not empty
-        })
+        df = pd.DataFrame(
+            {
+                "component": list(range(5)),
+                "status": ["good"] * 5,
+                "status_description": ["none"] * 5,  # String values, not empty
+            }
+        )
         df.to_csv(tsv_path, sep="\t", index=False)
 
         save_ica_bids(ica, cfg)

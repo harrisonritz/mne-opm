@@ -187,9 +187,7 @@ class TestGetCustomOutputPath:
 class TestFindCustomInputPaths:
     """find_custom_input_paths prefers deriv proc-* files when custom_proc is set."""
 
-    def test_falls_back_to_bids_root_when_proc_unset(
-        self, tmp_path, raw_meg
-    ):
+    def test_falls_back_to_bids_root_when_proc_unset(self, tmp_path, raw_meg):
         """Without custom_proc, only the BIDS root is searched."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
@@ -202,9 +200,7 @@ class TestFindCustomInputPaths:
         assert str(paths[0].root) == str(bids_root)
         assert paths[0].processing is None
 
-    def test_falls_back_to_bids_root_when_no_deriv_files(
-        self, tmp_path, raw_meg
-    ):
+    def test_falls_back_to_bids_root_when_no_deriv_files(self, tmp_path, raw_meg):
         """With custom_proc set but no deriv files yet, returns bids_root."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
@@ -221,9 +217,7 @@ class TestFindCustomInputPaths:
         """With custom_proc set and deriv files present, those are used."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
-        source_bp = _write_minimal_raw_to_bids(
-            bids_root, raw_meg, task="restingstate"
-        )
+        source_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
 
         cfg = _make_cfg(tmp_path, custom_proc="init")
 
@@ -268,16 +262,12 @@ class TestFindCustomInputPaths:
 class TestWriteRawBidsCustomStep:
     """End-to-end behaviour of write_raw_bids_custom_step."""
 
-    def test_raises_when_proc_unset_would_overwrite_bids(
-        self, tmp_path, raw_meg
-    ):
+    def test_raises_when_proc_unset_would_overwrite_bids(self, tmp_path, raw_meg):
         """With custom_proc unset the output resolves to the source BIDS file;
         writing there is refused so the raw BIDS data is never overwritten."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
-        source_bp = _write_minimal_raw_to_bids(
-            bids_root, raw_meg, task="restingstate"
-        )
+        source_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
 
         cfg = _make_cfg(tmp_path)  # no custom_proc
 
@@ -289,9 +279,7 @@ class TestWriteRawBidsCustomStep:
         """With custom_proc set, writes go to deriv_root with proc-* tag."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
-        source_bp = _write_minimal_raw_to_bids(
-            bids_root, raw_meg, task="restingstate"
-        )
+        source_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
 
         cfg = _make_cfg(tmp_path, custom_proc="init")
         output_bp = write_raw_bids_custom_step(raw_meg, cfg, source_bp)
@@ -302,15 +290,11 @@ class TestWriteRawBidsCustomStep:
         # The proc-init filename should be used
         assert "proc-init" in str(output_bp.fpath)
 
-    def test_does_not_modify_bids_root_when_redirected(
-        self, tmp_path, raw_meg
-    ):
+    def test_does_not_modify_bids_root_when_redirected(self, tmp_path, raw_meg):
         """A redirected write must NOT touch the BIDS data file."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
-        source_bp = _write_minimal_raw_to_bids(
-            bids_root, raw_meg, task="restingstate"
-        )
+        source_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
         original_mtime = source_bp.fpath.stat().st_mtime
         original_size = source_bp.fpath.stat().st_size
 
@@ -334,8 +318,12 @@ class TestWriteRawBidsCustomStep:
         # Write raw + events to BIDS
         events = mne.find_events(raw_with_stim, stim_channel="STI001")
         bp = BIDSPath(
-            root=str(bids_root), subject="001", session="01",
-            task="restingstate", datatype="meg", suffix="meg",
+            root=str(bids_root),
+            subject="001",
+            session="01",
+            task="restingstate",
+            datatype="meg",
+            suffix="meg",
             extension=".fif",
         )
         mne_bids.write_raw_bids(
@@ -357,9 +345,7 @@ class TestWriteRawBidsCustomStep:
 
         # The redirected write should have an events.tsv next to it that
         # matches the source (the seed plus preserve+restore).
-        deriv_events = output_bp.copy().update(
-            suffix="events", extension=".tsv"
-        ).fpath
+        deriv_events = output_bp.copy().update(suffix="events", extension=".tsv").fpath
         assert deriv_events.exists()
         assert deriv_events.read_text().splitlines() == source_event_lines
 
@@ -368,9 +354,7 @@ class TestWriteRawBidsCustomStep:
         without raising, and the output still lands in deriv_root."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
-        source_bp = _write_minimal_raw_to_bids(
-            bids_root, raw_meg, task="restingstate"
-        )
+        source_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
         er_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="noise")
 
         cfg = _make_cfg(tmp_path, custom_proc="init")
@@ -419,7 +403,9 @@ class TestBadChannelsRespectsCustomProc:
         # Output file must exist in deriv_root with proc-init label
         deriv_file = (
             Path(cfg.deriv_root)
-            / "sub-001" / "ses-01" / "meg"
+            / "sub-001"
+            / "ses-01"
+            / "meg"
             / "sub-001_ses-01_task-restingstate_proc-init_raw.fif"
         )
         assert deriv_file.exists()
@@ -427,7 +413,9 @@ class TestBadChannelsRespectsCustomProc:
         # bids_root file should not have the bad channels marked (untouched)
         bids_channels_tsv = (
             Path(cfg.bids_root)
-            / "sub-001" / "ses-01" / "meg"
+            / "sub-001"
+            / "ses-01"
+            / "meg"
             / "sub-001_ses-01_task-restingstate_channels.tsv"
         )
         # The original write set MEG001 as good; after our redirect, the
@@ -442,7 +430,9 @@ class TestBadChannelsRespectsCustomProc:
         # The deriv channels.tsv should mark MEG001 as bad
         deriv_channels_tsv = (
             Path(cfg.deriv_root)
-            / "sub-001" / "ses-01" / "meg"
+            / "sub-001"
+            / "ses-01"
+            / "meg"
             / "sub-001_ses-01_task-restingstate_proc-init_channels.tsv"
         )
         text = deriv_channels_tsv.read_text()
@@ -483,7 +473,9 @@ class TestBadChannelsRespectsCustomProc:
         # MEG001 stays good in the raw BIDS channels.tsv.
         bids_channels_tsv = (
             Path(cfg.bids_root)
-            / "sub-001" / "ses-01" / "meg"
+            / "sub-001"
+            / "ses-01"
+            / "meg"
             / "sub-001_ses-01_task-restingstate_channels.tsv"
         )
         for line in bids_channels_tsv.read_text().splitlines():
@@ -533,7 +525,9 @@ class TestBadSegmentsRespectsCustomProc:
 
         deriv_file = (
             Path(cfg.deriv_root)
-            / "sub-001" / "ses-01" / "meg"
+            / "sub-001"
+            / "ses-01"
+            / "meg"
             / "sub-001_ses-01_task-restingstate_proc-init_raw.fif"
         )
         assert deriv_file.exists()
@@ -553,9 +547,7 @@ class TestLoadDataPrefersDeriv:
     """Once a custom step has written to deriv proc-init, the next step
     in the chain reads from there rather than re-reading bids_root."""
 
-    def test_apply_hfc_load_finds_deriv_after_first_step(
-        self, tmp_path, raw_meg
-    ):
+    def test_apply_hfc_load_finds_deriv_after_first_step(self, tmp_path, raw_meg):
         from custom.preprocessing.apply_hfc import ApplyHFCAnalysis
         from custom.preprocessing.bad_channels import BadChannelsAnalysis
 
@@ -604,9 +596,7 @@ class TestNoiseTaskOrdering:
 
     @patch("custom.preprocessing.bad_channels.write_raw_bids_custom_step")
     @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
-    def test_noise_saved_before_task(
-        self, mock_find, mock_write, raw_meg, tmp_path
-    ):
+    def test_noise_saved_before_task(self, mock_find, mock_write, raw_meg, tmp_path):
         from custom.preprocessing.bad_channels import BadChannelsAnalysis
 
         cfg = SimpleNamespace(

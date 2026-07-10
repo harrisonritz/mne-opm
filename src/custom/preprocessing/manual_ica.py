@@ -66,7 +66,6 @@ from ._io import save_ica_bids
 # mne.viz.set_browser_backend("qt")
 
 
-
 class ManualICAAnalysis(BaseAnalysis):
     """Interactive manual ICA component review.
 
@@ -116,8 +115,16 @@ class ManualICAAnalysis(BaseAnalysis):
         self.log("Loading data...")
 
         # Construct BIDSPath for cleaned raw data
-        subject = self.cfg.subjects[0] if isinstance(self.cfg.subjects, list) else self.cfg.subjects
-        session = self.cfg.sessions[0] if isinstance(self.cfg.sessions, list) else self.cfg.sessions
+        subject = (
+            self.cfg.subjects[0]
+            if isinstance(self.cfg.subjects, list)
+            else self.cfg.subjects
+        )
+        session = (
+            self.cfg.sessions[0]
+            if isinstance(self.cfg.sessions, list)
+            else self.cfg.sessions
+        )
 
         # Find cleaned raw files using mne_bids
         matching_files = find_matching_paths(
