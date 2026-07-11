@@ -27,13 +27,14 @@ from typing import Any, Dict
 import mne
 import numpy as np
 from mne.beamformer import apply_lcmv, apply_lcmv_cov, make_lcmv
-from mne_bids import BIDSPath
+from mne_bids import BIDSPath, get_head_mri_trans
 
 # Add mne-bids-pipeline to path for importing utilities
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "mne-bids-pipeline"))
 
 from mne_bids_pipeline._config_import import _update_config_from_path, _import_config
 from mne_bids_pipeline._config_utils import (
+    _get_bem_conductivity,
     get_fs_subject,
     get_fs_subjects_dir,
     get_noise_cov_bids_path,
@@ -81,6 +82,180 @@ def load_config(config_path: str) -> SimpleNamespace:
 
 
 # --------------------------------------------------------------------------------------
+# Volume Forward Solution
+# --------------------------------------------------------------------------------------
+
+
+def _find_bem_solution(fs_subjects_dir: str, fs_subject: str, tag: str) -> Path | None:
+    """Locate an existing BEM solution in the FreeSurfer subject ``bem/`` directory.
+
+    Prefers the conductivity-tagged file the pipeline writes
+    (``{fs_subject}-{tag}-bem-sol.fif``), then falls back to any ``*bem-sol.fif``.
+    Mirrors ``coreg_diagnostics._find_bem_solution`` but honours the pipeline's
+    ``_get_bem_conductivity`` tag so the OPM single-layer solution is found first.
+    """
+    bem_dir = Path(fs_subjects_dir) / fs_subject / "bem"
+    if not bem_dir.exists():
+        return None
+    tagged = bem_dir / f"{fs_subject}-{tag}-bem-sol.fif"
+    if tagged.exists():
+        return tagged
+    matches = sorted(bem_dir.glob("*bem-sol.fif"))
+    if not matches:
+        return None
+    for m in matches:
+        if m.name.startswith(fs_subject):
+            return m
+    return matches[0]
+
+
+def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
+    """Build (or load a cached) volume-source-space forward solution.
+
+    mne-bids-pipeline only ever builds *surface* forward solutions, so a volume
+    beamformer needs its own forward.  This adapts the on-the-fly forward pattern
+    from ``coreg_diagnostics._compute_forward``, swapping ``setup_source_space``
+    for :func:`mne.setup_volume_source_space` (a regular 3D grid bounded by the
+    BEM inner-skull surface).
+
+    The result is cached to ``*_acq-vol_fwd.fif`` (the forward file embeds its
+    volume ``src``) and reused on subsequent runs when
+    ``_beamformer_volume_cache`` is set.
+
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Configuration object.  Reads ``_beamformer_volume_pos`` (grid spacing,
+        mm), ``_beamformer_volume_mindist`` (mm from inner skull),
+        ``_beamformer_volume_bem_conductivity``, ``_beamformer_volume_bem_ico``
+        and ``_beamformer_volume_cache``.
+    info : mne.Info
+        Measurement info (sensor geometry) the forward is computed for.
+
+    Returns
+    -------
+    fwd : mne.Forward
+        Volume-source-space forward solution.
+    """
+    print("\n[build_volume_forward] Building volume-source-space forward...")
+
+    subject = cfg.subjects[0]
+    session = cfg.sessions[0]
+
+    fs_subject = get_fs_subject(config=cfg, subject=subject, session=session)
+    fs_subjects_dir = get_fs_subjects_dir(config=cfg)
+    print(
+        f"[build_volume_forward] FreeSurfer subject={fs_subject}, "
+        f"subjects_dir={fs_subjects_dir}"
+    )
+
+    bids_path = BIDSPath(
+        subject=subject,
+        session=session,
+        task=cfg.task,
+        root=cfg.deriv_root,
+        datatype=cfg.datatype,
+        check=False,
+    )
+
+    pos = float(getattr(cfg, "_beamformer_volume_pos", 5.0))
+    mindist = float(getattr(cfg, "_beamformer_volume_mindist", getattr(cfg, "mindist", 5.0)))
+    cache = getattr(cfg, "_beamformer_volume_cache", True)
+
+    # Cache -----------------------------------------------------------------
+    vol_fwd_path = bids_path.copy().update(
+        suffix="fwd", acquisition="vol", extension=".fif"
+    )
+    if cache and vol_fwd_path.fpath.exists():
+        print(f"[build_volume_forward] Loading cached volume forward: {vol_fwd_path.fpath}")
+        return mne.read_forward_solution(vol_fwd_path.fpath)
+
+    # BEM solution ----------------------------------------------------------
+    conductivity_default, tag = _get_bem_conductivity(cfg)
+    bem_path = _find_bem_solution(fs_subjects_dir, fs_subject, tag)
+    if bem_path is not None:
+        print(f"[build_volume_forward] Loading BEM solution: {bem_path}")
+        bem = mne.read_bem_solution(bem_path)
+    else:
+        conductivity = tuple(
+            getattr(cfg, "_beamformer_volume_bem_conductivity", (0.3,))
+        )
+        ico = int(getattr(cfg, "_beamformer_volume_bem_ico", 4))
+        print(
+            f"[build_volume_forward] No BEM on disk; building model "
+            f"(conductivity={conductivity}, ico={ico})"
+        )
+        model = mne.make_bem_model(
+            subject=fs_subject,
+            ico=ico,
+            conductivity=conductivity,
+            subjects_dir=fs_subjects_dir,
+        )
+        bem = mne.make_bem_solution(model)
+
+    # Head <-> MRI transform ------------------------------------------------
+    # Prefer the trans the pipeline already wrote next to the surface forward;
+    # fall back to recomputing it from the BIDS anatomical landmarks.
+    trans = None
+    trans_path = bids_path.copy().update(suffix="trans", extension=".fif")
+    if trans_path.fpath.exists():
+        print(f"[build_volume_forward] Loading head-MRI trans: {trans_path.fpath}")
+        trans = mne.read_trans(trans_path.fpath)
+    else:
+        print("[build_volume_forward] No trans on disk; deriving from BIDS landmarks")
+        t1_bids_path = BIDSPath(
+            subject=subject,
+            session=session,
+            root=cfg.bids_root,
+            datatype="anat",
+            suffix="T1w",
+            extension=".nii.gz",
+            check=False,
+        )
+        trans = get_head_mri_trans(
+            bids_path,
+            fs_subject=fs_subject,
+            fs_subjects_dir=fs_subjects_dir,
+            t1_bids_path=t1_bids_path,
+        )
+
+    # Volume source space (grid bounded by the BEM inner skull) -------------
+    print(f"[build_volume_forward] Setting up volume source space (pos={pos} mm)")
+    src = mne.setup_volume_source_space(
+        subject=fs_subject,
+        pos=pos,
+        bem=bem,
+        subjects_dir=fs_subjects_dir,
+        add_interpolator=True,
+    )
+    print(f"[build_volume_forward] Volume source space: {sum(s['nuse'] for s in src)} sources")
+
+    # Forward solution ------------------------------------------------------
+    print("[build_volume_forward] Computing forward solution...")
+    fwd = mne.make_forward_solution(
+        info,
+        trans=trans,
+        src=src,
+        bem=bem,
+        meg=True,
+        eeg=False,
+        mindist=mindist,
+        n_jobs=getattr(cfg, "n_jobs", 1),
+    )
+
+    # Persist for reuse -----------------------------------------------------
+    if cache:
+        try:
+            vol_fwd_path.fpath.parent.mkdir(parents=True, exist_ok=True)
+            mne.write_forward_solution(vol_fwd_path.fpath, fwd, overwrite=True)
+            print(f"[build_volume_forward] Cached volume forward to {vol_fwd_path.fpath}")
+        except Exception as e:
+            print(f"[build_volume_forward] WARNING: could not cache forward: {e}")
+
+    return fwd
+
+
+# --------------------------------------------------------------------------------------
 # Data Loading
 # --------------------------------------------------------------------------------------
 
@@ -118,16 +293,27 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
         check=False,
     )
 
-    # Load forward solution
-    fwd_path = bids_path.copy().update(suffix="fwd", extension=".fif")
-    if not fwd_path.fpath.exists():
-        raise FileNotFoundError(
-            f"Forward solution not found at {fwd_path.fpath}\n"
-            f"Run forward modeling first with:\n"
-            f"  mne_bids_pipeline --steps=source/make_forward --config=<config>"
+    # Source-space type: 'surface' (mne-bids-pipeline forward) or 'volume'
+    # (built on the fly from the measurement info; see build_volume_forward).
+    source_space = getattr(cfg, "_beamformer_source_space", "surface")
+    if source_space not in ("surface", "volume"):
+        raise ValueError(
+            f"Invalid _beamformer_source_space: {source_space!r}. "
+            f"Must be 'surface' or 'volume'."
         )
-    print(f"[load_beamformer_data] Loading forward solution: {fwd_path.fpath}")
-    data["forward"] = mne.read_forward_solution(fwd_path)
+    print(f"[load_beamformer_data] Source space: {source_space}")
+
+    # Load surface forward solution (volume forward is built after epochs/info).
+    if source_space == "surface":
+        fwd_path = bids_path.copy().update(suffix="fwd", extension=".fif")
+        if not fwd_path.fpath.exists():
+            raise FileNotFoundError(
+                f"Forward solution not found at {fwd_path.fpath}\n"
+                f"Run forward modeling first with:\n"
+                f"  mne_bids_pipeline --steps=source/make_forward --config=<config>"
+            )
+        print(f"[load_beamformer_data] Loading forward solution: {fwd_path.fpath}")
+        data["forward"] = mne.read_forward_solution(fwd_path)
 
     # Load clean epochs
     epochs_path = bids_path.copy().update(
@@ -140,6 +326,10 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
     print(f"[load_beamformer_data] Loading epochs: {epochs_path.fpath}")
     data["epochs"] = mne.read_epochs(epochs_path, preload=True)
     data["info"] = mne.io.read_info(epochs_path)
+
+    # Build (or load cached) volume forward from the measurement info.
+    if source_space == "volume":
+        data["forward"] = build_volume_forward(cfg, data["info"])
 
     # Load noise covariance
     if cfg.noise_cov == "ad-hoc":
@@ -547,14 +737,22 @@ def save_beamformer_results(
         filters.save(filter_path.fpath, overwrite=True)
         out_files["filters"] = filter_path.fpath
 
+    # Volume STCs are stored under a distinct "+vol" token (and save as "-vl.h5")
+    # so downstream tooling can tell them apart from surface "+hemi" ("-stc.h5").
+    space_tag = (
+        "vol"
+        if getattr(cfg, "_beamformer_source_space", "surface") == "volume"
+        else "hemi"
+    )
+
     # Save source estimates
     for condition, stc in stcs.items():
         # Create suffix based on analysis type
         cond_sanitized = sanitize_cond_name(condition)
         if analysis_type == "time":
-            suffix = f"{cond_sanitized}+lcmv+hemi"
+            suffix = f"{cond_sanitized}+lcmv+{space_tag}"
         else:  # power
-            suffix = f"{cond_sanitized}+lcmv-power+hemi"
+            suffix = f"{cond_sanitized}+lcmv-power+{space_tag}"
 
         stc_path = bids_path.copy().update(suffix=suffix)
         print(f"  - Saving {condition} to: {stc_path.fpath}")
@@ -576,6 +774,7 @@ def add_to_report(
     cfg: SimpleNamespace,
     stcs: Dict[str, Path],
     analysis_type: str,
+    src: "mne.SourceSpaces | None" = None,
 ) -> None:
     """Add beamformer results to MNE-BIDS-Pipeline HTML report.
 
@@ -587,10 +786,17 @@ def add_to_report(
         Dictionary mapping condition names to STC file paths.
     analysis_type : str
         'time' or 'power' to distinguish analysis types.
+    src : mne.SourceSpaces or None
+        Volume source space.  Required when ``_beamformer_source_space ==
+        'volume'``: ``report.add_stc`` cannot render volume estimates (it has no
+        ``src`` parameter), so each volume STC is plotted with
+        ``stc.plot(src=..., mode='stat_map')`` and added as a figure instead.
     """
     if not cfg._beamformer_add_to_report:
         print(f"\n[add_to_report] Report generation disabled. Skipping.")
         return
+
+    is_volume = getattr(cfg, "_beamformer_source_space", "surface") == "volume"
 
     print(f"\n[add_to_report] Adding {analysis_type} beamformer results to report...")
 
@@ -636,16 +842,48 @@ def add_to_report(
                 if condition not in cfg.conditions:
                     tags = tags + ("contrast",)
 
-                # Add to report
-                report.add_stc(
-                    stc=stc_path,
-                    title=f"Beamformer ({analysis_type}): {condition}",
-                    subject=fs_subject,
-                    subjects_dir=fs_subjects_dir,
-                    n_time_points=cfg.report_stc_n_time_points,
-                    tags=tags,
-                    replace=True,
-                )
+                if is_volume:
+                    # report.add_stc has no `src` argument and cannot render a
+                    # VolSourceEstimate, so plot it with nilearn and add the
+                    # resulting figure instead.
+                    if src is None:
+                        print(
+                            f"    [WARNING] Volume STC but no source space provided; "
+                            f"skipping report figure for {condition}"
+                        )
+                        continue
+                    import matplotlib.pyplot as plt
+
+                    stc = mne.read_source_estimate(str(stc_path))
+                    # Representative slice at the peak of the mean-over-sources signal.
+                    peak_time = stc.times[
+                        int(np.argmax(np.abs(stc.data).mean(axis=0)))
+                    ]
+                    fig = stc.plot(
+                        src=src,
+                        subject=fs_subject,
+                        subjects_dir=fs_subjects_dir,
+                        mode="stat_map",
+                        initial_time=peak_time,
+                        show=False,
+                    )
+                    report.add_figure(
+                        fig=fig,
+                        title=f"Beamformer ({analysis_type}): {condition}",
+                        tags=tags,
+                        replace=True,
+                    )
+                    plt.close(fig)
+                else:
+                    report.add_stc(
+                        stc=stc_path,
+                        title=f"Beamformer ({analysis_type}): {condition}",
+                        subject=fs_subject,
+                        subjects_dir=fs_subjects_dir,
+                        n_time_points=cfg.report_stc_n_time_points,
+                        tags=tags,
+                        replace=True,
+                    )
                 print(f"    - tags: {tags}")
 
             print(
@@ -762,6 +1000,7 @@ def main():
             cfg=cfg,
             stcs=out_files_time,
             analysis_type="time",
+            src=data["forward"]["src"],
         )
 
     # Run Power beamformer --------------------------------
@@ -787,6 +1026,7 @@ def main():
             cfg=cfg,
             stcs=out_files_power,
             analysis_type="power",
+            src=data["forward"]["src"],
         )
 
     print("\n" + "=" * 80)
