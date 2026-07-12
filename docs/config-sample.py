@@ -558,6 +558,10 @@ _run_beamformer = True  # master switch
 #               run_beamformer.py via mne.setup_volume_source_space; the volume
 #               forward is cached as `*_acq-vol_fwd.fif` and STCs are saved as
 #               `*+lcmv+vol-vl.h5` (rendered with nilearn, not the surface Brain).
+# May also be a LIST to run both reconstructions in one invocation, e.g.
+#   _beamformer_source_space = ["surface", "volume"]
+# Each space gets its own forward, filters (volume filters tagged `_acq-vol`),
+# STCs, and report entries, so the two never collide.
 _beamformer_source_space = "surface"
 
 # --- Volume-source-space options (only used when source_space == 'volume') ---
@@ -807,8 +811,16 @@ assert _beamformer_power_tmin < _beamformer_power_tmax, (
     f"_beamformer_power_tmin ({_beamformer_power_tmin}) must be < "
     f"_beamformer_power_tmax ({_beamformer_power_tmax})."
 )
-assert _beamformer_source_space in {"surface", "volume"}, (
-    f"_beamformer_source_space must be 'surface' or 'volume'; got '{_beamformer_source_space}'."
+_bf_source_spaces = (
+    [_beamformer_source_space]
+    if isinstance(_beamformer_source_space, str)
+    else list(_beamformer_source_space)
+)
+assert _bf_source_spaces and all(
+    _s in {"surface", "volume"} for _s in _bf_source_spaces
+), (
+    f"_beamformer_source_space must be 'surface', 'volume', or a list of those; "
+    f"got {_beamformer_source_space!r}."
 )
 assert _beamformer_volume_pos > 0, (
     f"_beamformer_volume_pos must be > 0 (mm), got {_beamformer_volume_pos}."

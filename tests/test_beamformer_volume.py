@@ -24,6 +24,7 @@ from custom.run_beamformer import (
     add_to_report,
     build_volume_forward,
     load_beamformer_data,
+    resolve_source_spaces,
     save_beamformer_results,
 )
 
@@ -86,6 +87,42 @@ def _patch_common(stack_extra=None):
             return_value=((0.3,), "5120"),
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# resolve_source_spaces
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSourceSpaces:
+    def test_default_is_surface(self):
+        assert resolve_source_spaces(SimpleNamespace()) == ["surface"]
+
+    def test_single_string(self):
+        cfg = SimpleNamespace(_beamformer_source_space="volume")
+        assert resolve_source_spaces(cfg) == ["volume"]
+
+    def test_list_runs_both_in_order(self):
+        cfg = SimpleNamespace(_beamformer_source_space=["volume", "surface"])
+        assert resolve_source_spaces(cfg) == ["volume", "surface"]
+
+    def test_tuple_accepted(self):
+        cfg = SimpleNamespace(_beamformer_source_space=("surface", "volume"))
+        assert resolve_source_spaces(cfg) == ["surface", "volume"]
+
+    def test_duplicates_collapsed(self):
+        cfg = SimpleNamespace(_beamformer_source_space=["volume", "volume", "surface"])
+        assert resolve_source_spaces(cfg) == ["volume", "surface"]
+
+    def test_invalid_entry_raises(self):
+        cfg = SimpleNamespace(_beamformer_source_space=["surface", "banana"])
+        with pytest.raises(ValueError, match="_beamformer_source_space"):
+            resolve_source_spaces(cfg)
+
+    def test_empty_list_raises(self):
+        cfg = SimpleNamespace(_beamformer_source_space=[])
+        with pytest.raises(ValueError, match="must not be empty"):
+            resolve_source_spaces(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +366,45 @@ class TestLoadBeamformerDataVolume:
         with pytest.raises(ValueError, match="_beamformer_source_space"):
             load_beamformer_data(vol_cfg)
 
+    def test_list_builds_both_forwards(self, vol_cfg):
+        """A list runs both: surface loaded from disk, volume built; both kept."""
+        vol_cfg._beamformer_source_space = ["surface", "volume"]
+        deriv = Path(vol_cfg.deriv_root)
+        meg_dir = deriv / "sub-001" / "ses-01" / "meg"
+        meg_dir.mkdir(parents=True)
+        fwd_path = meg_dir / "sub-001_ses-01_task-restingstate_fwd.fif"
+        epo_path = meg_dir / "sub-001_ses-01_task-restingstate_proc-clean_epo.fif"
+        fwd_path.touch()
+        epo_path.touch()
+
+        info = mne.create_info(["MEG001"], 300.0, ["mag"])
+        surf_fwd = MagicMock(spec=mne.Forward)
+        surf_fwd.__getitem__ = lambda self, k: [1, 2] if k == "src" else None
+        vol_fwd = MagicMock(spec=mne.Forward)
+        vol_fwd.__getitem__ = lambda self, k: [1] if k == "src" else None
+        mock_epochs = MagicMock(spec=mne.Epochs)
+        mock_epochs.__len__ = lambda self: 10
+        mock_epochs.ch_names = ["MEG001"]
+
+        with (
+            patch(
+                "custom.run_beamformer.mne.read_forward_solution",
+                return_value=surf_fwd,
+            ),
+            patch("custom.run_beamformer.mne.read_epochs", return_value=mock_epochs),
+            patch("custom.run_beamformer.mne.io.read_info", return_value=info),
+            patch(
+                "custom.run_beamformer.build_volume_forward", return_value=vol_fwd
+            ) as mock_build,
+        ):
+            data = load_beamformer_data(vol_cfg)
+
+        assert set(data["forwards"]) == {"surface", "volume"}
+        assert data["forwards"]["surface"] is surf_fwd
+        assert data["forwards"]["volume"] is vol_fwd
+        assert data["forward"] is surf_fwd  # first entry in the list
+        mock_build.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # save_beamformer_results — volume naming
@@ -363,6 +439,37 @@ class TestSaveBeamformerVolumeNaming:
             vol_cfg, filters=MagicMock(), stcs={"stim_a": stc}, analysis_type="time"
         )
         assert "+lcmv+hemi" in str(stc.save.call_args.args[0])
+
+    def test_explicit_source_space_param_overrides_cfg(self, vol_cfg):
+        """cfg says volume, but an explicit source_space='surface' wins."""
+        stc = MagicMock()
+        save_beamformer_results(
+            vol_cfg,
+            filters=MagicMock(),
+            stcs={"stim_a": stc},
+            analysis_type="time",
+            source_space="surface",
+        )
+        assert "+lcmv+hemi" in str(stc.save.call_args.args[0])
+
+    def test_volume_filter_gets_acq_vol_tag(self, vol_cfg):
+        """Volume filters are tagged acq-vol so a combined run doesn't collide."""
+        vol_cfg._beamformer_save_filters = True
+        filt = MagicMock()
+        save_beamformer_results(
+            vol_cfg, filters=filt, stcs={}, analysis_type="time", source_space="volume"
+        )
+        saved = str(filt.save.call_args.args[0])
+        assert "acq-vol" in saved and "lcmv" in saved
+
+    def test_surface_filter_has_no_acq_vol_tag(self, vol_cfg):
+        vol_cfg._beamformer_save_filters = True
+        filt = MagicMock()
+        save_beamformer_results(
+            vol_cfg, filters=filt, stcs={}, analysis_type="time", source_space="surface"
+        )
+        saved = str(filt.save.call_args.args[0])
+        assert "acq-vol" not in saved and "lcmv" in saved
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +519,36 @@ class TestAddToReportVolume:
         mock_stc.plot.assert_called_once()
         # src threaded through to the volume plot
         assert "src" in mock_stc.plot.call_args.kwargs
+
+    def test_source_space_param_selects_surface_path(self, vol_cfg):
+        """cfg default is volume, but source_space='surface' uses add_stc and a
+        space-namespaced title."""
+        vol_cfg._beamformer_add_to_report = True
+        vol_cfg.exec_params = MagicMock()
+        vol_cfg.report_stc_n_time_points = 51
+        mock_report = MagicMock()
+        stcs = {"stim_a": Path("/fake/sub-001_stim_a+lcmv+hemi")}
+
+        with (
+            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subjects_dir",
+                return_value="/fake/subjects_dir",
+            ),
+            patch(
+                "custom.run_beamformer._open_report",
+                return_value=self._report_cm(mock_report),
+            ),
+            patch("custom.run_beamformer._sanitize_cond_tag", side_effect=lambda c: c),
+        ):
+            add_to_report(
+                vol_cfg, stcs, analysis_type="time", src=MagicMock(),
+                source_space="surface",
+            )
+
+        mock_report.add_stc.assert_called_once()
+        mock_report.add_figure.assert_not_called()
+        assert "surface" in mock_report.add_stc.call_args.kwargs["title"]
 
     def test_volume_without_src_skips(self, vol_cfg, capsys):
         vol_cfg._beamformer_add_to_report = True
