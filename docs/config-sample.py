@@ -550,6 +550,29 @@ inverse_method = "dSPM"
 
 _run_beamformer = True  # master switch
 
+# Source space for the beamformer forward model.
+#   'surface' : cortical-surface source space built by mne-bids-pipeline
+#               (uses SECTION 17 `spacing`/`mindist`; per-hemisphere STCs saved
+#               as `*+lcmv+hemi-stc.h5`).  DEFAULT — backward-compatible.
+#   'volume'  : regular 3D grid inside the inner skull, built on the fly by
+#               run_beamformer.py via mne.setup_volume_source_space; the volume
+#               forward is cached as `*_acq-vol_fwd.fif` and STCs are saved as
+#               `*+lcmv+vol-vl.h5` (rendered with nilearn, not the surface Brain).
+_beamformer_source_space = "surface"
+
+# --- Volume-source-space options (only used when source_space == 'volume') ---
+# Grid spacing (mm) of the volume source space.  Smaller = finer and slower.
+_beamformer_volume_pos = 5.0
+# Minimum distance (mm) of grid points from the inner skull (defaults to `mindist`).
+_beamformer_volume_mindist = mindist
+# BEM used to build the volume forward when none is cached on disk.  For MEG-only
+# OPM data a single-shell conductivity `(0.3,)` is appropriate; `ico` sets the
+# surface tessellation when the BEM model has to be built from FreeSurfer surfaces.
+_beamformer_volume_bem_conductivity = (0.3,)
+_beamformer_volume_bem_ico = 4
+# Cache the built volume forward to `*_acq-vol_fwd.fif` for reuse across reruns.
+_beamformer_volume_cache = True
+
 # Regularisation added to the data covariance before inversion (0.01–0.10).
 _beamformer_reg = 0.05
 
@@ -783,6 +806,15 @@ if _beamformer_pick_ori == "vector":
 assert _beamformer_power_tmin < _beamformer_power_tmax, (
     f"_beamformer_power_tmin ({_beamformer_power_tmin}) must be < "
     f"_beamformer_power_tmax ({_beamformer_power_tmax})."
+)
+assert _beamformer_source_space in {"surface", "volume"}, (
+    f"_beamformer_source_space must be 'surface' or 'volume'; got '{_beamformer_source_space}'."
+)
+assert _beamformer_volume_pos > 0, (
+    f"_beamformer_volume_pos must be > 0 (mm), got {_beamformer_volume_pos}."
+)
+assert _beamformer_volume_mindist >= 0, (
+    f"_beamformer_volume_mindist must be >= 0 (mm), got {_beamformer_volume_mindist}."
 )
 
 # -- Source estimation --
