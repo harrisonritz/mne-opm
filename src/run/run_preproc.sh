@@ -30,6 +30,21 @@ _print_timing() {
 }
 
 
+# rank diagnostics: report task vs empty-room data rank at a given proc stage.
+# Accepts one or more stage tags (e.g. `init`, `filt sss hfc zca`); stages with
+# no derivatives yet are skipped.  Results are printed and appended to a
+# per-subject rank-check TSV under deriv_root.
+#
+# Computing the data-driven (SVD) rank preloads each recording, so this adds
+# wall time (empty-room ~5 s, task raw ~1 min).  Disable with RANK_CHECK=0.
+# Diagnostic only — a failure here never aborts the pipeline.
+rank_check() {
+	[ "${RANK_CHECK:-1}" = "1" ] || return 0
+	python "$ROOT_DIR/src/custom/rank_check.py" --config="$CONFIG_PATH" "$@" \
+		|| echo "[rank_check] skipped (non-fatal)"
+}
+
+
 ## RUN PREPROCESSING ------------------
 echo ""
 echo "RUNNING PREPROCESSING --------------------------"
@@ -52,6 +67,7 @@ echo "======================= INIT: clear stale custom derivatives =============
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=init --config=$CONFIG_PATH
 _print_timing "INIT: clear stale custom derivatives" $STEP_START
+rank_check init
 
 
 
@@ -61,6 +77,7 @@ echo "======================= CUSTOM: select first response per trial ==========
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=select_trial_response --config=$CONFIG_PATH
 _print_timing "CUSTOM: select first response per trial" $STEP_START
+rank_check init
 
 
 
@@ -70,6 +87,7 @@ echo "======================= custom: regress  =================================
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress --config=$CONFIG_PATH
 _print_timing "custom: regress" $STEP_START
+rank_check init
 
 
 
@@ -79,6 +97,7 @@ echo "======================= OSL: bad segment 1 ===============================
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH
 _print_timing "OSL: bad segment 1" $STEP_START
+rank_check init
 
 
 
@@ -88,6 +107,7 @@ echo "======================= OSL: bad channels ================================
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
 _print_timing "OSL: bad channels" $STEP_START
+rank_check init
 
 
 
@@ -97,6 +117,7 @@ echo "======================= Manual: bad channel ==============================
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_channel --config=$CONFIG_PATH
 _print_timing "Manual: bad channel" $STEP_START
+rank_check init
 
 
 
@@ -106,6 +127,7 @@ echo "======================= CUSTOM: homogeneous field correction (HFC) =======
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_hfc --config=$CONFIG_PATH
 _print_timing "CUSTOM: homogeneous field correction (HFC)" $STEP_START
+rank_check init hfc
 
 
 
@@ -115,6 +137,7 @@ echo "======================= CUSTOM: Common Spatial Filter (ZCA) ==============
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_zca --config=$CONFIG_PATH
 _print_timing "CUSTOM: Common Spatial Filter (ZCA)" $STEP_START
+rank_check init zca
 
 
 
@@ -124,6 +147,7 @@ echo "======================= MNE: preprocessing ===============================
 echo ""
 mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 _print_timing "MNE: preprocessing" $STEP_START
+rank_check filt sss hfc zca
 
 
 
@@ -133,6 +157,7 @@ echo "======================= CUSTOM: Automatic ICA rejection ==================
 echo ""
 python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_ICs --config=$CONFIG_PATH
 _print_timing "CUSTOM: automatic ICA rejection" $STEP_START
+rank_check filt sss hfc zca
 
 
 
@@ -142,6 +167,7 @@ echo "======================= Manual: ICA selection ============================
 echo ""
 python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
 _print_timing "Manual: ICA selection" $STEP_START
+rank_check filt sss hfc zca
 
 
 
@@ -151,6 +177,7 @@ echo "======================= MNE: apply ICA ===================================
 echo ""
 mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,preprocessing/ptp_reject --config=$CONFIG_PATH
 _print_timing "MNE: apply ICA" $STEP_START
+rank_check clean
 
 
 
@@ -160,6 +187,7 @@ echo "======================= OSL: bad epochs ==================================
 echo ""
 python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_epochs --config=$CONFIG_PATH
 _print_timing "OSL: bad epochs" $STEP_START
+rank_check clean
 
 
 
