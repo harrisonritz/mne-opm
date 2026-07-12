@@ -81,6 +81,30 @@ def load_config(config_path: str) -> SimpleNamespace:
     return cfg
 
 
+def resolve_source_spaces(cfg: SimpleNamespace) -> list[str]:
+    """Return the beamformer source spaces to run, as an ordered unique list.
+
+    ``_beamformer_source_space`` may be a single string (``"surface"`` |
+    ``"volume"``) or a list/tuple of them (e.g. ``["volume", "surface"]``) to run
+    both reconstructions in one invocation.  Duplicates are collapsed and the
+    given order is preserved.
+    """
+    val = getattr(cfg, "_beamformer_source_space", "surface")
+    spaces = [val] if isinstance(val, str) else list(val)
+    resolved: list[str] = []
+    for s in spaces:
+        if s not in ("surface", "volume"):
+            raise ValueError(
+                f"Invalid _beamformer_source_space entry: {s!r}. "
+                f"Must be 'surface' or 'volume'."
+            )
+        if s not in resolved:
+            resolved.append(s)
+    if not resolved:
+        raise ValueError("_beamformer_source_space must not be empty.")
+    return resolved
+
+
 # --------------------------------------------------------------------------------------
 # Volume Forward Solution
 # --------------------------------------------------------------------------------------
@@ -293,18 +317,15 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
         check=False,
     )
 
-    # Source-space type: 'surface' (mne-bids-pipeline forward) or 'volume'
-    # (built on the fly from the measurement info; see build_volume_forward).
-    source_space = getattr(cfg, "_beamformer_source_space", "surface")
-    if source_space not in ("surface", "volume"):
-        raise ValueError(
-            f"Invalid _beamformer_source_space: {source_space!r}. "
-            f"Must be 'surface' or 'volume'."
-        )
-    print(f"[load_beamformer_data] Source space: {source_space}")
+    # Source space(s) to reconstruct: 'surface' (mne-bids-pipeline forward),
+    # 'volume' (built on the fly from the measurement info), or a list of both.
+    source_spaces = resolve_source_spaces(cfg)
+    print(f"[load_beamformer_data] Source space(s): {source_spaces}")
+    data["forwards"] = {}
 
-    # Load surface forward solution (volume forward is built after epochs/info).
-    if source_space == "surface":
+    # Load surface forward up front so a missing one errors clearly (volume
+    # forwards are built after epochs/info, which they require).
+    if "surface" in source_spaces:
         fwd_path = bids_path.copy().update(suffix="fwd", extension=".fif")
         if not fwd_path.fpath.exists():
             raise FileNotFoundError(
@@ -313,7 +334,7 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
                 f"  mne_bids_pipeline --steps=source/make_forward --config=<config>"
             )
         print(f"[load_beamformer_data] Loading forward solution: {fwd_path.fpath}")
-        data["forward"] = mne.read_forward_solution(fwd_path)
+        data["forwards"]["surface"] = mne.read_forward_solution(fwd_path)
 
     # Load clean epochs
     epochs_path = bids_path.copy().update(
@@ -328,8 +349,11 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
     data["info"] = mne.io.read_info(epochs_path)
 
     # Build (or load cached) volume forward from the measurement info.
-    if source_space == "volume":
-        data["forward"] = build_volume_forward(cfg, data["info"])
+    if "volume" in source_spaces:
+        data["forwards"]["volume"] = build_volume_forward(cfg, data["info"])
+
+    # Back-compat: expose the first requested space's forward as data["forward"].
+    data["forward"] = data["forwards"][source_spaces[0]]
 
     # Load noise covariance
     if cfg.noise_cov == "ad-hoc":
@@ -695,6 +719,7 @@ def save_beamformer_results(
     filters: dict,
     stcs: Dict[str, mne.SourceEstimate],
     analysis_type: str,
+    source_space: str | None = None,
 ) -> Dict[str, Path]:
     """Save beamformer results to BIDS derivatives.
 
@@ -708,13 +733,22 @@ def save_beamformer_results(
         Source estimates for each condition.
     analysis_type : str
         'time' or 'power' to distinguish analysis types.
+    source_space : str or None
+        'surface' or 'volume'.  Controls the STC/filter naming so both
+        reconstructions can coexist.  When ``None``, the first entry of
+        ``_beamformer_source_space`` is used (single-space back-compat).
 
     Returns
     -------
     out_files : dict
         Dictionary mapping condition names to output file paths.
     """
-    print(f"\n[save_beamformer_results] Saving {analysis_type} beamformer results...")
+    if source_space is None:
+        source_space = resolve_source_spaces(cfg)[0]
+    print(
+        f"\n[save_beamformer_results] Saving {analysis_type} beamformer results "
+        f"({source_space})..."
+    )
 
     subject = cfg.subjects[0]
     session = cfg.sessions[0]
@@ -730,20 +764,18 @@ def save_beamformer_results(
         check=False,
     )
 
-    # Save filters (only once, shared by both analyses)
+    # Save filters (once per analysis; volume filters get an acq-vol tag so a
+    # combined surface+volume run does not overwrite one with the other).
     if cfg._beamformer_save_filters and analysis_type == "time":
         filter_path = bids_path.copy().update(suffix="lcmv", extension=".h5")
-        # print(f"  - Saving filters to: {filter_path.fpath}")
+        if source_space == "volume":
+            filter_path = filter_path.update(acquisition="vol")
         filters.save(filter_path.fpath, overwrite=True)
         out_files["filters"] = filter_path.fpath
 
     # Volume STCs are stored under a distinct "+vol" token (and save as "-vl.h5")
     # so downstream tooling can tell them apart from surface "+hemi" ("-stc.h5").
-    space_tag = (
-        "vol"
-        if getattr(cfg, "_beamformer_source_space", "surface") == "volume"
-        else "hemi"
-    )
+    space_tag = "vol" if source_space == "volume" else "hemi"
 
     # Save source estimates
     for condition, stc in stcs.items():
@@ -775,6 +807,7 @@ def add_to_report(
     stcs: Dict[str, Path],
     analysis_type: str,
     src: "mne.SourceSpaces | None" = None,
+    source_space: str | None = None,
 ) -> None:
     """Add beamformer results to MNE-BIDS-Pipeline HTML report.
 
@@ -787,18 +820,27 @@ def add_to_report(
     analysis_type : str
         'time' or 'power' to distinguish analysis types.
     src : mne.SourceSpaces or None
-        Volume source space.  Required when ``_beamformer_source_space ==
-        'volume'``: ``report.add_stc`` cannot render volume estimates (it has no
-        ``src`` parameter), so each volume STC is plotted with
+        Volume source space.  Required when ``source_space == 'volume'``:
+        ``report.add_stc`` cannot render volume estimates (it has no ``src``
+        parameter), so each volume STC is plotted with
         ``stc.plot(src=..., mode='stat_map')`` and added as a figure instead.
+    source_space : str or None
+        'surface' or 'volume'.  Selects the rendering path and namespaces the
+        report titles/tags so a combined run keeps both.  When ``None``, the
+        first entry of ``_beamformer_source_space`` is used.
     """
     if not cfg._beamformer_add_to_report:
         print(f"\n[add_to_report] Report generation disabled. Skipping.")
         return
 
-    is_volume = getattr(cfg, "_beamformer_source_space", "surface") == "volume"
+    if source_space is None:
+        source_space = resolve_source_spaces(cfg)[0]
+    is_volume = source_space == "volume"
 
-    print(f"\n[add_to_report] Adding {analysis_type} beamformer results to report...")
+    print(
+        f"\n[add_to_report] Adding {analysis_type} beamformer results "
+        f"({source_space}) to report..."
+    )
 
     subject = cfg.subjects[0]
     session = cfg.sessions[0]
@@ -834,9 +876,13 @@ def add_to_report(
 
                 print(f"  - Adding {condition} to report")
 
-                # Determine tags
-                tag_prefix = f"beamformer-{analysis_type}"
+                # Determine tags (namespaced by source space so a combined
+                # surface+volume run keeps both entries in the report).
+                tag_prefix = f"beamformer-{analysis_type}-{source_space}"
                 tags = (tag_prefix, _sanitize_cond_tag(condition))
+                report_title = (
+                    f"Beamformer {source_space} ({analysis_type}): {condition}"
+                )
 
                 # Add 'contrast' tag if this is a contrast
                 if condition not in cfg.conditions:
@@ -869,7 +915,7 @@ def add_to_report(
                     )
                     report.add_figure(
                         fig=fig,
-                        title=f"Beamformer ({analysis_type}): {condition}",
+                        title=report_title,
                         tags=tags,
                         replace=True,
                     )
@@ -877,7 +923,7 @@ def add_to_report(
                 else:
                     report.add_stc(
                         stc=stc_path,
-                        title=f"Beamformer ({analysis_type}): {condition}",
+                        title=report_title,
                         subject=fs_subject,
                         subjects_dir=fs_subjects_dir,
                         n_time_points=cfg.report_stc_n_time_points,
@@ -968,66 +1014,83 @@ def main():
         rank = cfg._beamformer_rank
         print(f"[main] Using specified beamformer rank: {rank}")
 
-    # Compute LCMV filters (shared by both analyses)
-    filters = compute_lcmv_filters(
-        forward=data["forward"],
-        data_cov=data_cov,
-        noise_cov=noise_cov,
-        rank=rank,
-        info=data["info"],
-        cfg=cfg,
-    )
+    # Reconstruct each requested source space (surface, volume, or both).  The
+    # data / noise covariance and rank above are shared; the forward, filters,
+    # STCs, saved filenames and report entries are per source space.
+    source_spaces = resolve_source_spaces(cfg)
+    output_type = getattr(cfg, "_beamformer_output_type", "both")
 
-    # Run Time-locked beamformer --------------------------------
-    if getattr(cfg, "_beamformer_output_type", "both") in ["time", "both"]:
-        print("\n" + "=" * 80)
-        print("TIME-LOCKED BEAMFORMER")
-        print("=" * 80)
-        stcs_time = run_beamformer_timecourse(
-            epochs=data["epochs"],
-            filters=filters,
+    for space in source_spaces:
+        print("\n" + "#" * 80)
+        print(f"SOURCE SPACE: {space.upper()}")
+        print("#" * 80)
+
+        forward = data["forwards"][space]
+
+        # Compute LCMV filters (shared by this space's time and power analyses)
+        filters = compute_lcmv_filters(
+            forward=forward,
+            data_cov=data_cov,
+            noise_cov=noise_cov,
+            rank=rank,
+            info=data["info"],
             cfg=cfg,
         )
 
-        out_files_time = save_beamformer_results(
-            cfg=cfg,
-            filters=filters,
-            stcs=stcs_time,
-            analysis_type="time",
-        )
+        # Run Time-locked beamformer --------------------------------
+        if output_type in ["time", "both"]:
+            print("\n" + "=" * 80)
+            print(f"TIME-LOCKED BEAMFORMER ({space})")
+            print("=" * 80)
+            stcs_time = run_beamformer_timecourse(
+                epochs=data["epochs"],
+                filters=filters,
+                cfg=cfg,
+            )
 
-        add_to_report(
-            cfg=cfg,
-            stcs=out_files_time,
-            analysis_type="time",
-            src=data["forward"]["src"],
-        )
+            out_files_time = save_beamformer_results(
+                cfg=cfg,
+                filters=filters,
+                stcs=stcs_time,
+                analysis_type="time",
+                source_space=space,
+            )
 
-    # Run Power beamformer --------------------------------
-    if getattr(cfg, "_beamformer_output_type", "both") in ["power", "both"]:
-        print("\n" + "=" * 80)
-        print("POWER BEAMFORMER")
-        print("=" * 80)
+            add_to_report(
+                cfg=cfg,
+                stcs=out_files_time,
+                analysis_type="time",
+                src=forward["src"],
+                source_space=space,
+            )
 
-        stcs_power = run_beamformer_power(
-            epochs=data["epochs"],
-            filters=filters,
-            cfg=cfg,
-        )
+        # Run Power beamformer --------------------------------
+        if output_type in ["power", "both"]:
+            print("\n" + "=" * 80)
+            print(f"POWER BEAMFORMER ({space})")
+            print("=" * 80)
 
-        out_files_power = save_beamformer_results(
-            cfg=cfg,
-            filters=filters,
-            stcs=stcs_power,
-            analysis_type="power",
-        )
+            stcs_power = run_beamformer_power(
+                epochs=data["epochs"],
+                filters=filters,
+                cfg=cfg,
+            )
 
-        add_to_report(
-            cfg=cfg,
-            stcs=out_files_power,
-            analysis_type="power",
-            src=data["forward"]["src"],
-        )
+            out_files_power = save_beamformer_results(
+                cfg=cfg,
+                filters=filters,
+                stcs=stcs_power,
+                analysis_type="power",
+                source_space=space,
+            )
+
+            add_to_report(
+                cfg=cfg,
+                stcs=out_files_power,
+                analysis_type="power",
+                src=forward["src"],
+                source_space=space,
+            )
 
     print("\n" + "=" * 80)
     print("BEAMFORMER ANALYSIS COMPLETE")
