@@ -51,6 +51,7 @@ def vol_cfg(tmp_path):
         conditions=["stim_a", "stim_b"],
         contrasts=[],
         ch_types=["mag"],
+        use_template_mri=None,
         mindist=5,
         _run_beamformer=True,
         _beamformer_reg=0.05,
@@ -321,6 +322,42 @@ class TestBuildVolumeForward:
         ):
             build_volume_forward(vol_cfg, info)
         mock_write.assert_not_called()
+
+    def test_bem_conductivity_shim_supplies_fs_subject(self, vol_cfg):
+        """Regression: the real _get_bem_conductivity runs against a raw config
+        that has no ``fs_subject``. build_volume_forward must feed it a shim
+        carrying fs_subject/use_template_mri/ch_types, so it neither raises
+        AttributeError nor mis-tags the BEM lookup (MEG-only -> "5120")."""
+        info = mne.create_info(["MEG001"], 300.0, ["mag"])
+        # MagicMock so we can inspect the positional args passed to it; return a
+        # fake path so the "BEM on disk" branch is taken.
+        mock_find = MagicMock(return_value=Path("/fake/bem-sol.fif"))
+        with (
+            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subjects_dir",
+                return_value="/fake/subjects_dir",
+            ),
+            # _get_bem_conductivity is deliberately NOT patched here.
+            patch("custom.run_beamformer._find_bem_solution", mock_find),
+            patch("custom.run_beamformer.mne.read_bem_solution", return_value="BEM"),
+            patch("custom.run_beamformer.get_head_mri_trans", return_value="TRANS"),
+            patch(
+                "custom.run_beamformer.mne.setup_volume_source_space",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "custom.run_beamformer.mne.make_forward_solution",
+                return_value=MagicMock(spec=mne.Forward),
+            ),
+            patch("custom.run_beamformer.mne.write_forward_solution"),
+        ):
+            build_volume_forward(vol_cfg, info)
+
+        # _find_bem_solution(fs_subjects_dir, fs_subject, tag) — the third arg is
+        # the conductivity tag the real helper produced from the shim.
+        mock_find.assert_called_once()
+        assert mock_find.call_args.args[2] == "5120"
 
 
 # ---------------------------------------------------------------------------

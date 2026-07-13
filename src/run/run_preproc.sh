@@ -38,6 +38,7 @@ _print_timing() {
 # Computing the data-driven (SVD) rank preloads each recording, so this adds
 # wall time (empty-room ~5 s, task raw ~1 min).  Disable with RANK_CHECK=0.
 # Diagnostic only — a failure here never aborts the pipeline.
+RANK_CHECK=0
 rank_check() {
 	[ "${RANK_CHECK:-1}" = "1" ] || return 0
 	python "$ROOT_DIR/src/custom/rank_check.py" --config="$CONFIG_PATH" "$@" \

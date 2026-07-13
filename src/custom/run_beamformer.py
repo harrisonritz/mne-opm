@@ -195,7 +195,16 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         return mne.read_forward_solution(vol_fwd_path.fpath)
 
     # BEM solution ----------------------------------------------------------
-    conductivity_default, tag = _get_bem_conductivity(cfg)
+    # _get_bem_conductivity reads per-step fields (fs_subject / use_template_mri
+    # / ch_types) that the raw imported config does not carry; supply them via a
+    # lightweight shim so we still reuse the pipeline's conductivity-tag
+    # convention (rather than re-implementing it) without mutating cfg.
+    bem_cfg = SimpleNamespace(
+        fs_subject=fs_subject,
+        use_template_mri=getattr(cfg, "use_template_mri", None),
+        ch_types=cfg.ch_types,
+    )
+    conductivity_default, tag = _get_bem_conductivity(bem_cfg)
     bem_path = _find_bem_solution(fs_subjects_dir, fs_subject, tag)
     if bem_path is not None:
         print(f"[build_volume_forward] Loading BEM solution: {bem_path}")
