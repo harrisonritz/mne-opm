@@ -7,6 +7,7 @@ src/custom/custom_preproc.py
 src/custom/format_bids.py
 src/custom/freesurfer_qa.py
 src/custom/manual_coreg.py
+src/custom/rank_check.py
 src/custom/run_beamformer.py
 src/custom/run_decoding.py
 src/custom/transformers.py
@@ -48,6 +49,7 @@ tests/test_bad_segments.py
 tests/test_base.py
 tests/test_beamformer.py
 tests/test_beamformer_extended.py
+tests/test_beamformer_volume.py
 tests/test_config.py
 tests/test_coreg_diagnostics.py
 tests/test_custom_preproc.py
@@ -62,5 +64,6 @@ tests/test_init_derivatives.py
 tests/test_io_and_bids_utils.py
 tests/test_io_save_ica.py
 tests/test_preprocessing_analyses.py
+tests/test_rank_check.py
 tests/test_regress_full.py
 tests/test_select_trial_response.py

@@ -260,6 +260,7 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         bem=bem,
         subjects_dir=fs_subjects_dir,
         add_interpolator=True,
+        n_jobs=getattr(cfg, "n_jobs", -1),
     )
     print(f"[build_volume_forward] Volume source space: {sum(s['nuse'] for s in src)} sources")
 
@@ -272,8 +273,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         bem=bem,
         meg=True,
         eeg=False,
+        ignore_ref=True,
         mindist=mindist,
-        n_jobs=getattr(cfg, "n_jobs", 1),
+        n_jobs=getattr(cfg, "n_jobs", -1),
     )
 
     # Persist for reuse -----------------------------------------------------

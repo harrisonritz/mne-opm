@@ -209,11 +209,3 @@ source "$ROOT_DIR/src/run/run_beamformer.sh"
 _print_timing "BEAMFORMER" $STEP_START
 
 
-
-echo ""
-echo "======================= COREG DIAGNOSTICS =============================================="
-echo ""
-python "$ROOT_DIR/src/custom/coreg_diagnostics.py" --config="$CONFIG_PATH"
-
-
-

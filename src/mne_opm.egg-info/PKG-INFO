@@ -19,6 +19,7 @@ Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: cmcrameri>=1.9
 Requires-Dist: dcm2niix>=1.0.20250506
+Requires-Dist: dipy>=1.12.1
 Requires-Dist: dpca>=1.0.5
 Requires-Dist: dupy>=1.2105.11
 Requires-Dist: gedai>=0.1.0
