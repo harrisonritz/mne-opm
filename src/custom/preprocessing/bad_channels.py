@@ -363,7 +363,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         # Bandpass-filtered copy for variance/kurtosis/spatial metrics.
         filt = raw.copy().notch_filter(
             np.arange(60, 241, 60), 
-            method="iir",
+            method="spectrum_fit",
             n_jobs=-1,
             ).filter(
                 l_freq=self.cfg._bad_channel_lfreq,
