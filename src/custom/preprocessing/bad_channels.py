@@ -62,8 +62,8 @@ Optional (with conservative defaults):
         outlier-fraction metric). Default: 0.05.
     _bad_channel_window_sec : float
         Window length (seconds) for the outlier-fraction metric. Default: 2.0.
-    _bad_channel_psd_fmin, _bad_channel_psd_fmax : float
-        Frequency band (Hz) for the PSD metric. Defaults: 1.0, 100.0.
+    _bad_channel_lfreq, _bad_channel_hfreq : float
+        Frequency band (Hz) for filter + PSD metric. Defaults: 3.0, 90.0.
     _bad_channel_psd_nfft : int
         FFT length for the PSD metric. Default: 2000.
     _bad_channel_lof_neighbors : int
@@ -106,8 +106,8 @@ from .pca_gesd import (
 # Default parameters.
 _DEFAULT_SIGNIFICANCE: float = 0.05
 _DEFAULT_WINDOW_SEC: float = 2.0
-_DEFAULT_PSD_FMIN: float = 1.0
-_DEFAULT_PSD_FMAX: float = 100.0
+_DEFAULT_PSD_FMIN: float = 3.0
+_DEFAULT_PSD_FMAX: float = 90.0
 _DEFAULT_PSD_NFFT: int = 2048
 _DEFAULT_LOF_NEIGHBORS: int = 20
 
@@ -361,12 +361,17 @@ class BadChannelsAnalysis(BaseAnalysis):
         self.log(f"number of channels to test: {ch_idx.size}")
 
         # Bandpass-filtered copy for variance/kurtosis/spatial metrics.
-        filt = raw.copy().filter(
-            l_freq=self.cfg.l_freq,
-            h_freq=self.cfg.h_freq,
+        filt = raw.copy().notch_filter(
+            np.arange(60, 241, 60), 
             method="iir",
-            n_jobs=-1,  # avoid nested parallelism
-        )
+            n_jobs=-1,
+            ).filter(
+                l_freq=self.cfg._bad_channel_lfreq,
+                h_freq=self.cfg._bad_channel_hfreq,
+                method="iir",
+                n_jobs=-1,
+                )
+        
         data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")
 
         specs: List[MetricSpec] = []
@@ -481,8 +486,8 @@ class BadChannelsAnalysis(BaseAnalysis):
         self, raw: mne.io.BaseRaw, ch_idx: np.ndarray
     ) -> "np.ndarray | None":
         """Per-channel mean log10 PSD power over the configured band."""
-        fmin = float(getattr(self.cfg, "_bad_channel_psd_fmin", _DEFAULT_PSD_FMIN))
-        fmax = float(getattr(self.cfg, "_bad_channel_psd_fmax", _DEFAULT_PSD_FMAX))
+        fmin = float(getattr(self.cfg, "_bad_channel_lfreq", _DEFAULT_PSD_FMIN))
+        fmax = float(getattr(self.cfg, "_bad_channel_hfreq", _DEFAULT_PSD_FMAX))
         n_fft = int(getattr(self.cfg, "_bad_channel_psd_nfft", _DEFAULT_PSD_NFFT))
         try:
             psd = raw.compute_psd(
