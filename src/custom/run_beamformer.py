@@ -995,11 +995,10 @@ def main():
 
     # Compute data covariance (shared by both analyses)
     print("\n[main] Computing data covariance matrix...")
-    rank = mne.compute_rank(data["epochs"], info=data["info"], tol="auto")
     data_cov = mne.compute_covariance(
         data["epochs"],
-        method="shrunk",
-        rank=rank,
+        method=cfg._bf_cov_method,
+        rank="info",
         n_jobs=cfg.n_jobs,
     )
     print(f"[main] Data covariance computed from {len(data['epochs'])} epochs")
@@ -1010,11 +1009,11 @@ def main():
     else:
         print(f"\n[main] Loading noise covariance from: {data['noise_path']}")
         noise_raw = mne.io.read_raw_fif(data["noise_path"], preload=True)
-        rank = mne.compute_rank(noise_raw, info=noise_raw.info, tol="auto")
+        # rank = mne.compute_rank(noise_raw, info=noise_raw.info, tol="auto")
         noise_cov = mne.compute_raw_covariance(
             noise_raw,
-            method="shrunk",
-            rank=rank,
+            method=cfg._bf_cov_method,
+            rank="info",
             n_jobs=cfg.n_jobs,
         )
         print(f"[main] Noise covariance computed from raw data: {data['noise_path']}")
