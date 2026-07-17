@@ -992,12 +992,13 @@ def main():
 
     # Load data
     data = load_beamformer_data(cfg)
+    data.info.normalize_proj() # normalize projectors
 
     # Compute data covariance (shared by both analyses)
     print("\n[main] Computing data covariance matrix...")
     data_cov = mne.compute_covariance(
         data["epochs"],
-        method=cfg._bf_cov_method,
+        method=cfg._beamformer_cov_method,
         rank="info",
         n_jobs=cfg.n_jobs,
     )
@@ -1012,7 +1013,7 @@ def main():
         # rank = mne.compute_rank(noise_raw, info=noise_raw.info, tol="auto")
         noise_cov = mne.compute_raw_covariance(
             noise_raw,
-            method=cfg._bf_cov_method,
+            method=cfg._beamformer_cov_method,
             rank="info",
             n_jobs=cfg.n_jobs,
         )
