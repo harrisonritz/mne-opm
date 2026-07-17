@@ -992,7 +992,7 @@ def main():
 
     # Load data
     data = load_beamformer_data(cfg)
-    data.info.normalize_proj() # normalize projectors
+    data["epochs"].info.normalize_proj() # normalize projectors
 
     # Compute data covariance (shared by both analyses)
     print("\n[main] Computing data covariance matrix...")
