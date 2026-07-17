@@ -29,12 +29,6 @@ echo ""
 
 
 
-echo ""
-echo "======================= Manual: ICA selection =============================================="
-echo ""
-python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=manual_ica --config=$CONFIG_PATH
-
-
 
 echo ""
 echo "======================= MNE: apply ICA =============================================="
@@ -57,3 +51,7 @@ mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,source/make_bem_sol
 
 
 
+echo ""
+echo "======================= BEAMFORMER =============================================="
+echo ""
+source "$ROOT_DIR/src/run/run_beamformer.sh"
