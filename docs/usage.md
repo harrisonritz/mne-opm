@@ -110,6 +110,42 @@ Sensor-level and source-level analyses via mne-bids-pipeline.
 
 LCMV beamformer source reconstruction.
 
+Reconstructs a volume source space, a cortical-surface source space, or both in
+one pass (`_beamformer_source_space`); the two share the data and noise
+covariance, so running both costs one extra forward and one extra filter set.
+
+Two settings matter more than the rest for group-level quality:
+
+- **`noise_cov`** should be `"emptyroom"`, not `"ad-hoc"`. An ad-hoc covariance
+  is isotropic, so its eigenvectors are the canonical channel basis — when MNE
+  truncates it to the data rank it discards *whole channels* rather than a
+  meaningful subspace. It also reduces `weight_norm="nai"` to a constant.
+  Requires `process_empty_room = True` and a prior
+  `mne_bids_pipeline --steps=sensor/make_cov` run, whose covariance and rank
+  sidecar the beamformer then reuses.
+- **Orientation** differs by source space, so `_beamformer_pick_ori` and
+  `_beamformer_weight_norm` accept a dict keyed by source space. A surface space
+  has a cortical normal to anchor the max-power sign to (enabled by
+  `_beamformer_surf_ori`); a volume grid does not — MNE falls back to the
+  +Z / superior direction, which is noise-driven for tangentially oriented
+  sources. Volume spaces are therefore fit with `pick_ori="vector"`, and
+  `TSX_OPM/analysis/source/beamformer_volume.py` reads the components out along
+  the fsaverage cortical normals when projecting to the surface.
+
+`_beamformer_rank = "data"` takes the element-wise minimum of the info rank, a
+data-driven SVD rank, and the noise covariance's stored rank. Neither of the first
+two works alone: `"info"` only sees the SSS bookkeeping in `info['proc_history']`
+and so misses what ICA removed, while a data-driven SVD at MNE's default
+`tol="auto"` (`n_dim * max_s * eps_float64`, ~1e-13 relative) counts the SSS- and
+ICA-nulled directions that return from a float32 FIF at ~1e-7 relative — which is
+why `tol="auto"` reports a rank *above* the info rank on Maxwell-filtered data.
+The tolerance for the data-driven part is `_beamformer_rank_tol` (default `1e-6`,
+relative). Cross-check a subject with:
+
+```bash
+python src/custom/rank_check.py --config=/path/to/config.py clean
+```
+
 ## Custom preprocessing CLI
 
 Individual preprocessing steps can also be run directly:

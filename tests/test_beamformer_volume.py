@@ -382,6 +382,7 @@ class TestLoadBeamformerDataVolume:
         mock_epochs = MagicMock(spec=mne.Epochs)
         mock_epochs.__len__ = lambda self: 10
         mock_epochs.ch_names = ["MEG001"]
+        mock_epochs.info = info
 
         with (
             patch("custom.run_beamformer.mne.read_epochs", return_value=mock_epochs),
@@ -396,7 +397,7 @@ class TestLoadBeamformerDataVolume:
         # called with (cfg, info)
         assert mock_build.call_args.args[0] is vol_cfg
         assert data["forward"] is fake_fwd
-        assert data["noise_path"] is None  # ad-hoc
+        assert data["noise_cov"] is None  # ad-hoc -> MNE builds its own
 
     def test_invalid_source_space_raises(self, vol_cfg):
         vol_cfg._beamformer_source_space = "banana"
@@ -422,6 +423,7 @@ class TestLoadBeamformerDataVolume:
         mock_epochs = MagicMock(spec=mne.Epochs)
         mock_epochs.__len__ = lambda self: 10
         mock_epochs.ch_names = ["MEG001"]
+        mock_epochs.info = info
 
         with (
             patch(

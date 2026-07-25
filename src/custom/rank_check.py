@@ -9,14 +9,21 @@ The stage is selected by its ``proc-<tag>`` entity (the same tag mne-bids-pipeli
 and the custom steps write into the derivative file name).  For each requested tag
 the CLI finds the task raw and the noise raw, preloads them, and computes:
 
-  - ``rank(data)`` : ``mne.compute_rank(raw, tol="auto")`` — the SVD data rank.
-                     This is the rank the beamformer data / noise covariance uses
-                     (see run_beamformer.py), i.e. where task and empty-room ranks
-                     actually diverge.
+  - ``rank(data)`` : ``mne.compute_rank(raw, tol=1e-6, tol_kind="relative")`` — the
+                     SVD data rank at a tolerance that can actually separate the
+                     directions SSS / ICA nulled from the ones they kept.  This is
+                     the estimate the beamformer uses (run_beamformer.resolve_rank).
+  - ``rank(auto)`` : the same thing at MNE's default ``tol="auto"``, shown only as a
+                     foil.  That threshold is ``n_dim * max_s * eps_float64``
+                     (~1e-13 relative) while nulled directions return from a float32
+                     FIF at ~1e-7, so it counts them all and lands near ``n_ch`` —
+                     typically well *above* ``rank(info)``.  That is expected, not a
+                     sign the data is full rank.
   - ``rank(info)`` : ``mne.compute_rank(raw, rank="info")`` — the declared rank
                      from ``raw.info`` (SSS / HFC / projection bookkeeping).  Fast,
-                     header-derived; will not reveal numerical rank collapse caused
-                     by bad channels.
+                     header-derived; knows the Maxwell basis dimension but not what
+                     ICA removed afterwards, and will not reveal numerical rank
+                     collapse caused by bad channels.
 
 Both are reported side-by-side, along with the channel and bad-channel counts, and
 appended to a per-subject TSV so you get a rank-vs-step table across the whole run.
@@ -66,6 +73,9 @@ from custom.preprocessing._config import load_config  # noqa: E402
 
 mne.set_log_level("ERROR")  # keep routine MNE chatter out of the per-step logs
 
+# Stand-in for a rank that could not be computed.
+NA = float("nan")
+
 # Label used for the empty-room recording's BIDS ``task`` entity.
 NOISE_TASK = "noise"
 
@@ -81,6 +91,7 @@ TSV_FIELDS = [
     "n_ch",
     "n_bad",
     "rank_data",
+    "rank_auto",
     "rank_info",
     "file",
 ]
@@ -199,18 +210,34 @@ def find_primary_raws(
 # ============================================================================
 
 
-def rank_of_raw(path: Path) -> dict:
-    """Preload a raw FIF and return its channel counts and data/info ranks.
+# Relative tolerance for the SVD rank estimate.  See rank_of_raw for why the
+# MNE default (tol="auto") is useless on FIF-round-tripped data.
+RANK_TOL = 1e-6
+RANK_TOL_KIND = "relative"
+
+
+def rank_of_raw(path: Path, tol=RANK_TOL, tol_kind=RANK_TOL_KIND) -> dict:
+    """Preload a raw FIF and return its channel counts and its three ranks.
 
     Returns a dict with ``n_ch`` (good data channels), ``n_bad`` (bad channels),
-    ``rank_data`` (SVD rank via ``tol="auto"``) and ``rank_info`` (declared rank
-    via ``rank="info"``).  Rank fields are ``nan`` if that computation fails; the
-    function itself does not raise, so one unreadable file never aborts a sweep.
+    ``rank_data`` (SVD rank at ``tol``), ``rank_auto`` (SVD rank at MNE's default
+    ``tol="auto"``) and ``rank_info`` (declared rank via ``rank="info"``).  Rank
+    fields are ``nan`` if that computation fails; the function itself does not
+    raise, so one unreadable file never aborts a sweep.
+
+    ``rank_auto`` is reported only as a foil.  ``tol="auto"`` works out to
+    ``n_dim * max_s * eps_float64`` ~ 1e-13 relative, whereas directions nulled by
+    SSS or ICA come back from a float32 FIF at ~1e-7 relative — so every nulled
+    direction clears the threshold and ``rank_auto`` lands near the channel count,
+    typically well *above* ``rank_info``.  Seeing ``rank_auto >> rank_info`` is the
+    expected reading, not a sign that the data is full rank.  ``rank_data`` uses an
+    explicit relative tolerance and is the column to compare against ``rank_info``.
     """
     result = {
         "n_ch": float("nan"),
         "n_bad": float("nan"),
         "rank_data": float("nan"),
+        "rank_auto": float("nan"),
         "rank_info": float("nan"),
     }
     try:
@@ -224,12 +251,20 @@ def rank_of_raw(path: Path) -> dict:
         result["n_ch"] = len(good)
         result["n_bad"] = len(raw.info["bads"])
 
-        # SVD data rank — matches the beamformer's covariance rank (tol="auto").
+        # SVD data rank at an explicit tolerance — what the beamformer uses
+        # (run_beamformer.resolve_rank, _beamformer_rank="data").
         try:
-            rd = mne.compute_rank(raw, tol="auto", verbose="ERROR")
+            rd = mne.compute_rank(raw, tol=tol, tol_kind=tol_kind, verbose="ERROR")
             result["rank_data"] = int(sum(rd.values()))
         except Exception as e:  # noqa: BLE001
             print(f"    WARNING: data-rank failed for {path.name}: {e}")
+
+        # MNE's default tolerance, for comparison only.
+        try:
+            ra = mne.compute_rank(raw, tol="auto", verbose="ERROR")
+            result["rank_auto"] = int(sum(ra.values()))
+        except Exception as e:  # noqa: BLE001
+            print(f"    WARNING: auto-rank failed for {path.name}: {e}")
 
         # Declared rank from info (SSS / HFC / projection bookkeeping).
         try:
@@ -290,12 +325,20 @@ def print_block(proc: str, model: str, subject: str, rows: list[dict]) -> None:
         print("    (no task/noise derivatives for this stage yet — skipped)")
         return
 
-    print(f"    {'kind':<14}{'n_ch':>6}{'n_bad':>7}{'rank(data)':>12}{'rank(info)':>12}")
+    print(
+        f"    {'kind':<14}{'n_ch':>6}{'n_bad':>7}"
+        f"{'rank(data)':>12}{'rank(auto)':>12}{'rank(info)':>12}"
+    )
     for r in rows:
         print(
             f"    {r['kind']:<14}{_fmt(r['n_ch']):>6}{_fmt(r['n_bad']):>7}"
-            f"{_fmt(r['rank_data']):>12}{_fmt(r['rank_info']):>12}"
+            f"{_fmt(r['rank_data']):>12}{_fmt(r.get('rank_auto', NA)):>12}"
+            f"{_fmt(r['rank_info']):>12}"
         )
+    print(
+        f"    rank(data) uses tol={RANK_TOL} ({RANK_TOL_KIND}); rank(auto) uses MNE's "
+        "tol='auto' and is expected to sit near n_ch — see rank_of_raw."
+    )
 
     # task − noise data-rank delta (first task run vs the noise recording), which
     # is the headline number when task and empty-room ranks disagree.
@@ -341,6 +384,7 @@ def append_tsv(cfg, subject: str, session: str, proc: str, rows: list[dict]) -> 
                     "n_ch": _fmt(r["n_ch"]),
                     "n_bad": _fmt(r["n_bad"]),
                     "rank_data": _fmt(r["rank_data"]),
+                    "rank_auto": _fmt(r.get("rank_auto", NA)),
                     "rank_info": _fmt(r["rank_info"]),
                     "file": r["path"].name,
                 }

@@ -59,10 +59,43 @@ def beam_cfg(tmp_path):
         _beamformer_weight_norm="unit-noise-gain",
         _beamformer_depth=None,
         _beamformer_rank=None,
+        _beamformer_surf_ori=True,
+        _beamformer_cov_method="empirical",
+        _reduce_rank=False,
         _beamformer_save_filters=False,
         _beamformer_add_to_report=False,
         _beamformer_power_tmin=0.0,
         _beamformer_power_tmax=0.5,
+    )
+
+
+def _const_vol_stc(value, n_sources=5):
+    """A VolSourceEstimate whose data is a single constant, for exact arithmetic."""
+    return mne.VolSourceEstimate(
+        np.full((n_sources, 1), float(value)),
+        vertices=[np.arange(n_sources)],
+        tmin=0.0,
+        tstep=0.01,
+        subject="fsaverage",
+    )
+
+
+def _two_condition_epochs():
+    info = mne.create_info(["MEG001"], 300.0, ["mag"])
+    return mne.EpochsArray(
+        np.random.RandomState(0).randn(6, 1, 100) * 1e-13,
+        info,
+        events=np.array(
+            [
+                [0, 0, 1],
+                [100, 0, 1],
+                [200, 0, 1],
+                [300, 0, 2],
+                [400, 0, 2],
+                [500, 0, 2],
+            ]
+        ),
+        event_id={"stim_a": 1, "stim_b": 2},
     )
 
 
@@ -105,6 +138,7 @@ class TestLoadBeamformerData:
             mock_epochs = MagicMock(spec=mne.Epochs)
             mock_epochs.__len__ = lambda self: 10
             mock_epochs.ch_names = ["MEG001"]
+            mock_epochs.info = info
             mock_epo.return_value = mock_epochs
             mock_info.return_value = info
 
@@ -293,6 +327,161 @@ class TestBeamformerPowerContrasts:
         assert "stim_a" in stcs
         assert "stim_b" in stcs
         assert "a_vs_b" in stcs
+
+    def test_power_contrast_is_normalized_difference(self, beam_cfg):
+        """The contrast must be (A - B) / (A + B), not (2A - B) / (2A + B).
+
+        Seeding the accumulators with the first STC (rather than zeros) and then
+        adding it again inside the loop double-counts condition A.
+        """
+        epochs = _two_condition_epochs()
+
+        with (
+            patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply,
+            patch("custom.run_beamformer.mne.compute_covariance") as mock_cov,
+        ):
+            mock_apply.side_effect = [_const_vol_stc(4.0), _const_vol_stc(2.0)]
+            mock_cov.return_value = MagicMock()
+            stcs = run_beamformer_power(epochs, MagicMock(), beam_cfg)
+
+        # (4 - 2) / (4 + 2)
+        np.testing.assert_allclose(stcs["a_vs_b"].data, 1.0 / 3.0)
+        # the per-condition maps are untouched
+        np.testing.assert_allclose(stcs["stim_a"].data, 4.0)
+        np.testing.assert_allclose(stcs["stim_b"].data, 2.0)
+
+    def test_power_contrast_reuses_condition_estimates(self, beam_cfg):
+        """Conditions already beamformed for the main loop are not recomputed."""
+        epochs = _two_condition_epochs()
+
+        with (
+            patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply,
+            patch("custom.run_beamformer.mne.compute_covariance") as mock_cov,
+        ):
+            mock_apply.side_effect = [_const_vol_stc(4.0), _const_vol_stc(2.0)]
+            mock_cov.return_value = MagicMock()
+            run_beamformer_power(epochs, MagicMock(), beam_cfg)
+
+        # two conditions -> two covariances, even though a contrast also uses them
+        assert mock_apply.call_count == 2
+        assert mock_cov.call_count == 2
+
+    def test_power_contrast_zero_denominator_is_zero(self, beam_cfg):
+        """An all-zero denominator must not produce inf/nan."""
+        epochs = _two_condition_epochs()
+
+        with (
+            patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply,
+            patch("custom.run_beamformer.mne.compute_covariance") as mock_cov,
+        ):
+            mock_apply.side_effect = [_const_vol_stc(0.0), _const_vol_stc(0.0)]
+            mock_cov.return_value = MagicMock()
+            stcs = run_beamformer_power(epochs, MagicMock(), beam_cfg)
+
+        assert np.all(np.isfinite(stcs["a_vs_b"].data))
+        np.testing.assert_allclose(stcs["a_vs_b"].data, 0.0)
+
+    def test_power_contrast_skipped_when_condition_missing(self, beam_cfg, capsys):
+        """A dropped condition must skip the contrast, not shift the weights."""
+        beam_cfg.conditions = ["stim_a"]
+        beam_cfg.contrasts = [
+            {
+                "name": "a_vs_missing",
+                "conditions": ["stim_a", "nonexistent"],
+                "weights": [1.0, -1.0],
+            }
+        ]
+        epochs = _two_condition_epochs()
+
+        with (
+            patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply,
+            patch("custom.run_beamformer.mne.compute_covariance") as mock_cov,
+        ):
+            mock_apply.return_value = _const_vol_stc(4.0)
+            mock_cov.return_value = MagicMock()
+            stcs = run_beamformer_power(epochs, MagicMock(), beam_cfg)
+
+        assert "a_vs_missing" not in stcs
+        assert "WARNING" in capsys.readouterr().out
+
+    def test_power_uses_configured_cov_method(self, beam_cfg):
+        """The power covariance must honour _beamformer_cov_method."""
+        beam_cfg._beamformer_cov_method = "shrunk"
+        beam_cfg.contrasts = []
+        epochs = _two_condition_epochs()
+
+        with (
+            patch("custom.run_beamformer.apply_lcmv_cov") as mock_apply,
+            patch("custom.run_beamformer.mne.compute_covariance") as mock_cov,
+        ):
+            mock_apply.return_value = _const_vol_stc(1.0)
+            mock_cov.return_value = MagicMock()
+            run_beamformer_power(epochs, MagicMock(), beam_cfg)
+
+        assert mock_cov.call_args.kwargs["method"] == "shrunk"
+
+
+# ---------------------------------------------------------------------------
+# Noise covariance loading
+# ---------------------------------------------------------------------------
+
+
+class TestNoiseCovLoading:
+    """`noise_cov != 'ad-hoc'` reuses the covariance the pipeline already wrote."""
+
+    def _make_inputs(self, beam_cfg):
+        deriv = Path(beam_cfg.deriv_root)
+        meg_dir = deriv / "sub-001" / "ses-01" / "meg"
+        meg_dir.mkdir(parents=True, exist_ok=True)
+        stem = "sub-001_ses-01_task-restingstate"
+        (meg_dir / f"{stem}_fwd.fif").touch()
+        (meg_dir / f"{stem}_proc-clean_epo.fif").touch()
+        return meg_dir, stem
+
+    def test_missing_cov_raises_pointing_at_make_cov(self, beam_cfg):
+        beam_cfg.noise_cov = "emptyroom"
+        beam_cfg.acq = beam_cfg.rec = beam_cfg.space = None
+        self._make_inputs(beam_cfg)
+
+        with (
+            patch("custom.run_beamformer.mne.read_forward_solution") as mock_fwd,
+            patch("custom.run_beamformer.mne.read_epochs") as mock_epo,
+        ):
+            mock_fwd.return_value = MagicMock(spec=mne.Forward)
+            mock_fwd.return_value.__getitem__ = (
+                lambda self, key: [1, 2] if key == "src" else None
+            )
+            mock_epo.return_value = MagicMock(spec=mne.Epochs)
+
+            with pytest.raises(FileNotFoundError, match="sensor/make_cov"):
+                load_beamformer_data(beam_cfg)
+
+    def test_reads_cov_and_rank_sidecar(self, beam_cfg):
+        beam_cfg.noise_cov = "emptyroom"
+        beam_cfg.acq = beam_cfg.rec = beam_cfg.space = None
+        meg_dir, _ = self._make_inputs(beam_cfg)
+        # get_noise_cov_bids_path rewrites the task entity to "noise" for
+        # noise_cov="emptyroom".
+        cov_stem = "sub-001_ses-01_task-noise"
+        (meg_dir / f"{cov_stem}_proc-clean_cov.fif").touch()
+        (meg_dir / f"{cov_stem}_proc-clean_rank.json").write_text('{"mag": 71}')
+
+        with (
+            patch("custom.run_beamformer.mne.read_forward_solution") as mock_fwd,
+            patch("custom.run_beamformer.mne.read_epochs") as mock_epo,
+            patch("custom.run_beamformer.mne.read_cov") as mock_cov,
+        ):
+            mock_fwd.return_value = MagicMock(spec=mne.Forward)
+            mock_fwd.return_value.__getitem__ = (
+                lambda self, key: [1, 2] if key == "src" else None
+            )
+            mock_epo.return_value = MagicMock(spec=mne.Epochs)
+            mock_cov.return_value = MagicMock(spec=mne.Covariance)
+
+            data = load_beamformer_data(beam_cfg)
+
+        assert data["noise_cov"] is mock_cov.return_value
+        assert data["noise_rank"] == {"mag": 71}
 
 
 # ---------------------------------------------------------------------------
