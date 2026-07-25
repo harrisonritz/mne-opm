@@ -1168,7 +1168,14 @@ def main():
     args = parse_args()
 
     # load configuration
+    #
+    # _import_config validates the config but then reduces it to the names the
+    # *default* pipeline config declares (`keep_names` in _config_import), which
+    # drops every custom `_beamformer_*` / `_run_beamformer` setting this script
+    # reads.  Re-merging the config file afterwards puts the private names back
+    # (_update_config_from_path setattrs everything not starting with `__`).
     cfg = _import_config(config_path=args.config)
+    _update_config_from_path(config=cfg, config_path=args.config)
     cfg.data_type = "meg"
     cfg.datatype = "meg"
 
