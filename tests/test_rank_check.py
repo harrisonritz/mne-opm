@@ -141,6 +141,7 @@ def test_append_tsv_creates_header_and_appends(tmp_path):
             "n_ch": 144,
             "n_bad": 2,
             "rank_data": 86,
+            "rank_auto": 190,
             "rank_info": 120,
         },
         {
@@ -150,6 +151,7 @@ def test_append_tsv_creates_header_and_appends(tmp_path):
             "n_ch": 148,
             "n_bad": 1,
             "rank_data": 88,
+            "rank_auto": 190,
             "rank_info": 120,
         },
     ]

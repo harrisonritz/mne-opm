@@ -132,9 +132,15 @@ Two settings matter more than the rest for group-level quality:
   `TSX_OPM/analysis/source/beamformer_volume.py` reads the components out along
   the fsaverage cortical normals when projecting to the surface.
 
-`_beamformer_rank = "data"` estimates the rank from the cleaned epochs. Unlike
-`"info"` — which only sees the SSS bookkeeping in `info['proc_history']` — it
-accounts for the components ICA removed. Cross-check a subject with:
+`_beamformer_rank = "data"` takes the element-wise minimum of the info rank, a
+data-driven SVD rank, and the noise covariance's stored rank. Neither of the first
+two works alone: `"info"` only sees the SSS bookkeeping in `info['proc_history']`
+and so misses what ICA removed, while a data-driven SVD at MNE's default
+`tol="auto"` (`n_dim * max_s * eps_float64`, ~1e-13 relative) counts the SSS- and
+ICA-nulled directions that return from a float32 FIF at ~1e-7 relative — which is
+why `tol="auto"` reports a rank *above* the info rank on Maxwell-filtered data.
+The tolerance for the data-driven part is `_beamformer_rank_tol` (default `1e-6`,
+relative). Cross-check a subject with:
 
 ```bash
 python src/custom/rank_check.py --config=/path/to/config.py clean

@@ -478,16 +478,30 @@ def resolve_rank(
     ``_beamformer_rank`` accepts:
 
     ``"data"``
-        Estimate it from the cleaned epochs with ``mne.compute_rank(..., tol="auto")``
-        and, when a real noise covariance is present, take the element-wise minimum
-        with the rank the pipeline stored for it.  This is the default because it is
-        the only option that sees ICA: ``"info"`` reads the SSS bookkeeping out of
-        ``info['proc_history']`` and therefore *overstates* the rank of data whose
-        artefact components have since been projected out.  Feeding that inflated
-        rank to ``_reg_pinv`` keeps directions that carry only regularisation
-        loading, which is pure noise amplification in the filter.
-        Matches ``rank_check.rank_of_raw``'s ``tol="auto"`` convention, so the
-        diagnostic and the estimator report the same number.
+        Take the element-wise **minimum** of the info rank, a data-driven rank
+        estimate, and (when present) the rank the pipeline stored with the noise
+        covariance.  Neither of the first two is trustworthy on its own:
+
+        * ``rank="info"`` reads the SSS bookkeeping out of
+          ``info['proc_history']``, so it knows the Maxwell basis dimension but
+          nothing about components ICA removed afterwards — it *overstates* the
+          rank of cleaned data.
+        * a data-driven estimate sees ICA, but only if its tolerance is set
+          sensibly.  ``tol="auto"`` is **not**: it works out to
+          ``n_dim * max_s * eps_float64`` ~ 1e-13 relative
+          (:func:`mne.rank._estimate_rank_from_s`), while directions nulled by
+          SSS or ICA come back from a float32 FIF at ~1e-7 relative.  Every
+          nulled direction therefore clears the threshold and the estimate
+          returns near-full rank — which is why ``tol="auto"`` reports a rank
+          well *above* the info rank on Maxwell-filtered data.  (MNE says as
+          much in a comment in ``rank.py``: the default "should be float32
+          probably due to how we save and load data".)
+
+        So the default tolerance here is an explicit relative one
+        (``_beamformer_rank_tol`` / ``_beamformer_rank_tol_kind``), and the
+        minimum guards both ways: if the data estimate is still fooled, the info
+        rank caps it; if ICA cut deeper than the SSS basis, the data estimate
+        catches that.
     ``"empty_room"``
         Use the rank stored with the empty-room covariance verbatim.
     ``"info"`` / ``None`` / ``dict``
@@ -513,16 +527,42 @@ def resolve_rank(
         print(f"[resolve_rank] Using configured beamformer rank: {setting}")
         return setting
 
-    data_rank = mne.compute_rank(epochs, tol="auto", tol_kind="relative")
-    print(f"[resolve_rank] Data rank from epochs (tol='auto'): {data_rank}")
-    if noise_cov is None or noise_rank is None:
-        return data_rank
+    tol = getattr(cfg, "_beamformer_rank_tol", 1e-6)
+    tol_kind = getattr(cfg, "_beamformer_rank_tol_kind", "relative")
 
+    candidates = {}
+    try:
+        candidates["info"] = mne.compute_rank(epochs, rank="info")
+    except Exception as e:  # noqa: BLE001 — no proc_history / no projections
+        print(f"[resolve_rank] No info-based rank available ({e})")
+    candidates["data"] = mne.compute_rank(epochs, tol=tol, tol_kind=tol_kind)
+    if noise_cov is not None and noise_rank is not None:
+        candidates["noise"] = dict(noise_rank)
+
+    for name, value in candidates.items():
+        extra = f" (tol={tol}, tol_kind={tol_kind!r})" if name == "data" else ""
+        print(f"[resolve_rank] {name} rank{extra}: {value}")
+
+    keys = set().union(*(c.keys() for c in candidates.values()))
     rank = {
-        key: min(value, noise_rank[key]) if key in noise_rank else value
-        for key, value in data_rank.items()
+        key: min(c[key] for c in candidates.values() if key in c) for key in keys
     }
-    print(f"[resolve_rank] Noise rank: {noise_rank} -> using min: {rank}")
+    print(f"[resolve_rank] Using element-wise minimum: {rank}")
+
+    # A data estimate at (or above) the info rank means the tolerance did not
+    # separate the nulled directions from the retained ones — say so, because the
+    # result is then just the info rank and ICA is going unaccounted for.
+    info_rank = candidates.get("info")
+    if info_rank is not None:
+        if any(
+            candidates["data"].get(key, 0) >= value for key, value in info_rank.items()
+        ):
+            print(
+                "[resolve_rank] NOTE: the data-driven estimate is not below the "
+                "info rank, so it is not detecting the rank lost to SSS/ICA. "
+                "Raise _beamformer_rank_tol (e.g. 1e-5) and compare against "
+                "rank_check.py before trusting it."
+            )
     return rank
 
 

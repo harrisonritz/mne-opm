@@ -616,19 +616,25 @@ _beamformer_surf_ori = True
 _beamformer_depth = 0.8
 
 # Data rank for covariance estimation/regularisation.
-#   'data'       : estimate from the cleaned epochs, mne.compute_rank(tol='auto'),
-#                  minimum'd with the noise covariance's stored rank (recommended)
-#   'info'       : infer from the Info object
+#   'data'       : element-wise minimum of the info rank, a data-driven SVD rank,
+#                  and the noise covariance's stored rank (recommended)
+#   'info'       : infer from the Info object alone
 #   dict         : explicit per-channel-type rank, e.g. {'mag': 64}
 #   None         : auto-detect via SVD
 #   'empty_room' : use the rank stored with the empty-room noise covariance
 #
-# 'data' is the default because it is the only option that sees ICA.  'info' reads
-# the SSS bookkeeping out of info['proc_history'], which knows nothing about the
-# artefact components removed afterwards, so it overstates the rank of the cleaned
-# data — and the beamformer's pseudo-inverse then keeps directions carrying only
-# regularisation loading.  Cross-check with src/custom/rank_check.py.
+# Neither ingredient of 'data' is trustworthy alone: 'info' reads the SSS
+# bookkeeping from info['proc_history'] and so knows nothing about what ICA removed
+# afterwards, while a data-driven SVD at MNE's default tol='auto'
+# (n_dim * max_s * eps_float64, ~1e-13 relative) counts the SSS/ICA-nulled
+# directions that come back from a float32 FIF at ~1e-7 relative -- returning a rank
+# *above* the info rank.  Taking the minimum guards both ways.
+# Cross-check with src/custom/rank_check.py.
 _beamformer_rank = "data"
+
+# Tolerance for the data-driven part of _beamformer_rank='data'.
+_beamformer_rank_tol = 1e-6
+_beamformer_rank_tol_kind = "relative"
 
 # What the beamformer operates on.
 #   'time'  : evoked response (time-domain output)

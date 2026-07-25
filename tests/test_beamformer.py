@@ -264,32 +264,88 @@ class TestSurfaceOrientForward:
 # ---------------------------------------------------------------------------
 
 
+def _rank_side_effect(info_rank, data_rank):
+    """Stand in for mne.compute_rank: rank='info' vs a tolerance-based call."""
+
+    def _compute_rank(inst, rank=None, tol=None, tol_kind=None, **kwargs):
+        return dict(info_rank) if rank == "info" else dict(data_rank)
+
+    return _compute_rank
+
+
 class TestResolveRank:
-    def test_data_rank_takes_min_with_noise_rank(self, beamformer_cfg):
+    """`"data"` is the minimum of the info, data and noise ranks.
+
+    Neither ingredient is reliable alone: `rank="info"` misses what ICA removed,
+    and a data-driven SVD misses the SSS deficiency unless its tolerance is set
+    well above the float32 floor that FIF round-tripping leaves behind.
+    """
+
+    def test_uses_explicit_relative_tolerance_not_auto(self, beamformer_cfg):
+        """tol='auto' is ~1e-13 relative and cannot see SSS/ICA-nulled directions."""
         beamformer_cfg._beamformer_rank = "data"
         with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
-            mock_rank.return_value = {"mag": 90}
+            mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 110})
+            resolve_rank(beamformer_cfg, MagicMock(), None, None)
+
+        tol_calls = [c for c in mock_rank.call_args_list if "tol" in c.kwargs]
+        assert tol_calls, "expected a tolerance-based compute_rank call"
+        assert tol_calls[0].kwargs["tol"] == 1e-6
+        assert tol_calls[0].kwargs["tol_kind"] == "relative"
+
+    def test_tolerance_is_configurable(self, beamformer_cfg):
+        beamformer_cfg._beamformer_rank = "data"
+        beamformer_cfg._beamformer_rank_tol = 1e-5
+        with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
+            mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 110})
+            resolve_rank(beamformer_cfg, MagicMock(), None, None)
+        tol_calls = [c for c in mock_rank.call_args_list if "tol" in c.kwargs]
+        assert tol_calls[0].kwargs["tol"] == 1e-5
+
+    def test_info_rank_caps_an_inflated_data_estimate(self, beamformer_cfg):
+        """The real-world case: tol-based SVD still overshoots the SSS basis."""
+        beamformer_cfg._beamformer_rank = "data"
+        with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
+            mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 186})
+            rank = resolve_rank(beamformer_cfg, MagicMock(), None, None)
+        assert rank == {"mag": 120}
+
+    def test_warns_when_data_estimate_does_not_beat_info(self, beamformer_cfg, capsys):
+        beamformer_cfg._beamformer_rank = "data"
+        with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
+            mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 186})
+            resolve_rank(beamformer_cfg, MagicMock(), None, None)
+        assert "not detecting the rank lost" in capsys.readouterr().out
+
+    def test_data_rank_wins_when_ica_cut_deeper(self, beamformer_cfg):
+        beamformer_cfg._beamformer_rank = "data"
+        with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
+            mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 104})
+            rank = resolve_rank(beamformer_cfg, MagicMock(), None, None)
+        assert rank == {"mag": 104}
+
+    def test_noise_rank_included_in_the_minimum(self, beamformer_cfg):
+        beamformer_cfg._beamformer_rank = "data"
+        with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
+            mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 110})
             rank = resolve_rank(
                 beamformer_cfg, MagicMock(), MagicMock(), {"mag": 75}
             )
         assert rank == {"mag": 75}
-        assert mock_rank.call_args.kwargs["tol"] == "auto"
 
-    def test_data_rank_used_when_lower(self, beamformer_cfg):
+    def test_survives_missing_info_rank(self, beamformer_cfg):
+        """No proc_history (e.g. HFC-only) — fall back to the data estimate."""
         beamformer_cfg._beamformer_rank = "data"
-        with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
-            mock_rank.return_value = {"mag": 60}
-            rank = resolve_rank(
-                beamformer_cfg, MagicMock(), MagicMock(), {"mag": 75}
-            )
-        assert rank == {"mag": 60}
 
-    def test_data_rank_without_noise_cov(self, beamformer_cfg):
-        beamformer_cfg._beamformer_rank = "data"
+        def _compute_rank(inst, rank=None, tol=None, tol_kind=None, **kwargs):
+            if rank == "info":
+                raise ValueError("no SSS info")
+            return {"mag": 96}
+
         with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
-            mock_rank.return_value = {"mag": 90}
-            rank = resolve_rank(beamformer_cfg, MagicMock(), None, None)
-        assert rank == {"mag": 90}
+            mock_rank.side_effect = _compute_rank
+            out = resolve_rank(beamformer_cfg, MagicMock(), None, None)
+        assert out == {"mag": 96}
 
     def test_empty_room_uses_stored_rank(self, beamformer_cfg):
         """Previously a NameError: rank was only bound on the ad-hoc branch."""
