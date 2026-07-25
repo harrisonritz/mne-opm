@@ -553,16 +553,18 @@ _run_beamformer = True  # master switch
 # Source space for the beamformer forward model.
 #   'surface' : cortical-surface source space built by mne-bids-pipeline
 #               (uses SECTION 17 `spacing`/`mindist`; per-hemisphere STCs saved
-#               as `*+lcmv+hemi-stc.h5`).  DEFAULT — backward-compatible.
+#               as `*+lcmv+hemi-stc.h5`).
 #   'volume'  : regular 3D grid inside the inner skull, built on the fly by
 #               run_beamformer.py via mne.setup_volume_source_space; the volume
-#               forward is cached as `*_acq-vol_fwd.fif` and STCs are saved as
-#               `*+lcmv+vol-vl.h5` (rendered with nilearn, not the surface Brain).
-# May also be a LIST to run both reconstructions in one invocation, e.g.
-#   _beamformer_source_space = ["surface", "volume"]
-# Each space gets its own forward, filters (volume filters tagged `_acq-vol`),
-# STCs, and report entries, so the two never collide.
-_beamformer_source_space = "surface"
+#               forward is cached as `*_acq-vol_fwd.fif` and STCs as
+#               `*+lcmv+vol-stc.h5`.  Covers deep and subcortical sources, and
+#               can be rendered either as a volume or projected onto the cortical
+#               surface (plot_beamformer.py's RENDER_SPACE).
+# May also be a LIST to run both reconstructions in one invocation.  Each space
+# gets its own forward, filters (volume filters tagged `_acq-vol`), STCs, and
+# report entries, so the two never collide.  Running both is cheap relative to
+# preprocessing — they share the data and noise covariance.
+_beamformer_source_space = ["volume", "surface"]
 
 # --- Volume-source-space options (only used when source_space == 'volume') ---
 # Grid spacing (mm) of the volume source space.  Smaller = finer and slower.
@@ -584,24 +586,49 @@ _beamformer_reg = 0.05
 #   'max-power' : optimise orientation for maximum power (scalar beamformer)
 #   'vector'    : return all three dipole orientations (vector beamformer)
 #   None        : fixed orientation from the forward model
-_beamformer_pick_ori = "max-power"
+#
+# May be a single value, or a DICT keyed by source space.  Only a surface space
+# has a cortical normal to anchor the otherwise-arbitrary max-power sign to; for
+# a volume grid MNE falls back to the +Z / superior direction, which is
+# noise-driven for any source oriented tangentially to it and so flips
+# vertex-to-vertex and subject-to-subject.  Hence volume -> 'vector', keeping all
+# three components so they can be read out along the cortical normals later.
+_beamformer_pick_ori = {"volume": "vector", "surface": "max-power"}
 
-# Weight normalisation.
+# Weight normalisation.  Also accepts a per-source-space dict.
 #   'unit-noise-gain'           : corrects depth bias (scalar)
 #   'nai'                       : Neural Activity Index (scalar)
 #   'unit-noise-gain-invariant' : orientation-invariant (vector only)
 #   None                        : no normalisation
-_beamformer_weight_norm = "nai"
+_beamformer_weight_norm = {
+    "volume": "unit-noise-gain-invariant",
+    "surface": "nai",
+}
+
+# Rotate the surface forward into surface orientation before building filters, so
+# max-power signs follow the cortical normal rather than head +Z.  Purely a sign
+# convention (LCMV with free orientation is invariant to an orthogonal rotation of
+# the source frame).  No effect on volume source spaces.
+_beamformer_surf_ori = True
 
 # Depth-bias compensation via forward-model weighting (0.0 none | 0.8 standard
 # | None when weight_norm is set).  Cancels out for two-condition contrasts.
 _beamformer_depth = 0.8
 
 # Data rank for covariance estimation/regularisation.
-#   'info' : infer from the Info object (recommended)
-#   dict   : explicit per-channel-type rank, e.g. {'mag': 64}
-#   None   : auto-detect via SVD
-_beamformer_rank = "info"
+#   'data'       : estimate from the cleaned epochs, mne.compute_rank(tol='auto'),
+#                  minimum'd with the noise covariance's stored rank (recommended)
+#   'info'       : infer from the Info object
+#   dict         : explicit per-channel-type rank, e.g. {'mag': 64}
+#   None         : auto-detect via SVD
+#   'empty_room' : use the rank stored with the empty-room noise covariance
+#
+# 'data' is the default because it is the only option that sees ICA.  'info' reads
+# the SSS bookkeeping out of info['proc_history'], which knows nothing about the
+# artefact components removed afterwards, so it overstates the rank of the cleaned
+# data — and the beamformer's pseudo-inverse then keeps directions carrying only
+# regularisation loading.  Cross-check with src/custom/rank_check.py.
+_beamformer_rank = "data"
 
 # What the beamformer operates on.
 #   'time'  : evoked response (time-domain output)

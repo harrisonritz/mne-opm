@@ -9,8 +9,21 @@ analysis on preprocessed MEG data. It supports two types of analyses:
 The beamformer provides spatial filtering to reconstruct source activity,
 particularly well-suited for OPM-MEG data.
 
+Either or both source spaces can be reconstructed in one pass
+(``_beamformer_source_space``).  They differ in how the otherwise-arbitrary
+orientation sign is resolved, which matters a great deal once estimates are
+averaged across subjects:
+
+* **surface** — the forward is rotated into surface orientation
+  (:func:`surface_orient_forward`) so ``pick_ori='max-power'`` signs are anchored
+  to the outward cortical normal.
+* **volume** — a grid has no cortical normal (MNE falls back to the +Z / superior
+  direction), so it is fit with ``pick_ori='vector'``, keeping all three
+  components.  Downstream, ``beamformer_volume.project_vol_stc_to_surface`` reads
+  them out along the fsaverage cortical normals to recover a signed estimate.
+
 Usage:
-    python run_beamformer.py --config=/path/to/config.py --output-type=both
+    python run_beamformer.py --config=/path/to/config.py
 
 Author: Harrison Ritz, 2025
 """
@@ -18,7 +31,6 @@ Author: Harrison Ritz, 2025
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,45 +52,13 @@ from mne_bids_pipeline._config_utils import (
     get_noise_cov_bids_path,
     sanitize_cond_name,
 )
+from mne_bids_pipeline._io import _read_json
 from mne_bids_pipeline._report import _all_conditions, _open_report, _sanitize_cond_tag
 
 
 # --------------------------------------------------------------------------------------
 # Configuration and Environment
 # --------------------------------------------------------------------------------------
-
-
-def load_config(config_path: str) -> SimpleNamespace:
-    """Load configuration from file and environment variables.
-
-    Parameters
-    ----------
-    config_path : str
-        Path to the configuration Python file.
-
-    Returns
-    -------
-    cfg : SimpleNamespace
-        Configuration object with all settings.
-    """
-    print(f"\n[load_config] Loading configuration from: {config_path}")
-
-    # Load config file (matching custom_preproc.py pattern)
-    # config = SimpleNamespace()
-    # _update_config_from_path(config=config, config_path=config_path)
-
-    cfg = SimpleNamespace()
-    _update_config_from_path(config=cfg, config_path=config_path)
-
-    # Extract environment variables (matching custom_preproc.py pattern)
-    subject = os.environ.get("SUBJECT", cfg.subjects[0])
-    session = os.environ.get("SESSION", "01")
-
-    print(f"[load_config] Subject: {cfg.subjects[0]}, Session: {cfg.sessions[0]}")
-    print(f"[load_config] Task: {cfg.task}")
-    print(f"[load_config] Beamformer enabled: {cfg._run_beamformer}")
-
-    return cfg
 
 
 def resolve_source_spaces(cfg: SimpleNamespace) -> list[str]:
@@ -103,6 +83,61 @@ def resolve_source_spaces(cfg: SimpleNamespace) -> list[str]:
     if not resolved:
         raise ValueError("_beamformer_source_space must not be empty.")
     return resolved
+
+
+def resolve_per_space(value: Any, space: str, default: Any = None) -> Any:
+    """Resolve a setting that may be global or per source space.
+
+    Orientation-related settings differ between source spaces: a surface space has
+    a cortical normal to anchor ``pick_ori='max-power'`` signs to, a volume grid
+    does not (MNE falls back to the +Z / superior direction).  So
+    ``_beamformer_pick_ori`` / ``_beamformer_weight_norm`` accept either
+
+    * a plain value  -> used for every source space (back-compatible), or
+    * a ``dict`` keyed by ``'surface'`` / ``'volume'``.
+
+    ``default`` is returned when a dict is given but does not mention ``space``.
+    """
+    if isinstance(value, dict):
+        if space not in value and default is None:
+            raise ValueError(
+                f"No entry for source space {space!r} in {value!r}, and no default."
+            )
+        return value.get(space, default)
+    return value
+
+
+def surface_orient_forward(forward: mne.Forward, cfg: SimpleNamespace) -> mne.Forward:
+    """Rotate a surface forward into surface orientation, for the sign convention.
+
+    ``mne.read_forward_solution`` returns a free-orientation forward with
+    ``surf_ori=False`` and ``source_nn = kron(ones, eye(3))``, and MNE only
+    converts to surface orientation for *constrained* (``loose < 1``) inverses —
+    which a beamformer never is.  ``_prepare_beamformer_input`` therefore ends up
+    with ``nn = [0, 0, 1]`` in **head** coordinates, and
+    ``_compute_beamformer`` resolves the otherwise-arbitrary ``max-power`` sign as
+    ``sign(max_power_ori @ nn)`` — i.e. against head-superior rather than against
+    the cortical normal.  Sources oriented tangentially to head +Z (the central
+    sulcus walls, lateral sensorimotor, most of temporal cortex) then get a
+    noise-determined sign, which flips vertex-to-vertex within a subject and
+    subject-to-subject in the group average.
+
+    Converting to surface orientation makes ``nn`` the local surface normal, so
+    the sign is anchored to the outward cortical normal instead.  LCMV with free
+    orientation is invariant to an orthogonal rotation of the source coordinate
+    frame, so this changes the sign convention and *nothing else*.
+
+    Only meaningful for surface source spaces; volume grids have no normal.
+    """
+    if not getattr(cfg, "_beamformer_surf_ori", True):
+        print("[surface_orient_forward] _beamformer_surf_ori=False; leaving forward as-is")
+        return forward
+    if forward["surf_ori"]:
+        return forward
+    print("[surface_orient_forward] Converting forward to surface orientation (use_cps)")
+    return mne.convert_forward_solution(
+        forward, surf_ori=True, force_fixed=False, use_cps=True
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -154,7 +189,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         ``_beamformer_volume_bem_conductivity``, ``_beamformer_volume_bem_ico``
         and ``_beamformer_volume_cache``.
     info : mne.Info
-        Measurement info (sensor geometry) the forward is computed for.
+        Measurement info (sensor geometry) the forward is computed for.  Bad
+        channels are dropped so the forward's channel set matches the one the
+        filters are built on.
 
     Returns
     -------
@@ -162,6 +199,10 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         Volume-source-space forward solution.
     """
     print("\n[build_volume_forward] Building volume-source-space forward...")
+
+    if info["bads"]:
+        print(f"[build_volume_forward] Excluding {len(info['bads'])} bad channel(s)")
+        info = mne.pick_info(info, mne.pick_types(info, meg=True, eeg=False, exclude="bads"))
 
     subject = cfg.subjects[0]
     session = cfg.sessions[0]
@@ -307,10 +348,17 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
     -------
     data : dict
         Dictionary containing:
-        - 'forward': mne.Forward
+        - 'forwards': dict of str -> mne.Forward, keyed by source space
+        - 'forward': mne.Forward (the first requested space; back-compat)
         - 'epochs': mne.Epochs
-        - 'noise_cov': mne.Covariance or None
-        - 'info': mne.Info
+        - 'noise_cov': mne.Covariance or None (None means "use MNE's ad-hoc")
+        - 'noise_rank': dict or None, the rank the pipeline stored with the cov
+
+    Notes
+    -----
+    The measurement info is *not* returned separately: everything downstream uses
+    ``data['epochs'].info`` so that the projectors carried by the data covariance
+    and by the info handed to :func:`mne.beamformer.make_lcmv` can never diverge.
     """
     print("\n[load_beamformer_data] Loading data files...")
 
@@ -357,25 +405,50 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
         )
     print(f"[load_beamformer_data] Loading epochs: {epochs_path.fpath}")
     data["epochs"] = mne.read_epochs(epochs_path, preload=True)
-    data["info"] = mne.io.read_info(epochs_path)
 
     # Build (or load cached) volume forward from the measurement info.
     if "volume" in source_spaces:
-        data["forwards"]["volume"] = build_volume_forward(cfg, data["info"])
+        data["forwards"]["volume"] = build_volume_forward(cfg, data["epochs"].info)
 
     # Back-compat: expose the first requested space's forward as data["forward"].
     data["forward"] = data["forwards"][source_spaces[0]]
 
-    # Load noise covariance
+    # Noise covariance ------------------------------------------------------
+    # Reuse the covariance mne-bids-pipeline already computed and wrote (plus the
+    # rank it stored alongside it), exactly as source/_05_make_inverse does.  That
+    # keeps the beamformer's whitening consistent with the pipeline's minimum-norm
+    # solutions and avoids recomputing an empty-room covariance with a different
+    # rank convention.
+    #
+    # `noise_cov = 'ad-hoc'` deliberately leaves this as None: MNE then builds its
+    # own ad-hoc covariance internally (std=1.0, allow_mismatch=True).  Building
+    # one *here* and passing it in would make it a real covariance as far as MNE
+    # is concerned, and because an ad-hoc covariance is isotropic its eigenvectors
+    # are the canonical channel basis — so rank truncation in `_get_ch_whitener`
+    # would zero out whole OPM channels rather than a meaningful subspace.
+    data["noise_cov"] = None
+    data["noise_rank"] = None
     if cfg.noise_cov == "ad-hoc":
-        print("[load_beamformer_data] Using ad-hoc noise covariance")
-        data["noise_path"] = None
+        print("[load_beamformer_data] Using MNE's internal ad-hoc noise covariance")
     else:
-        noise_path = bids_path.copy().update(
-            task="noise", processing="clean", suffix="raw", extension=".fif"
-        )
-        print(f"[load_beamformer_data] Loading noise data: {noise_path.fpath}")
-        data["noise_path"] = noise_path
+        cov_path = get_noise_cov_bids_path(cfg=cfg, subject=subject, session=session)
+        rank_path = cov_path.copy().update(suffix="rank", extension=".json")
+        if not Path(cov_path.fpath).exists():
+            raise FileNotFoundError(
+                f"Noise covariance not found at {cov_path.fpath}\n"
+                f"With noise_cov={cfg.noise_cov!r} the pipeline must compute it first:\n"
+                f"  mne_bids_pipeline --steps=sensor/make_cov --config=<config>"
+            )
+        print(f"[load_beamformer_data] Loading noise covariance: {cov_path.fpath}")
+        data["noise_cov"] = mne.read_cov(cov_path.fpath)
+        if Path(rank_path.fpath).exists():
+            data["noise_rank"] = _read_json(rank_path)
+            print(f"[load_beamformer_data] Noise covariance rank: {data['noise_rank']}")
+        else:
+            print(
+                f"[load_beamformer_data] WARNING: no rank sidecar at {rank_path.fpath}; "
+                f"rank will be estimated from the data alone"
+            )
 
     print(f"[load_beamformer_data] Data loading complete")
     print(f"  - Forward: {len(data['forward']['src'])} source spaces")
@@ -383,10 +456,74 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
         f"  - Epochs: {len(data['epochs'])} epochs, {len(data['epochs'].ch_names)} channels"
     )
     print(
-        f"  - Noise cov: {'ad-hoc' if data['noise_path'] is None else 'loaded from file'}"
+        f"  - Noise cov: {'ad-hoc' if data['noise_cov'] is None else 'loaded from file'}"
     )
 
     return data
+
+
+# --------------------------------------------------------------------------------------
+# Rank
+# --------------------------------------------------------------------------------------
+
+
+def resolve_rank(
+    cfg: SimpleNamespace,
+    epochs: mne.Epochs,
+    noise_cov: mne.Covariance | None,
+    noise_rank: dict | None,
+) -> Any:
+    """Resolve the rank handed to covariance estimation and to ``make_lcmv``.
+
+    ``_beamformer_rank`` accepts:
+
+    ``"data"``
+        Estimate it from the cleaned epochs with ``mne.compute_rank(..., tol="auto")``
+        and, when a real noise covariance is present, take the element-wise minimum
+        with the rank the pipeline stored for it.  This is the default because it is
+        the only option that sees ICA: ``"info"`` reads the SSS bookkeeping out of
+        ``info['proc_history']`` and therefore *overstates* the rank of data whose
+        artefact components have since been projected out.  Feeding that inflated
+        rank to ``_reg_pinv`` keeps directions that carry only regularisation
+        loading, which is pure noise amplification in the filter.
+        Matches ``rank_check.rank_of_raw``'s ``tol="auto"`` convention, so the
+        diagnostic and the estimator report the same number.
+    ``"empty_room"``
+        Use the rank stored with the empty-room covariance verbatim.
+    ``"info"`` / ``None`` / ``dict``
+        Passed straight through to MNE.
+
+    Returning one explicit ``{ch_type: n}`` dict (rather than the string ``"info"``)
+    also guarantees the data and noise ranks agree, which ``make_lcmv`` requires
+    whenever a real noise covariance is supplied.
+    """
+    setting = getattr(cfg, "_beamformer_rank", "data")
+
+    if setting == "empty_room":
+        if noise_rank is None:
+            raise ValueError(
+                "_beamformer_rank='empty_room' requires a noise covariance with a "
+                "rank sidecar; set noise_cov to 'emptyroom' (or 'rest') and run "
+                "mne_bids_pipeline --steps=sensor/make_cov first."
+            )
+        print(f"[resolve_rank] Using empty-room noise covariance rank: {noise_rank}")
+        return dict(noise_rank)
+
+    if setting != "data":
+        print(f"[resolve_rank] Using configured beamformer rank: {setting}")
+        return setting
+
+    data_rank = mne.compute_rank(epochs, tol="auto", tol_kind="relative")
+    print(f"[resolve_rank] Data rank from epochs (tol='auto'): {data_rank}")
+    if noise_cov is None or noise_rank is None:
+        return data_rank
+
+    rank = {
+        key: min(value, noise_rank[key]) if key in noise_rank else value
+        for key, value in data_rank.items()
+    }
+    print(f"[resolve_rank] Noise rank: {noise_rank} -> using min: {rank}")
+    return rank
 
 
 # --------------------------------------------------------------------------------------
@@ -398,9 +535,10 @@ def compute_lcmv_filters(
     forward: mne.Forward,
     data_cov: mne.Covariance,
     noise_cov: mne.Covariance | None,
-    rank: int | str,
     info: mne.Info,
     cfg: SimpleNamespace,
+    rank: Any = None,
+    source_space: str = "surface",
 ) -> dict:
     """Compute LCMV spatial filters.
 
@@ -411,53 +549,56 @@ def compute_lcmv_filters(
     data_cov : mne.Covariance
         Data covariance matrix.
     noise_cov : mne.Covariance or None
-        Noise covariance matrix. If None, uses ad-hoc.
-    rank : int or str
-        Rank of the covariance matrix (int or 'info' for MNE default).
+        Noise covariance matrix.  ``None`` is passed straight through to
+        :func:`~mne.beamformer.make_lcmv`, which then builds its own ad-hoc
+        covariance (``std=1.0``, ``allow_mismatch=True``).  Do *not* build one
+        here: an ad-hoc covariance is isotropic, so its eigenvectors are the
+        canonical channel basis and rank truncation would zero whole channels.
     info : mne.Info
         Measurement info.
     cfg : SimpleNamespace
         Configuration with beamformer parameters.
+    rank : dict | str | int | None
+        Rank of the covariance matrices, from :func:`resolve_rank`.
+    source_space : str
+        ``'surface'`` or ``'volume'``.  Selects the per-space entry of
+        ``_beamformer_pick_ori`` / ``_beamformer_weight_norm`` when those are
+        given as dicts.
 
     Returns
     -------
     filters : dict
         LCMV filters object.
     """
+    pick_ori = resolve_per_space(cfg._beamformer_pick_ori, source_space, "max-power")
+    weight_norm = resolve_per_space(cfg._beamformer_weight_norm, source_space, "nai")
+
     print("\n[compute_lcmv_filters] Computing LCMV spatial filters...")
+    print(f"  - Source space: {source_space}")
     print(f"  - Regularization: {cfg._beamformer_reg}")
-    print(f"  - Pick orientation: {cfg._beamformer_pick_ori}")
-    print(f"  - Weight normalization: {cfg._beamformer_weight_norm}")
+    print(f"  - Pick orientation: {pick_ori}")
+    print(f"  - Weight normalization: {weight_norm}")
     print(f"  - Depth weighting: {cfg._beamformer_depth}")
     print(f"  - Rank: {rank}")
 
     # Validate parameters
     valid_ori = ["max-power", "vector", None]
-    if cfg._beamformer_pick_ori not in valid_ori:
+    if pick_ori not in valid_ori:
         raise ValueError(
-            f"Invalid _beamformer_pick_ori: {cfg._beamformer_pick_ori}. "
-            f"Must be one of {valid_ori}"
+            f"Invalid _beamformer_pick_ori: {pick_ori}. Must be one of {valid_ori}"
         )
 
     valid_norm = ["unit-noise-gain", "nai", "unit-noise-gain-invariant", None]
-    if cfg._beamformer_weight_norm not in valid_norm:
+    if weight_norm not in valid_norm:
         raise ValueError(
-            f"Invalid _beamformer_weight_norm: {cfg._beamformer_weight_norm}. "
+            f"Invalid _beamformer_weight_norm: {weight_norm}. "
             f"Must be one of {valid_norm}"
         )
 
     # Warn about suboptimal combinations
-    if (
-        cfg._beamformer_pick_ori == "vector"
-        and cfg._beamformer_weight_norm == "unit-noise-gain"
-    ):
+    if pick_ori == "vector" and weight_norm == "unit-noise-gain":
         print("  [WARNING] Using 'unit-noise-gain' with vector beamformer.")
         print("  Consider using 'unit-noise-gain-invariant' instead.")
-
-    # Use ad-hoc noise covariance if none provided
-    if noise_cov is None:
-        print("  [INFO] Creating ad-hoc noise covariance")
-        noise_cov = mne.make_ad_hoc_cov(info)
 
     # Compute filters
     filters = make_lcmv(
@@ -466,8 +607,8 @@ def compute_lcmv_filters(
         data_cov,
         reg=cfg._beamformer_reg,
         noise_cov=noise_cov,
-        pick_ori=cfg._beamformer_pick_ori,
-        weight_norm=cfg._beamformer_weight_norm,
+        pick_ori=pick_ori,
+        weight_norm=weight_norm,
         depth=cfg._beamformer_depth,
         rank=rank,
         reduce_rank=cfg._reduce_rank,
@@ -620,43 +761,42 @@ def run_beamformer_power(
         f"  - Time window: {cfg._beamformer_power_tmin} to {cfg._beamformer_power_tmax} s"
     )
 
+    cov_method = getattr(cfg, "_beamformer_cov_method", "empirical")
+
+    def _condition_power(condition):
+        """Beamformed power for one condition, or None if it has no epochs."""
+        try:
+            epochs_subset = epochs[condition].copy()
+        except KeyError:
+            print(
+                f"    [WARNING] Condition '{condition}' not found in epochs. Skipping."
+            )
+            return None
+        if len(epochs_subset) == 0:
+            print(f"    [WARNING] No epochs for condition '{condition}'. Skipping.")
+            return None
+        cov = mne.compute_covariance(
+            epochs_subset,
+            method=cov_method,
+            tmin=cfg._beamformer_power_tmin,
+            tmax=cfg._beamformer_power_tmax,
+            n_jobs=cfg.n_jobs,
+        )
+        print(f"    - Computed from {len(epochs_subset)} epochs")
+        # apply_lcmv_cov traces over orientations (_compute_power), so this is a
+        # scalar, sign-free power estimate even for vector filters.
+        return apply_lcmv_cov(cov, filters)
+
     stcs = {}
     conditions = cfg.conditions  # Only run on base conditions, not contrasts for power
 
     print(f"\n\n[run_beamformer_power] Processing {len(conditions)} conditions")
 
-    # Compute covariance for each condition
-    covs = {}
     for condition in conditions:
-        print(f"\n  - Computing covariance for condition: {condition}")
-
-        try:
-            epochs_subset = epochs[condition].copy()
-            if len(epochs_subset) == 0:
-                print(f"    [WARNING] No epochs for condition '{condition}'. Skipping.")
-                continue
-
-            # Compute covariance in specified time window
-            cov = mne.compute_covariance(
-                epochs_subset,
-                method="shrunk",
-                tmin=cfg._beamformer_power_tmin,
-                tmax=cfg._beamformer_power_tmax,
-                n_jobs=cfg.n_jobs,
-            )
-            covs[condition] = cov
-            print(f"    - Computed from {len(epochs_subset)} epochs")
-
-        except KeyError:
-            print(
-                f"    [WARNING] Condition '{condition}' not found in epochs. Skipping."
-            )
+        print(f"\n  - Computing power for condition: {condition}")
+        stc = _condition_power(condition)
+        if stc is None:
             continue
-
-    # Apply beamformer to each covariance
-    for condition, cov in covs.items():
-        print(f"  - Applying beamformer to {condition} covariance")
-        stc = apply_lcmv_cov(cov, filters)
         stcs[condition] = stc
         print(f"    - STC shape: {stc.data.shape}")
 
@@ -670,48 +810,46 @@ def run_beamformer_power(
         print(f"  - Computing contrast: {contrast_name}")
         print(f"    [{contrast}]")
 
-        stc_list = []
-        for condition in contrast_conditions:
-            # try:
+        # Keep weights paired with their STC: a condition that drops out must not
+        # shift the remaining conditions onto the wrong weights.
+        weighted = []
+        for condition, weight in zip(contrast_conditions, contrast["weights"]):
             print(f"    contrast_condition: {condition}")
-            epochs_subset = epochs[f"{condition}"].copy()
-
-            if len(epochs_subset) == 0:
-                print(f"    [WARNING] No epochs for condition '{condition}'. Skipping.")
+            stc = stcs.get(condition)
+            if stc is None:
+                stc = _condition_power(condition)
+            if stc is None:
                 continue
+            weighted.append((stc, weight))
 
-            # if stcs[condition] is not None:
-            #     continue
-
-            # Compute covariance in specified time window
-            cov = mne.compute_covariance(
-                epochs_subset,
-                method="shrunk",
-                tmin=cfg._beamformer_power_tmin,
-                tmax=cfg._beamformer_power_tmax,
-                n_jobs=cfg.n_jobs,
-            )
-            stc_list.append(apply_lcmv_cov(cov, filters))
-            print(f"    - Computed from {len(epochs_subset)} epochs")
-
-        # For power analysis, use normalized difference: W*stc / |W|*stc
-        # This is more appropriate for power than weighted sums
-        # stc_list = [stcs[cond] for cond in contrast_conditions if cond in stcs]
-        if not stc_list:
+        if len(weighted) != len(contrast_conditions):
             print(
-                f"    [WARNING] No valid STCs found for contrast '{contrast_name}'. Skipping."
+                f"    [WARNING] Could not compute all conditions for contrast "
+                f"'{contrast_name}'. Skipping."
             )
             continue
 
-        stc_contrast = stc_list[0].copy()
-        stc_norm = stc_list[0].copy()
+        # Normalised difference: sum(w_i * P_i) / sum(|w_i| * P_i).  Both
+        # accumulators start at zero — seeding them with the first STC (as this
+        # previously did) double-counts it, turning (A - B) / (A + B) into
+        # (2A - B) / (2A + B).
+        stc_contrast = weighted[0][0].copy()
+        stc_norm = weighted[0][0].copy()
+        stc_contrast.data = np.zeros_like(stc_contrast.data)
+        stc_norm.data = np.zeros_like(stc_norm.data)
 
-        # sum each item in stc_list, weigthed by contrast weights
-        for i, stc in enumerate(stc_list):
-            weight = contrast["weights"][i]
+        for stc, weight in weighted:
             stc_contrast.data += weight * stc.data
             stc_norm.data += abs(weight) * stc.data
-        stc_contrast.data /= stc_norm.data
+
+        # Power is non-negative, so the denominator only vanishes where every
+        # contributing condition is exactly zero; leave those vertices at zero
+        # rather than emitting inf/nan.
+        nonzero = stc_norm.data != 0
+        out = np.zeros_like(stc_contrast.data)
+        np.divide(stc_contrast.data, stc_norm.data, out=out, where=nonzero)
+        stc_contrast.data = out
+
         stcs[contrast_name] = stc_contrast
         print(f"    - Normalized difference contrast created")
 
@@ -881,6 +1019,7 @@ def add_to_report(
         ) as report:
             print(f"[add_to_report] Report opened successfully")
 
+            n_added = 0
             for condition, stc_path in stcs.items():
                 if condition == "filters":
                     continue  # Skip the filters entry
@@ -912,6 +1051,10 @@ def add_to_report(
                     import matplotlib.pyplot as plt
 
                     stc = mne.read_source_estimate(str(stc_path))
+                    # nilearn renders a scalar map; a vector volume beamformer
+                    # (pick_ori='vector') has three components per grid point.
+                    if stc.data.ndim == 3:
+                        stc = stc.magnitude()
                     # Representative slice at the peak of the mean-over-sources signal.
                     peak_time = stc.times[
                         int(np.argmax(np.abs(stc.data).mean(axis=0)))
@@ -937,20 +1080,26 @@ def add_to_report(
                         title=report_title,
                         subject=fs_subject,
                         subjects_dir=fs_subjects_dir,
-                        n_time_points=cfg.report_stc_n_time_points,
+                        n_time_points=getattr(
+                            cfg,
+                            "_beamformer_report_n_time_points",
+                            cfg.report_stc_n_time_points,
+                        ),
                         tags=tags,
                         replace=True,
                     )
+                n_added += 1
                 print(f"    - tags: {tags}")
 
             print(
-                f"[add_to_report] Successfully added {len(stcs) - 1} source estimates to report"
+                f"[add_to_report] Successfully added {n_added} source estimates to report"
             )
 
     except Exception as e:
+        # The STCs are already on disk at this point, so a report failure must not
+        # take the run down with it.
         print(f"[add_to_report] Warning: Could not add to report: {e}")
         print(f"[add_to_report] Continuing without report update...")
-        exit(1)
 
 
 # --------------------------------------------------------------------------------------
@@ -980,7 +1129,6 @@ def main():
 
     # load configuration
     cfg = _import_config(config_path=args.config)
-    _update_config_from_path(config=cfg, config_path=args.config)
     cfg.data_type = "meg"
     cfg.datatype = "meg"
 
@@ -990,40 +1138,30 @@ def main():
         print("[main] Exiting without running analysis.")
         return
 
-    # Load data
+    # Load data (epochs, forward(s), and the pipeline's noise covariance)
     data = load_beamformer_data(cfg)
-    data["epochs"].info.normalize_proj() # normalize projectors
+    epochs = data["epochs"]
+    noise_cov = data["noise_cov"]
 
-    # Compute data covariance (shared by both analyses)
+    # One info from here on: the projectors that end up in the data covariance
+    # and the ones handed to make_lcmv have to be the same objects, or the
+    # whitener double-applies them.
+    epochs.info.normalize_proj()
+
+    # One rank for both covariances.  make_lcmv requires the data and noise ranks
+    # to agree whenever a real noise covariance is supplied, so resolving it once
+    # and passing the same dict everywhere removes that whole failure mode.
+    rank = resolve_rank(cfg, epochs, noise_cov, data["noise_rank"])
+
+    # Compute data covariance (shared by every source space and both analyses)
     print("\n[main] Computing data covariance matrix...")
     data_cov = mne.compute_covariance(
-        data["epochs"],
+        epochs,
         method=cfg._beamformer_cov_method,
-        rank="info",
+        rank=rank,
         n_jobs=cfg.n_jobs,
     )
-    print(f"[main] Data covariance computed from {len(data['epochs'])} epochs")
-
-    if data["noise_path"] is None:
-        rank = "info"
-        noise_cov = None
-    else:
-        print(f"\n[main] Loading noise covariance from: {data['noise_path']}")
-        noise_raw = mne.io.read_raw_fif(data["noise_path"], preload=True)
-        # rank = mne.compute_rank(noise_raw, info=noise_raw.info, tol="auto")
-        noise_cov = mne.compute_raw_covariance(
-            noise_raw,
-            method=cfg._beamformer_cov_method,
-            rank="info",
-            n_jobs=cfg.n_jobs,
-        )
-        print(f"[main] Noise covariance computed from raw data: {data['noise_path']}")
-
-    if getattr(cfg, "_beamformer_rank", "info") == "empty_room":
-        print(f"[main] Using empty-room noise covariance rank: {rank}")
-    else:
-        rank = cfg._beamformer_rank
-        print(f"[main] Using specified beamformer rank: {rank}")
+    print(f"[main] Data covariance computed from {len(epochs)} epochs")
 
     # Reconstruct each requested source space (surface, volume, or both).  The
     # data / noise covariance and rank above are shared; the forward, filters,
@@ -1038,14 +1176,23 @@ def main():
 
         forward = data["forwards"][space]
 
+        # Anchor the max-power sign to the cortical normal rather than head +Z.
+        # Only surface spaces have a normal to anchor to (MNE falls back to the
+        # +Z / superior direction for volume grids), which is why the volume
+        # reconstruction is fit with pick_ori='vector' instead — see
+        # surface_orient_forward and the per-space _beamformer_pick_ori.
+        if space == "surface":
+            forward = surface_orient_forward(forward, cfg)
+
         # Compute LCMV filters (shared by this space's time and power analyses)
         filters = compute_lcmv_filters(
             forward=forward,
             data_cov=data_cov,
             noise_cov=noise_cov,
-            rank=rank,
-            info=data["info"],
+            info=epochs.info,
             cfg=cfg,
+            rank=rank,
+            source_space=space,
         )
 
         # Run Time-locked beamformer --------------------------------
@@ -1054,7 +1201,7 @@ def main():
             print(f"TIME-LOCKED BEAMFORMER ({space})")
             print("=" * 80)
             stcs_time = run_beamformer_timecourse(
-                epochs=data["epochs"],
+                epochs=epochs,
                 filters=filters,
                 cfg=cfg,
             )
@@ -1082,7 +1229,7 @@ def main():
             print("=" * 80)
 
             stcs_power = run_beamformer_power(
-                epochs=data["epochs"],
+                epochs=epochs,
                 filters=filters,
                 cfg=cfg,
             )
