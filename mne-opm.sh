@@ -20,12 +20,12 @@ export PYTHON_GIL=1
 export PYTHON_JIT=1
 
 
-usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--subjects-dir <subjects directory>] [--t1w <T1w image path>] [--fail-on-first-crash] [--help]"
+usage="Usage: sh $0 <pipeline> --exp <experiment> --sub <subject number> --data <data directory> --config <configuration directory> [--analysis <analysis name>] [--session <session number>] [--fs <freesurfer directory>] [--subjects-dir <subjects directory>] [--t1w <T1w image path>] [--stage <osl stage>] [--fail-on-first-crash] [--help]"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        nifti|coreg|channel|freesurfer|bids|preproc|sensor|source|beamformer|all|func|anat|coreg_diagnostics|postICA)
+        nifti|coreg|channel|freesurfer|bids|preproc|sensor|source|beamformer|all|func|anat|coreg_diagnostics|postICA|osl)
             PIPELINE=$1
             shift 1
             ;;
@@ -71,6 +71,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -w|--workers)
             MAX_WORKERS=$2
+            shift 2
+            ;;
+        --stage)
+            OSL_STAGE=$2
             shift 2
             ;;
         --fail-on-first-crash)
@@ -137,6 +141,7 @@ export FREESURFER_HOME
 export SUBJECTS_DIR
 
 export FAIL_ON_FIRST_CRASH=${FAIL_ON_FIRST_CRASH:-0}
+export OSL_STAGE=${OSL_STAGE:-all}
 export DATA_DIR="$DATA_BASE/$EXPERIMENT"
 export RAW_DIR="$DATA_DIR/raw"
 export BIDS_DIR="$DATA_DIR/bids"
