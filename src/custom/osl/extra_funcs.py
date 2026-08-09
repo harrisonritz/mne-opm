@@ -22,6 +22,10 @@ Functions
 ---------
 events_from_annotations
     Populate ``dataset['events']`` / ``dataset['event_id']`` from annotations.
+ica_autoreject_safe
+    osl-ephys' ``ica_autoreject``, skipping detectors whose channels are absent.
+ica_kurtosisreject
+    Mark ICs whose time course has excessive kurtosis.
 
 Constants
 ---------
@@ -179,5 +183,175 @@ def events_from_annotations(dataset: Dict[str, Any], userargs: Dict[str, Any]) -
     return dataset
 
 
-PREPROC_EXTRA_FUNCS = [events_from_annotations]
+# ---------------------------------------------------------------------------
+# ICA component rejection
+# ---------------------------------------------------------------------------
+
+
+def ica_autoreject_safe(dataset: Dict[str, Any], userargs: Dict[str, Any]) -> Dict:
+    """osl-ephys' ``ica_autoreject``, skipping detectors whose channels are absent.
+
+    :func:`mne.preprocessing.ICA.find_bads_eog` raises when the recording has no
+    EOG channel, which fails the whole chain.  In this dataset the EOG channels
+    are the ``eye_nmf*`` components ``format_bids`` derives from the
+    eye-tracking recording, so any subject recorded without eye-tracking would
+    otherwise need its own config.
+
+    Parameters
+    ----------
+    dataset : dict
+        osl-ephys dataset dict.  Must contain ``'raw'`` and ``'ica'``.
+    userargs : dict
+        As :func:`osl_ephys.preprocessing.mne_wrappers.run_mne_ica_autoreject`,
+        plus:
+
+        ``skip_if_absent`` : bool, optional
+            Skip EOG detection when the recording has no EOG channel, rather
+            than raising.  Default True.
+
+    Returns
+    -------
+    dataset : dict
+        The input dict, with bad components marked on ``dataset['ica']``.
+
+    Notes
+    -----
+    Only EOG is guarded.  ECG detection needs no ECG channel:
+    :func:`~mne.preprocessing.ICA.find_bads_ecg` synthesises one from the
+    magnetometers, which is the normal situation for OPM recordings.
+    """
+    from osl_ephys.preprocessing.mne_wrappers import run_mne_ica_autoreject
+
+    logger.info("OSL Stage - %s", "ica_autoreject_safe")
+    logger.info("userargs: %s", str(userargs))
+
+    userargs = dict(userargs)
+    skip_if_absent = userargs.pop("skip_if_absent", True)
+
+    if skip_if_absent:
+        eogmethod = userargs.get("eogmethod", "default")
+        wants_eog = eogmethod not in (None, "None")
+        has_eog = bool(mne.pick_types(dataset["raw"].info, meg=False, eog=True).size)
+
+        if wants_eog and not has_eog:
+            logger.warning(
+                "ica_autoreject_safe: no EOG channel in this recording, skipping "
+                "EOG component detection. Was this subject recorded without "
+                "eye-tracking?"
+            )
+            userargs["eogmethod"] = None
+            wants_eog = False
+
+        ecgmethod = userargs.get("ecgmethod", "ctps")
+        if not wants_eog and ecgmethod in (None, "None"):
+            logger.warning(
+                "ica_autoreject_safe: both EOG and ECG detection are disabled, "
+                "so no components will be marked by this step."
+            )
+
+    return run_mne_ica_autoreject(dataset, userargs)
+
+
+def ica_kurtosisreject(dataset: Dict[str, Any], userargs: Dict[str, Any]) -> Dict:
+    """Mark ICs whose time course has excessive kurtosis.
+
+    Kurtosis picks up components dominated by brief high-amplitude excursions
+    -- movement transients, sensor steps, SQUID-like jumps -- which the
+    correlation-based EOG/ECG detectors do not catch.  Adapted from the
+    osl-ephys ``preprocessing_automatic`` tutorial, which offers it as a worked
+    example rather than shipping it.
+
+    Parameters
+    ----------
+    dataset : dict
+        osl-ephys dataset dict.  Must contain ``'raw'`` and a fitted
+        ``'ica'``.
+    userargs : dict
+        Step options:
+
+        ``threshold`` : float, optional
+            Components with kurtosis above this are marked bad.  Default 10.
+            Note this is *non-Fisher* kurtosis, so a Gaussian component sits at
+            3, not 0.
+        ``apply`` : bool, optional
+            Remove the marked components from ``dataset['raw']``.  Default
+            True.  Set False when a later step applies the ICA, so that the
+            exclusions from several steps accumulate and the ICA is applied
+            once.
+        ``reject_by_annotation`` : bool, optional
+            Ignore ``BAD_*`` annotated spans when computing kurtosis.  Default
+            True -- bad segments are exactly the high-kurtosis spans, so
+            including them makes almost every component look bad.
+
+    Returns
+    -------
+    dataset : dict
+        The input dict, with bad components added to ``dataset['ica'].exclude``.
+
+    Raises
+    ------
+    ValueError
+        If no ICA has been fitted yet.
+
+    Notes
+    -----
+    The tutorial version computes the component time courses as
+    ``ica.get_components().T @ raw_data``, which projects the data onto the
+    *mixing* matrix.  The actual component time courses come from the unmixing
+    matrix, which is what :meth:`~mne.preprocessing.ICA.get_sources` returns and
+    what is used here, so the two flag different components.
+    """
+    from scipy.stats import kurtosis
+
+    logger.info("OSL Stage - %s", "ica_kurtosisreject")
+    logger.info("userargs: %s", str(userargs))
+
+    ica = dataset.get("ica")
+    if ica is None:
+        raise ValueError(
+            "ica_kurtosisreject: no ICA in the dataset. Add an ica_raw step "
+            "before this one."
+        )
+
+    threshold = userargs.get("threshold", 10.0)
+    apply = userargs.get("apply", True)
+    reject_by_annotation = userargs.get("reject_by_annotation", True)
+
+    sources = ica.get_sources(dataset["raw"])
+    data = sources.get_data(
+        reject_by_annotation="omit" if reject_by_annotation else None
+    )
+
+    scores = kurtosis(data, axis=1, fisher=False)
+    bad = np.where(scores > threshold)[0]
+
+    logger.info(
+        "ica_kurtosisreject: kurtosis min/median/max = %.2f / %.2f / %.2f",
+        float(np.min(scores)),
+        float(np.median(scores)),
+        float(np.max(scores)),
+    )
+    logger.info(
+        "Marking %d IC(s) as bad (kurtosis > %s): %s",
+        len(bad),
+        threshold,
+        bad.tolist(),
+    )
+
+    ica.exclude = sorted(set(ica.exclude) | {int(i) for i in bad})
+
+    if apply:
+        logger.info("Removing %d excluded component(s) from raw", len(ica.exclude))
+        ica.apply(dataset["raw"])
+    else:
+        logger.info("Components were not removed from raw data")
+
+    return dataset
+
+
+PREPROC_EXTRA_FUNCS = [
+    events_from_annotations,
+    ica_autoreject_safe,
+    ica_kurtosisreject,
+]
 """Custom functions passed to osl-ephys as ``extra_funcs`` for the preproc stage."""

@@ -13,6 +13,9 @@ source
     forward model, LCMV beamforming and parcellation.
 all
     ``preproc`` then ``source``.  Stops if preprocessing fails.
+group
+    Sign-flip every subject against a template, then compute group condition
+    averages and contrasts.  Run once, after the array finishes.
 collate
     Rebuild the group-level HTML reports across all subjects.  Run once, after
     the array finishes -- not per subject.
@@ -62,13 +65,21 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 from custom.osl import collate as collate_stage
+from custom.osl import group as group_stage
 from custom.osl import preproc as preproc_stage
 from custom.osl import source as source_stage
 from custom.osl import validate as validate_stage
 from custom.osl._config import load_config
 
 
-STAGE_CHOICES: list[str] = ["preproc", "source", "all", "collate", "validate"]
+STAGE_CHOICES: list[str] = [
+    "preproc",
+    "source",
+    "all",
+    "group",
+    "collate",
+    "validate",
+]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -141,6 +152,8 @@ def run_stage(stage: str, cfg) -> bool:
         return preproc_stage.run(cfg)
     if stage == "source":
         return source_stage.run(cfg)
+    if stage == "group":
+        return group_stage.run(cfg)
     if stage == "collate":
         return collate_stage.run(cfg)
     if stage == "validate":

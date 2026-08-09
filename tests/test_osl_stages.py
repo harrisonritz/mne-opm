@@ -95,7 +95,9 @@ class TestPreprocStage:
 
         assert preproc_stage.run(cfg) is True
         assert [f.__name__ for f in captured["extra_funcs"]] == [
-            "events_from_annotations"
+            "events_from_annotations",
+            "ica_autoreject_safe",
+            "ica_kurtosisreject",
         ]
 
     def test_suppresses_osl_report_generation(self, cfg, monkeypatch):

@@ -17,6 +17,9 @@ preproc
 source
     Run an osl-ephys ``source_recon`` chain: surfaces, coregistration,
     forward model, LCMV beamforming and parcellation.
+group
+    Sign-flip every subject's parcel time courses against a template and
+    compute group-level condition averages and contrasts.
 collate
     Regenerate the group-level preprocessing and source-recon HTML reports
     across every subject present in the report directories.
@@ -50,16 +53,36 @@ fs_bridge
     FreeSurfer/MNE source-recon wrappers used by the ``freesurfer`` backend.
 collate
     The ``collate`` stage.
+group
+    The group-level ``group`` stage: sign flipping and group contrasts.
+sign_flip
+    Dipole sign-flipping helpers used by the group stage.
 validate
     Config validation.
 
 Author: Harrison Ritz, 2025
 """
 
-from . import _config, _paths, collate, extra_funcs, fs_bridge, preproc, source, validate
+from . import (
+    _config,
+    _paths,
+    collate,
+    extra_funcs,
+    fs_bridge,
+    group,
+    preproc,
+    sign_flip,
+    source,
+    validate,
+)
 from ._config import load_config, preproc_config, source_config
 from ._paths import resolve_paths
-from .extra_funcs import PREPROC_EXTRA_FUNCS, events_from_annotations
+from .extra_funcs import (
+    PREPROC_EXTRA_FUNCS,
+    events_from_annotations,
+    ica_autoreject_safe,
+    ica_kurtosisreject,
+)
 from .fs_bridge import SOURCE_EXTRA_FUNCS
 from .validate import validate_config
 
@@ -70,7 +93,9 @@ __all__ = [
     "collate",
     "extra_funcs",
     "fs_bridge",
+    "group",
     "preproc",
+    "sign_flip",
     "source",
     "validate",
     # Config
@@ -83,5 +108,7 @@ __all__ = [
     "PREPROC_EXTRA_FUNCS",
     "SOURCE_EXTRA_FUNCS",
     "events_from_annotations",
+    "ica_autoreject_safe",
+    "ica_kurtosisreject",
     "validate_config",
 ]

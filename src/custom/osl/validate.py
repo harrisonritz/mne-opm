@@ -4,7 +4,7 @@ Checks a pipeline config without running anything, so that a typo costs a
 second rather than a place in the cluster queue and however long the chain runs
 before it reaches the bad step.
 
-It reports three classes of problem:
+It reports these classes of problem:
 
 * **Unresolvable steps** -- a step name that neither osl-ephys nor the custom
   wrappers provide.  osl-ephys logs ``Function not found!`` and then fails with
@@ -18,6 +18,9 @@ It reports three classes of problem:
   cannot actually be used in a config (use ``extract_polhemus_from_info``).
 
 * **Unknown options** -- a step option the wrapper does not accept.
+
+* **Malformed group contrasts** -- mismatched condition/weight lengths, or a
+  contrast referencing a condition the group stage will not compute.
 
 Missing input files are reported as warnings, not errors, since a config is
 routinely validated before the data it points at exists.
@@ -131,7 +134,52 @@ def validate_config(cfg: SimpleNamespace) -> tuple[list[str], list[str]]:
     else:
         warnings.append("no 'source_recon' section; the source stage cannot run")
 
+    if cfg.group:
+        errors.extend(_check_group(cfg))
+    else:
+        warnings.append("no 'group' section; the group stage cannot run")
+
     return errors, warnings
+
+
+def _check_group(cfg: SimpleNamespace) -> list[str]:
+    """Check the group section's contrasts are well formed."""
+    errors: list[str] = []
+    group = cfg.group
+
+    if cfg.pipeline.source_input != "epochs":
+        errors.append(
+            f"the group stage averages epochs by condition, so it needs "
+            f"pipeline.source_input: epochs, not "
+            f"{cfg.pipeline.source_input!r}"
+        )
+
+    declared = group.get("conditions")
+
+    for index, contrast in enumerate(group.get("contrasts") or []):
+        label = contrast.get("name", f"#{index}")
+
+        missing_keys = sorted({"name", "conditions", "weights"} - set(contrast))
+        if missing_keys:
+            errors.append(f"group contrast '{label}' is missing {missing_keys}")
+            continue
+
+        conditions, weights = contrast["conditions"], contrast["weights"]
+        if len(conditions) != len(weights):
+            errors.append(
+                f"group contrast '{label}' has {len(conditions)} condition(s) "
+                f"but {len(weights)} weight(s)"
+            )
+
+        if declared:
+            unknown = [c for c in conditions if c not in declared]
+            if unknown:
+                errors.append(
+                    f"group contrast '{label}' references {unknown}, which "
+                    f"is not in group.conditions {list(declared)}"
+                )
+
+    return errors
 
 
 def _check_inputs(

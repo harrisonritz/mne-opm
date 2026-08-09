@@ -233,8 +233,13 @@ the body of a SLURM array job.
 ./mne-opm.sh osl --exp TSX --sub 007 --analysis trialResponse --stage collate ...
 ```
 
-Stages are `preproc`, `source`, `all`, `collate` and `validate`. The config is
-read from `${CONFIG_DIR}/osl/<ANALYSIS>.yaml`.
+Stages are `preproc`, `source`, `all`, `group`, `collate` and `validate`. The
+config is read from `${CONFIG_DIR}/osl/<ANALYSIS>.yaml`.
+
+`group` runs after the array: it sign-flips every subject's parcel time courses
+against a template (a beamformer fixes each dipole's orientation only up to a
+sign, independently per subject, so averaging without this cancels the signal),
+then writes `(subjects, parcels, times)` arrays per condition and contrast.
 
 Two source backends are available, selected by `pipeline.source_backend`:
 
@@ -258,6 +263,11 @@ See [docs/api/osl.md](docs/api/osl.md) for the full description, and
 
 ### Notes and gotchas
 
+- `osl_ephys...sign_flipping.apply_flips` reads `parc/parc-epo.fif` in its
+  epoched branch, but everything else in osl-ephys writes and expects
+  `parc/lcmv-parc-epo.fif`, so `fix_sign_ambiguity(epoched=True)` fails on a file
+  that never existed. `custom.osl.sign_flip.apply_flips` is the corrected
+  equivalent and is what the `group` stage uses.
 - `format_bids` converts triggers to annotations and drops the stim channels, so
   osl-ephys' `find_events` cannot be used. The `events_from_annotations` step
   (`custom.osl.extra_funcs`) rebuilds the events array from `raw.annotations`
@@ -268,9 +278,13 @@ See [docs/api/osl.md](docs/api/osl.md) for the full description, and
 - Do not use `find_bad_channels_maxwell`: the osl-ephys wrapper has a `NameError`
   in it (`noisy + flat`, for `flats`) as of the pinned commit. Use osl-ephys'
   own `bad_channels` instead.
-- The `ica_autoreject` step's EOG detection needs the `eye_nmf*` channels that
-  `format_bids` derives from eye-tracking. Subjects recorded without
-  eye-tracking need `eogmethod: None`.
+- EOG detection needs the `eye_nmf*` channels `format_bids` derives from
+  eye-tracking. Use `ica_autoreject_safe` rather than osl-ephys'
+  `ica_autoreject`: it skips EOG detection when those channels are absent, so a
+  subject recorded without eye-tracking does not fail the chain.
+- `ica_kurtosisreject` computes component time courses with `ica.get_sources()`,
+  not the osl-ephys tutorial's `get_components().T @ data`; see
+  [docs/api/osl.md](docs/api/osl.md) for why the two differ.
 
 
 ## Config files

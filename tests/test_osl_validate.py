@@ -238,3 +238,72 @@ class TestWarnings:
         cfg.pipeline.outdir = None
         errors, _ = validate_config(cfg)
         assert any("outdir" in e for e in errors)
+
+
+class TestGroupSection:
+    def _cfg(self, tmp_path, group_block, source_input="epochs"):
+        header = (
+            "pipeline:\n"
+            '  subject: "007"\n'
+            "  task: TSX\n"
+            "  bids_root: /data/bids\n"
+            "  outdir: /out\n"
+            f"  source_input: {source_input}\n"
+            "preproc:\n"
+            "  - filter: {}\n"
+            "group:\n"
+        )
+        body = textwrap.indent(textwrap.dedent(group_block).strip(), "  ")
+        path = tmp_path / "cfg.yaml"
+        path.write_text(header + body + "\n")
+        return load_config(path, env={})
+
+    def test_accepts_a_well_formed_group_section(self, tmp_path):
+        cfg = self._cfg(tmp_path, """
+        conditions: [response/left, response/right]
+        contrasts:
+          - name: responseHand
+            conditions: [response/left, response/right]
+            weights: [0.5, -0.5]
+        """)
+        assert validate_config(cfg)[0] == []
+
+    def test_catches_mismatched_weights(self, tmp_path):
+        cfg = self._cfg(tmp_path, """
+        contrasts:
+          - name: bad
+            conditions: [a, b, c]
+            weights: [1, -1]
+        """)
+        errors, _ = validate_config(cfg)
+        assert any("3 condition(s) but 2 weight(s)" in e for e in errors)
+
+    def test_catches_a_contrast_condition_that_will_not_be_computed(self, tmp_path):
+        cfg = self._cfg(tmp_path, """
+        conditions: [response/left]
+        contrasts:
+          - name: bad
+            conditions: [response/left, response/right]
+            weights: [1, -1]
+        """)
+        errors, _ = validate_config(cfg)
+        assert any("response/right" in e for e in errors)
+
+    def test_catches_a_malformed_contrast(self, tmp_path):
+        cfg = self._cfg(tmp_path, """
+        contrasts:
+          - name: bad
+            conditions: [a, b]
+        """)
+        errors, _ = validate_config(cfg)
+        assert any("missing ['weights']" in e for e in errors)
+
+    def test_catches_continuous_source_input(self, tmp_path):
+        cfg = self._cfg(tmp_path, "conditions: [a, b]", source_input="raw")
+        errors, _ = validate_config(cfg)
+        assert any("source_input: epochs" in e for e in errors)
+
+    def test_warns_when_the_group_section_is_absent(self, tmp_path):
+        cfg = make_cfg(tmp_path, "- filter: {}", VALID_SOURCE)
+        _, warnings = validate_config(cfg)
+        assert any("no 'group' section" in w for w in warnings)

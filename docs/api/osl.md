@@ -34,6 +34,7 @@ or through the CLI wrapper:
 | `preproc` | Run the osl-ephys `preproc` chain over the subject's BIDS raw file |
 | `source` | Surfaces, coregistration, forward model, LCMV beamforming, parcellation |
 | `all` | `preproc` then `source`; stops if preprocessing fails |
+| `group` | Sign-flip every subject, then group condition averages and contrasts |
 | `collate` | Rebuild the group-level HTML reports across every subject |
 | `validate` | Check the config without running anything |
 
@@ -68,6 +69,64 @@ directly comparable with the RHINO backend. Needs no FSL.
 
 Because the two backends need different steps, `source_recon` in the config may
 be keyed by backend so that one file describes both.
+
+## Group analysis and sign flipping
+
+A beamformer resolves each dipole's orientation only up to a sign, and does so
+independently per subject. Averaging parcel time courses across subjects without
+fixing that first cancels the signal. The `group` stage picks a template subject
+and searches, per subject, for the parcel sign flips that best match that
+subject's parcel covariance to the template's, then stacks the flipped epochs
+into `(subjects, parcels, times)` arrays and forms the configured contrasts.
+
+The search is osl-ephys' own
+(`osl_ephys.source_recon.sign_flipping.find_flips`); `custom.osl.sign_flip`
+supplies the surrounding file handling.
+
+```{warning}
+`osl_ephys.source_recon.sign_flipping.apply_flips` reads
+`{outdir}/{subject}/parc/parc-epo.fif` in its `epoched=True` branch, while
+`find_template_subject` and `fix_sign_ambiguity` both write and look for
+`{source_method}-parc-epo.fif` -- `lcmv-parc-epo.fif` here. The continuous
+branch gets the prefix right; the epoched one does not, so
+`fix_sign_ambiguity(epoched=True)` fails with `FileNotFoundError` on a file that
+never existed. `custom.osl.sign_flip.apply_flips` is the corrected equivalent,
+and is what the `group` stage calls.
+```
+
+Each subject's flip search is independent and CPU-bound, so `group.n_workers`
+parallelises them across a local Dask cluster inside the one SLURM job, as the
+osl-ephys examples do.
+
+## ICA rejection
+
+Two custom steps sit alongside the stock osl-ephys ones:
+
+`ica_autoreject_safe`
+: osl-ephys' `ica_autoreject` with `skip_if_absent`. `find_bads_eog` raises when
+  the recording has no EOG channel, which fails the whole chain; here EOG
+  detection is skipped with a warning instead. In this dataset the EOG channels
+  are the `eye_nmf*` components `format_bids` derives from eye-tracking, so a
+  subject recorded without it would otherwise need its own config. ECG is not
+  guarded: `find_bads_ecg` synthesises an ECG from the magnetometers.
+
+`ica_kurtosisreject`
+: Marks components whose time course has excessive kurtosis -- brief
+  high-amplitude excursions that the correlation-based detectors miss. Adapted
+  from the osl-ephys `preprocessing_automatic` tutorial, which offers it as a
+  worked example rather than shipping it.
+
+  Two deliberate departures from the tutorial. It computes the component time
+  courses with `ica.get_sources()`, i.e. the unmixing matrix; the tutorial uses
+  `ica.get_components().T @ data`, which projects onto the *mixing* matrix and
+  is not the component time course, so the two flag different components. And
+  it excludes `BAD_*` annotated spans by default, since bad segments are exactly
+  the high-kurtosis spans and including them makes almost every component look
+  bad.
+
+Run `ica_autoreject_safe` with `apply: false` and `ica_kurtosisreject` with
+`apply: true`, so exclusions from both accumulate and the ICA is applied once
+rather than projecting the data twice.
 
 ## Events from annotations
 
@@ -146,6 +205,22 @@ annotations are dropped from the mapping, because `mne.Epochs` raises on an
 
 ```{eval-rst}
 .. automodule:: custom.osl.fs_bridge
+   :members:
+   :no-index:
+```
+
+### osl.sign_flip
+
+```{eval-rst}
+.. automodule:: custom.osl.sign_flip
+   :members:
+   :no-index:
+```
+
+### osl.group
+
+```{eval-rst}
+.. automodule:: custom.osl.group
    :members:
    :no-index:
 ```

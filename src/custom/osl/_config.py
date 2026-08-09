@@ -77,7 +77,13 @@ import yaml
 # ${VAR} or ${VAR:-default}
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
-TOP_LEVEL_SECTIONS: tuple[str, ...] = ("pipeline", "meta", "preproc", "source_recon")
+TOP_LEVEL_SECTIONS: tuple[str, ...] = (
+    "pipeline",
+    "meta",
+    "preproc",
+    "source_recon",
+    "group",
+)
 """Sections recognised at the top level of a pipeline YAML file."""
 
 SOURCE_BACKENDS: tuple[str, ...] = ("rhino", "freesurfer")
@@ -241,6 +247,8 @@ def load_config(
             The ``preproc`` step list (``None`` when absent).
         ``source_recon``
             The ``source_recon`` step list (``None`` when absent).
+        ``group``
+            The ``group`` settings mapping (``{}`` when absent).
         ``path``
             The path the config was loaded from, as a string.
 
@@ -292,6 +300,7 @@ def load_config(
         meta=raw.get("meta") or {},
         preproc=raw.get("preproc"),
         source_recon=source_recon,
+        group=raw.get("group") or {},
         path=str(config_path),
     )
 

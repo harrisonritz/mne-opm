@@ -199,8 +199,8 @@ class TestRegistry:
     def test_the_step_is_registered_under_its_config_name(self):
         # osl-ephys matches extra_funcs by __name__, so the function name is
         # the config key.
-        assert [f.__name__ for f in PREPROC_EXTRA_FUNCS] == [
-            "events_from_annotations"
+        assert "events_from_annotations" in [
+            f.__name__ for f in PREPROC_EXTRA_FUNCS
         ]
 
     def test_default_exclude_prefixes(self):
