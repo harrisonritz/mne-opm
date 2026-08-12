@@ -10,3 +10,19 @@ docs/_build/
 .coverage
 CLAUDE.md
 MagicMock*
+# local virtual environments
+.venv/
+venv/
+
+# Synthetic dataset: the BIDS subject and its FreeSurfer subjects are committed,
+# but anything the pipeline or the generator can rebuild is not.
+synthetic/datasets/*/bids/derivatives/*
+!synthetic/datasets/*/bids/derivatives/freesurfer/
+synthetic/datasets/*/raw/*/*_task/
+synthetic/datasets/*/raw/*/*_noise/
+# ...including what the source steps drop into the FreeSurfer bem/ directory.
+# The BEM solution alone is 26 MB (a dense 2562 x 2562 matrix) and rebuilds
+# from the committed *.surf shells in seconds.
+synthetic/datasets/*/bids/derivatives/freesurfer/subjects/*/bem/*-bem.fif
+synthetic/datasets/*/bids/derivatives/freesurfer/subjects/*/bem/*-bem-sol.fif
+synthetic/datasets/*/bids/derivatives/freesurfer/subjects/*/bem/*-src.fif

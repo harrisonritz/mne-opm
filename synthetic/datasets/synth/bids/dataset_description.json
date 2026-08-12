@@ -1,0 +1,15 @@
+{
+    "Name": "mne-opm synthetic OPM-MEG dataset",
+    "BIDSVersion": "1.7.0",
+    "DatasetType": "raw",
+    "Authors": [
+        "mne-opm synthetic data generator"
+    ],
+    "GeneratedBy": [
+        {
+            "Name": "mne-opm",
+            "Description": "Fully synthetic OPM-MEG data simulated through a forward model on an analytic head phantom. No human subjects.",
+            "CodeURL": "https://github.com/harrisonritz/mne-opm"
+        }
+    ]
+}
