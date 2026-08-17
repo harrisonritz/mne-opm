@@ -1,0 +1,1117 @@
+"""FreeSurfer/MNE source-reconstruction wrappers for the osl-ephys pipeline.
+
+osl-ephys' LCMV path is written against RHINO and therefore needs FSL: its
+:func:`osl_ephys.source_recon.beamforming.make_lcmv` reads the forward model
+from the RHINO file tree, ``transform_recon_timeseries`` needs RHINO's
+``mni_mri_t``/``head_mri_t`` transforms and shells out to FSL ``flirt``, and
+even :func:`osl_ephys.source_recon.parcellation.resample_parcellation` calls
+``flirt``.  osl-ephys' ``surface_extraction_method='freesurfer'`` path avoids
+FSL but only reaches minimum-norm estimates, not beamforming.
+
+This module provides the missing combination: LCMV beamforming and volumetric
+parcellation built on the FreeSurfer ``recon-all`` output and the MNE
+``-trans.fif`` this repository already produces
+(``custom.preprocessing.coreg``), with no FSL dependency.  The parcel
+time-course maths is osl-ephys' own, so output is directly comparable with the
+RHINO backend.
+
+The wrappers follow osl-ephys' source-recon calling convention, so they slot
+into a ``source_recon`` config like any built-in step::
+
+    source_recon:
+      - fs_coregister: {}
+      - fs_forward_model: {gridstep: 5, mindist: 5}
+      - fs_beamform_and_parcellate:
+          chantypes: mag
+          rank: {mag: 60}
+          parcellation_file: Glasser52_binary_space-MNI152NLin6_res-8x8x8.nii.gz
+          method: spatial_basis
+          orthogonalisation: symmetric
+
+Functions
+---------
+fs_coregister
+    Validate and report the existing FreeSurfer/MNE coregistration.
+fs_forward_model
+    Build a volumetric source space, BEM and forward solution with MNE.
+fs_beamform_and_parcellate
+    LCMV beamform onto the volumetric grid, morph to MNI and parcellate.
+
+Constants
+---------
+SOURCE_EXTRA_FUNCS
+    Wrappers passed to osl-ephys as ``extra_funcs`` for the source stage.
+
+Author: Harrison Ritz, 2025
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import os.path as op
+from pathlib import Path
+from typing import Optional
+
+import mne
+import numpy as np
+
+from osl_ephys.report import src_report
+from osl_ephys.source_recon import parcellation
+from osl_ephys.source_recon.rhino import utils as rhino_utils
+
+
+logger = logging.getLogger(__name__)
+
+
+# osl-ephys extends MNE with orientation options MNE itself does not have.
+# Silently substituting a different estimator would change the science, so we
+# reject them explicitly on this backend.
+_OSL_ONLY_PICK_ORI: dict[str, str] = {
+    "max-power-pre-weight-norm": "max-power",
+}
+
+_SUBDIR = "fs_src"
+"""Sub-directory of ``{outdir}/{subject}`` holding this backend's files."""
+
+
+# ---------------------------------------------------------------------------
+# File layout
+# ---------------------------------------------------------------------------
+
+
+def get_fs_filenames(outdir: str | Path, subject: str) -> dict[str, str]:
+    """Return the paths this backend reads and writes for one subject.
+
+    Parameters
+    ----------
+    outdir : str or Path
+        osl-ephys output directory.
+    subject : str
+        Subject label (the ``{outdir}`` sub-directory name).
+
+    Returns
+    -------
+    files : dict
+        Keys ``basedir``, ``info_fif``, ``source_space``, ``bem``,
+        ``fwd_model``, ``filters``, ``coreg_html``, ``parcdir``.
+    """
+    basedir = op.join(str(outdir), subject, _SUBDIR)
+    return {
+        "basedir": basedir,
+        "info_fif": op.join(basedir, "info-raw.fif"),
+        "source_space": op.join(basedir, "space-src.fif"),
+        "bem": op.join(basedir, "bem-sol.fif"),
+        "fwd_model": op.join(basedir, "model-fwd.fif"),
+        "filters": op.join(basedir, "lcmv-filters.h5"),
+        "coreg_html": op.join(basedir, "coreg.html"),
+        "parcdir": op.join(str(outdir), subject, "parc"),
+    }
+
+
+def _resolve_subjects_dir(subjects_dir: Optional[str]) -> str:
+    """Return the FreeSurfer subjects directory, falling back to the environment."""
+    subjects_dir = subjects_dir or os.environ.get("SUBJECTS_DIR")
+    if not subjects_dir:
+        raise ValueError(
+            "subjects_dir must be given for the freesurfer backend (either as a "
+            "step option in the config, via pipeline.freesurfer_subjects_dir, or "
+            "as the SUBJECTS_DIR environment variable)."
+        )
+    return str(subjects_dir)
+
+
+def _resolve_trans(trans: Optional[str], subjects_dir: str, subject: str) -> str:
+    """Return the path to the head<->MRI transform, using the FreeSurfer convention."""
+    if not trans:
+        trans = op.join(subjects_dir, subject, "bem", f"{subject}-trans.fif")
+    if not op.exists(trans):
+        raise FileNotFoundError(
+            f"Coregistration transform not found: {trans}. Run the coreg stage "
+            f"(mne-opm.sh coreg) first, or set 'trans' in the config."
+        )
+    return str(trans)
+
+
+def _read_mri_head_t(trans_path: str) -> mne.Transform:
+    """Read a ``-trans.fif`` and return it oriented as MRI -> head.
+
+    ``mne.write_trans`` preserves whichever direction the transform was created
+    in, so normalise here rather than assuming.
+    """
+    trans = mne.read_trans(trans_path)
+    if trans["from"] == mne.io.constants.FIFF.FIFFV_COORD_MRI:
+        return trans
+    return mne.transforms.invert_transform(trans)
+
+
+def _load_data(preproc_file: Optional[str], epoch_file: Optional[str]):
+    """Load epochs when available, otherwise the continuous preprocessed data."""
+    if epoch_file is not None:
+        logger.info("using epoched data: %s", epoch_file)
+        return mne.read_epochs(epoch_file, preload=True), True
+    if preproc_file is None:
+        raise ValueError("One of preproc_file or epoch_file must be given.")
+    logger.info("using continuous data: %s", preproc_file)
+    return mne.io.read_raw_fif(preproc_file, preload=True), False
+
+
+def _bandpass(data, freq_range: Optional[list]):
+    """Apply osl-ephys' IIR bandpass, so both backends filter identically."""
+    if freq_range is None:
+        return data
+    logger.info("bandpass filtering: %s-%s Hz", freq_range[0], freq_range[1])
+    return data.filter(
+        l_freq=freq_range[0],
+        h_freq=freq_range[1],
+        method="iir",
+        iir_params={"order": 5, "ftype": "butter"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Coregistration
+# ---------------------------------------------------------------------------
+
+
+def fs_coregister(
+    outdir,
+    subject,
+    preproc_file=None,
+    epoch_file=None,
+    subjects_dir=None,
+    trans=None,
+    make_plot=True,
+    reportdir=None,
+):
+    """Validate and report the existing FreeSurfer/MNE coregistration.
+
+    This backend does not fit a coregistration -- that is done upstream by
+    ``custom.preprocessing.coreg`` -- so this step only checks that the
+    transform exists, records the digitisation-to-scalp distances for QC, and
+    saves an alignment plot into the source-recon report.
+
+    Parameters
+    ----------
+    outdir : str
+        osl-ephys output directory.
+    subject : str
+        Subject label.
+    preproc_file : str, optional
+        Preprocessed fif file, used for its measurement info.
+    epoch_file : str, optional
+        Epoched fif file, used when ``preproc_file`` is None.
+    subjects_dir : str, optional
+        FreeSurfer subjects directory.  Defaults to ``$SUBJECTS_DIR``.
+    trans : str, optional
+        Path to the ``-trans.fif``.  Defaults to
+        ``{subjects_dir}/{subject}/bem/{subject}-trans.fif``.
+    make_plot : bool, optional
+        Save an interactive alignment plot to the report.  Rendering failures
+        are logged and ignored, since they must not fail a batch job.
+    reportdir : str, optional
+        Report directory.
+    """
+    logger.info("fs_coregister")
+
+    subjects_dir = _resolve_subjects_dir(subjects_dir)
+    trans_path = _resolve_trans(trans, subjects_dir, subject)
+
+    files = get_fs_filenames(outdir, subject)
+    os.makedirs(files["basedir"], exist_ok=True)
+
+    info = mne.io.read_info(preproc_file or epoch_file)
+
+    # osl-ephys' report and forward step both read the info back from disk.
+    mne.io.RawArray(np.zeros((len(info["ch_names"]), 1)), info).save(
+        files["info_fif"], overwrite=True
+    )
+
+    dists = mne.dig_mri_distances(
+        info, trans_path, subject, subjects_dir=subjects_dir
+    )
+    logger.info(
+        "Distance between HSP and MRI (mean/min/max): %.2f mm / %.2f mm / %.2f mm",
+        np.mean(dists * 1e3),
+        np.min(dists * 1e3),
+        np.max(dists * 1e3),
+    )
+
+    coreg_plot = None
+    if make_plot:
+        try:
+            fig = mne.viz.plot_alignment(
+                info,
+                trans=trans_path,
+                subject=subject,
+                subjects_dir=subjects_dir,
+                surfaces="head",
+                dig=True,
+                show_axes=True,
+                meg=("sensors",),
+            )
+            fig.plotter.export_html(files["coreg_html"])
+            coreg_plot = op.relpath(files["coreg_html"], str(outdir))
+            logger.info("saved %s", files["coreg_html"])
+        except Exception as exc:  # pragma: no cover - depends on 3D rendering
+            logger.warning("Could not render the coregistration plot: %s", exc)
+
+    if reportdir is not None:
+        src_report.add_to_data(
+            f"{reportdir}/{subject}/data.pkl",
+            {
+                "coregister": True,
+                "surface_extraction_method": "freesurfer",
+                "already_coregistered": True,
+                "use_headshape": True,
+                "use_nose": False,
+                "allow_smri_scaling": False,
+                "n_init_coreg": None,
+                # osl-ephys' report expects [nasion, lpa, rpa, rms] in cm; only
+                # the RMS is meaningful for a transform we did not fit here.
+                "fid_err": np.array(
+                    [np.nan, np.nan, np.nan, np.sqrt(np.mean(dists**2)) * 1e2]
+                ),
+                "coreg_plot": coreg_plot,
+                "trans_file": trans_path,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Forward model
+# ---------------------------------------------------------------------------
+
+
+def fs_forward_model(
+    outdir,
+    subject,
+    preproc_file=None,
+    epoch_file=None,
+    subjects_dir=None,
+    trans=None,
+    gridstep=5,
+    model="Single Layer",
+    conductivity=None,
+    ico=4,
+    mindist=0.0,
+    bound_by_inner_skull=True,
+    reportdir=None,
+):
+    """Build a volumetric source space, BEM and forward solution with MNE.
+
+    Parameters
+    ----------
+    outdir : str
+        osl-ephys output directory.
+    subject : str
+        Subject label; must also be the FreeSurfer subject directory name.
+    preproc_file : str, optional
+        Preprocessed fif file, used for its measurement info.
+    epoch_file : str, optional
+        Epoched fif file, used when ``preproc_file`` is None.
+    subjects_dir : str, optional
+        FreeSurfer subjects directory.  Defaults to ``$SUBJECTS_DIR``.
+    trans : str, optional
+        Path to the ``-trans.fif``.
+    gridstep : float, optional
+        Source grid spacing in mm.
+    model : str, optional
+        ``'Single Layer'`` (brain only) or ``'Triple Layer'`` (scalp, skull,
+        brain).  MEG is insensitive to skull conductivity, so single layer is
+        the usual choice for OPM data.
+    conductivity : list of float, optional
+        BEM conductivities.  Defaults to ``(0.3,)`` for a single layer and
+        ``(0.3, 0.006, 0.3)`` for three layers.
+    ico : int, optional
+        BEM surface subdivision.
+    mindist : float, optional
+        Discard sources closer than this many mm to the inner skull.
+    bound_by_inner_skull : bool, optional
+        Restrict the grid to the inner skull surface.  When False the grid
+        covers the whole MRI bounding box, which is much larger and slower.
+    reportdir : str, optional
+        Report directory.
+
+    Notes
+    -----
+    Writes ``space-src.fif``, ``bem-sol.fif`` and ``model-fwd.fif`` into
+    ``{outdir}/{subject}/fs_src/``.
+    """
+    logger.info("fs_forward_model")
+
+    subjects_dir = _resolve_subjects_dir(subjects_dir)
+    trans_path = _resolve_trans(trans, subjects_dir, subject)
+
+    files = get_fs_filenames(outdir, subject)
+    os.makedirs(files["basedir"], exist_ok=True)
+
+    info = mne.io.read_info(preproc_file or epoch_file)
+
+    if conductivity is None:
+        conductivity = (0.3,) if model == "Single Layer" else (0.3, 0.006, 0.3)
+    conductivity = tuple(conductivity)
+
+    logger.info("setting up a %s mm volume source space", gridstep)
+    surface = None
+    if bound_by_inner_skull:
+        surface = op.join(subjects_dir, subject, "bem", "inner_skull.surf")
+        if not op.exists(surface):
+            raise FileNotFoundError(
+                f"Inner skull surface not found: {surface}. Run the FreeSurfer "
+                f"stage (which builds the watershed BEM surfaces) first, or set "
+                f"bound_by_inner_skull: false."
+            )
+
+    src = mne.setup_volume_source_space(
+        subject=subject,
+        subjects_dir=subjects_dir,
+        pos=gridstep,
+        surface=surface,
+        add_interpolator=True,
+    )
+    mne.write_source_spaces(files["source_space"], src, overwrite=True)
+
+    logger.info("making the BEM (conductivity=%s, ico=%s)", conductivity, ico)
+    bem_model = mne.make_bem_model(
+        subject=subject,
+        subjects_dir=subjects_dir,
+        conductivity=conductivity,
+        ico=ico,
+    )
+    bem = mne.make_bem_solution(bem_model)
+    mne.write_bem_solution(files["bem"], bem, overwrite=True)
+
+    logger.info("making the forward solution")
+    fwd = mne.make_forward_solution(
+        info,
+        trans=trans_path,
+        src=src,
+        bem=bem,
+        meg=True,
+        eeg=False,
+        mindist=mindist,
+    )
+    mne.write_forward_solution(files["fwd_model"], fwd, overwrite=True)
+    logger.info(
+        "forward solution has %d sources", fwd["src"][0]["nuse"]
+    )
+
+    if reportdir is not None:
+        src_report.add_to_data(
+            f"{reportdir}/{subject}/data.pkl",
+            {
+                "forward_model": True,
+                "surface_extraction_method": "freesurfer",
+                "model": model,
+                "gridstep": gridstep,
+                "eeg": False,
+                "conductivity": conductivity,
+                "ico": ico,
+                "mindist": mindist,
+                "n_sources": int(fwd["src"][0]["nuse"]),
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# MNI grid and parcellation, without FSL
+# ---------------------------------------------------------------------------
+
+
+def _resample_to_isotropic(img, gridstep: float, interpolation: str = "continuous"):
+    """Resample a NIfTI image to isotropic ``gridstep`` mm voxels.
+
+    Stands in for osl-ephys' ``flirt -applyisoxfm``.  nilearn recomputes the
+    bounding box, but voxel-to-world coordinates stay in the image's own (MNI)
+    space, which is all the nearest-neighbour matching downstream needs.
+
+    Parameters
+    ----------
+    img : nibabel.Nifti1Image
+        Image to resample.
+    gridstep : float
+        Target voxel size in mm.
+    interpolation : str, optional
+        ``'continuous'`` matches ``flirt``'s default trilinear resampling, and
+        is what osl-ephys' RHINO path does.  ``'nearest'`` is right when the
+        image is only being used as a coverage mask.
+
+    Notes
+    -----
+    nilearn stamps the output with sform code 2 (ALIGNED_ANAT) regardless of
+    the input, which loses the fact that the image is in MNI space.  The codes
+    are restored here so the saved file stays valid for tools that check them
+    (osl-ephys' own ``get_sform`` rejects code 2).
+    """
+    import warnings
+
+    from nilearn.image import resample_img
+
+    with warnings.catch_warnings():
+        # A binary parcellation resampled with trilinear interpolation is
+        # exactly what the RHINO path does, and the resulting partial-volume
+        # weights are used deliberately by the 'spatial_basis' parcel method.
+        warnings.filterwarnings("ignore", message=".*Resampling binary images.*")
+        resampled = resample_img(
+            img,
+            target_affine=np.diag([gridstep] * 3),
+            interpolation=interpolation,
+            force_resample=True,
+            copy_header=True,
+        )
+
+    header = resampled.header
+    header.set_sform(resampled.affine, code=int(img.header["sform_code"]) or 4)
+    header.set_qform(resampled.affine, code=int(img.header["qform_code"]) or 4)
+    return resampled
+
+
+def _nii_pointcloud(img, volindex: Optional[int] = None):
+    """Return the non-zero voxels of an image as an ``(3, n)`` mm point cloud.
+
+    The in-memory equivalent of osl-ephys'
+    :func:`~osl_ephys.source_recon.rhino.utils.niimask2mmpointcloud`, which
+    only accepts a filename and reads the transform back off the sform.
+
+    Parameters
+    ----------
+    img : nibabel.Nifti1Image
+        Image to read.  A 4D image needs ``volindex``.
+    volindex : int, optional
+        Volume to take from a 4D image.
+
+    Returns
+    -------
+    coords : numpy.ndarray
+        ``(3, n)`` coordinates in mm.
+    values : numpy.ndarray
+        ``(n,)`` voxel values.
+    """
+    import nibabel as nib
+
+    data = img.get_fdata()
+    if data.ndim == 4:
+        if volindex is None:
+            raise ValueError("volindex is required for a 4D image.")
+        data = data[:, :, :, volindex]
+
+    indices = np.asarray(np.where(data != 0))
+    values = np.asarray(data[data != 0])
+    coords = nib.affines.apply_affine(img.affine, indices.T).T
+    return coords, values
+
+
+def _drop_interpolation_dust(img, weight_tol: float = 1e-6):
+    """Zero out negligible parcel weights left behind by interpolation.
+
+    Resampling a parcellation trilinearly spreads a trace of every parcel into
+    the voxels around it -- for the shipped 8 mm atlases, values down to 1e-42.
+    They are numerically meaningless, but they are non-zero, and the
+    nearest-neighbour assignment in :func:`_resample_parcellation` treats any
+    non-zero voxel as part of the parcel.  Left in, they put nearly every voxel
+    within reach of nearly every parcel.
+
+    Each parcel is thresholded relative to its own maximum, so this is safe for
+    probabilistic parcellations (whose real weights are far above the
+    threshold) as well as binary ones.
+
+    Parameters
+    ----------
+    img : nibabel.Nifti1Image
+        Resampled parcellation, 3D or 4D (parcels along the last axis).
+    weight_tol : float, optional
+        Relative threshold, as a fraction of each parcel's maximum weight.
+
+    Returns
+    -------
+    img : nibabel.Nifti1Image
+        The parcellation with negligible weights set to zero.
+    """
+    import nibabel as nib
+
+    data = np.asarray(img.get_fdata())
+    if data.ndim == 3:
+        data = data[..., np.newaxis]
+        squeeze = True
+    else:
+        squeeze = False
+
+    peaks = np.abs(data).max(axis=(0, 1, 2), keepdims=True)
+    data = np.where(np.abs(data) < weight_tol * peaks, 0.0, data)
+
+    if squeeze:
+        data = data[..., 0]
+
+    return nib.Nifti1Image(data, img.affine, img.header)
+
+
+def _resample_parcellation(
+    parcellation_file: str,
+    voxel_coords: np.ndarray,
+    working_dir: str,
+    weight_tol: float = 1e-6,
+) -> np.ndarray:
+    """FSL-free replacement for :func:`osl_ephys...parcellation.resample_parcellation`.
+
+    Parameters
+    ----------
+    parcellation_file : str
+        Parcellation NIfTI, in the same space as ``voxel_coords``.
+    voxel_coords : numpy.ndarray
+        ``(3, nvoxels)`` coordinates in mm.
+    working_dir : str
+        Directory for the resampled parcellation.
+    weight_tol : float, optional
+        Relative threshold for discarding interpolation dust; see
+        :func:`_drop_interpolation_dust`.
+
+    Returns
+    -------
+    parcellation_asmatrix : numpy.ndarray
+        ``(nvoxels, nparcels)`` parcellation resampled onto ``voxel_coords``.
+
+    Notes
+    -----
+    Mirrors osl-ephys' logic -- resample to the grid resolution, then assign
+    each target voxel the value of the nearest parcellation voxel within one
+    grid step -- substituting nilearn for ``flirt``, and thresholding the
+    interpolation dust that nilearn's reorientation leaves behind.
+    """
+    import nibabel as nib
+    from scipy.spatial import KDTree
+
+    gridstep = int(rhino_utils.get_gridstep(voxel_coords.T) / 1000)
+    logger.info("gridstep = %d mm", gridstep)
+
+    parcellation_file = parcellation.find_file(parcellation_file)
+    path, parcellation_name = op.split(
+        op.splitext(op.splitext(parcellation_file)[0])[0]
+    )
+
+    os.makedirs(working_dir, exist_ok=True)
+    parcellation_resampled = op.join(
+        working_dir, f"{parcellation_name}_{gridstep}mm.nii.gz"
+    )
+
+    resampled = _resample_to_isotropic(nib.load(parcellation_file), gridstep)
+    resampled = _drop_interpolation_dust(resampled, weight_tol)
+    # Kept for provenance and for inspecting the grid the parcels were read on.
+    nib.save(resampled, parcellation_resampled)
+
+    nparcels = resampled.shape[3]
+    parcellation_asmatrix = np.zeros((voxel_coords.shape[1], nparcels))
+
+    for parcel_index in range(nparcels):
+        parcellation_coords, parcellation_vals = _nii_pointcloud(
+            resampled, parcel_index
+        )
+        if parcellation_coords.shape[1] == 0:
+            continue
+
+        kdtree = KDTree(parcellation_coords.T)
+        distances, indices = kdtree.query(voxel_coords.T)
+
+        within = distances < gridstep
+        parcellation_asmatrix[within, parcel_index] = parcellation_vals[
+            indices[within]
+        ]
+
+    return parcellation_asmatrix
+
+
+def _mni_grid_from_reference(
+    reference_brain: str, parcellation_file: str, spatial_resolution: int
+):
+    """Build a regular MNI grid at ``spatial_resolution`` mm.
+
+    Parameters
+    ----------
+    reference_brain : str
+        ``'parcellation'`` to derive the grid from the parcellation's own
+        coverage (the default -- it guarantees every grid point is inside a
+        parcel), or a path to a NIfTI in MNI space.
+    parcellation_file : str
+        Parcellation NIfTI, used when ``reference_brain == 'parcellation'``.
+    spatial_resolution : int
+        Grid spacing in mm.
+
+    Returns
+    -------
+    coords : numpy.ndarray
+        ``(3, nvoxels)`` grid coordinates in mm.
+    """
+    import nibabel as nib
+
+    if reference_brain == "parcellation":
+        reference_file = parcellation.find_file(parcellation_file)
+    else:
+        reference_file = parcellation.find_file(reference_brain)
+
+    img = nib.load(reference_file)
+
+    data = img.get_fdata()
+    if data.ndim == 4:
+        # Collapse a 4D parcellation to its overall coverage mask before
+        # resampling, so overlapping parcels do not cancel.
+        img = nib.Nifti1Image(np.abs(data).sum(axis=3), img.affine, img.header)
+
+    # A coverage mask only needs to know which voxels are inside the brain, so
+    # nearest-neighbour keeps the boundary crisp.
+    resampled = _resample_to_isotropic(img, spatial_resolution, interpolation="nearest")
+
+    coords, _ = _nii_pointcloud(resampled)
+    return coords
+
+
+def _transform_to_mni(
+    fwd: mne.Forward,
+    recon_timeseries: np.ndarray,
+    subject: str,
+    subjects_dir: str,
+    trans_path: str,
+    parcellation_file: str,
+    reference_brain: str,
+    spatial_resolution: Optional[int],
+):
+    """Morph reconstructed dipole time courses onto a regular MNI grid.
+
+    The FSL-free counterpart of
+    :func:`osl_ephys...beamforming.transform_recon_timeseries`.
+
+    Parameters
+    ----------
+    fwd : mne.Forward
+        Forward solution the beamformer was built from.  Its source positions
+        are in head coordinates, in metres.
+    recon_timeseries : numpy.ndarray
+        ``(ndipoles, ntpts)`` or ``(ndipoles, ntpts, ntrials)``.
+    subject, subjects_dir, trans_path : str
+        FreeSurfer subject, subjects directory, and head<->MRI transform.
+    parcellation_file : str
+        Parcellation, used to define the target grid.
+    reference_brain : str
+        See :func:`_mni_grid_from_reference`.
+    spatial_resolution : int or None
+        Target grid spacing in mm.  Defaults to the forward model's own
+        grid step.
+
+    Returns
+    -------
+    timeseries_mni : numpy.ndarray
+        Time courses on the MNI grid, same trailing dimensions as the input.
+    coords_mni : numpy.ndarray
+        ``(3, nvoxels)`` grid coordinates in mm.
+    """
+    from scipy.spatial import KDTree
+
+    vs = fwd["src"][0]
+    recon_coords_head = vs["rr"][vs["vertno"]]  # metres, head coordinates
+
+    if spatial_resolution is None:
+        spatial_resolution = rhino_utils.get_gridstep(vs["rr"])
+    spatial_resolution = int(spatial_resolution)
+    logger.info("spatial_resolution = %d mm", spatial_resolution)
+
+    # head -> MRI -> MNI, in mm
+    mri_head_t = _read_mri_head_t(trans_path)
+    recon_coords_mni = mne.head_to_mni(
+        recon_coords_head, subject, mri_head_t, subjects_dir=subjects_dir
+    )
+
+    coords_mni = _mni_grid_from_reference(
+        reference_brain, parcellation_file, spatial_resolution
+    )
+
+    # For each grid point take the nearest reconstructed dipole, leaving grid
+    # points with no dipole within one grid step at zero.
+    kdtree = KDTree(recon_coords_mni)
+    distances, indices = kdtree.query(coords_mni.T)
+    within = distances < spatial_resolution
+
+    timeseries_mni = np.zeros(
+        (coords_mni.shape[1],) + recon_timeseries.shape[1:],
+        dtype=recon_timeseries.dtype,
+    )
+    timeseries_mni[within] = recon_timeseries[indices[within]]
+
+    logger.info(
+        "mapped %d/%d MNI grid points onto %d dipoles",
+        int(within.sum()),
+        coords_mni.shape[1],
+        recon_coords_mni.shape[0],
+    )
+
+    return timeseries_mni, coords_mni
+
+
+# ---------------------------------------------------------------------------
+# Beamforming
+# ---------------------------------------------------------------------------
+
+
+def _resolve_pick_ori(pick_ori: Optional[str]) -> Optional[str]:
+    """Validate the dipole orientation option for this backend.
+
+    Rejects orientations that only osl-ephys' own beamformer implements, and
+    ``'vector'``, which produces a three-component estimate that the volumetric
+    parcellation cannot reduce to a parcel time course.
+    """
+    if pick_ori in _OSL_ONLY_PICK_ORI:
+        raise ValueError(
+            f"pick_ori={pick_ori!r} is implemented by osl-ephys' own beamformer "
+            f"and is not available on the freesurfer backend, which uses "
+            f"mne.beamformer.make_lcmv. Use "
+            f"{_OSL_ONLY_PICK_ORI[pick_ori]!r} here, or switch to "
+            f"pipeline.source_backend: rhino."
+        )
+
+    if pick_ori == "vector":
+        raise ValueError(
+            "pick_ori='vector' gives each dipole three components, which the "
+            "volumetric parcellation cannot collapse into a parcel time "
+            "course. Use 'max-power' (or 'normal') for the osl-ephys pipeline; "
+            "for vector output use the mne-bids-pipeline route's "
+            "_beamformer_pick_ori instead."
+        )
+
+    return pick_ori
+
+
+def _compute_data_cov(data, is_epochs: bool, cov_method: str):
+    """Compute the data covariance the beamformer is built from.
+
+    osl-ephys' ``beamforming.make_lcmv`` estimates this internally; MNE's
+    expects it as an argument, so it is computed here over the whole of
+    whatever was passed in (every epoch, or the full continuous recording
+    excluding bad segments).
+    """
+    logger.info("computing the data covariance (method=%s)", cov_method)
+    if is_epochs:
+        return mne.compute_covariance(data, method=cov_method, verbose=False)
+    return mne.compute_raw_covariance(data, method=cov_method, verbose=False)
+
+
+def _apply_lcmv(data, filters, is_epochs: bool) -> np.ndarray:
+    """Apply the beamformer, returning ``(ndipoles, ntpts[, ntrials])``."""
+    if not is_epochs:
+        return mne.beamformer.apply_lcmv_raw(data, filters).data
+
+    n_trials = len(data)
+    stcs = mne.beamformer.apply_lcmv_epochs(data, filters, return_generator=True)
+
+    out = None
+    for trial, stc in enumerate(stcs):
+        if out is None:
+            # Allocate once from the first estimate rather than materialising
+            # every trial's estimate before stacking: at a 8 mm grid with a few
+            # hundred trials the full list is several GB.
+            out = np.zeros(stc.data.shape + (n_trials,), dtype=stc.data.dtype)
+        out[..., trial] = stc.data
+
+    if out is None:
+        raise ValueError("No epochs to beamform.")
+    return out
+
+
+def fs_beamform_and_parcellate(
+    outdir,
+    subject,
+    preproc_file,
+    epoch_file,
+    chantypes,
+    rank,
+    parcellation_file,
+    method,
+    orthogonalisation,
+    subjects_dir=None,
+    trans=None,
+    freq_range=None,
+    weight_norm="unit-noise-gain-invariant",
+    pick_ori="max-power",
+    reg=0.05,
+    cov_method="empirical",
+    reduce_rank=False,
+    spatial_resolution=None,
+    reference_brain="parcellation",
+    extra_chans="stim",
+    neighbour_distance=None,
+    reportdir=None,
+):
+    """LCMV beamform onto the volumetric grid, morph to MNI and parcellate.
+
+    The FSL-free counterpart of
+    :func:`osl_ephys...wrappers.beamform_and_parcellate`.  Beamforming uses
+    :func:`mne.beamformer.make_lcmv` against the forward model written by
+    :func:`fs_forward_model`; parcellation reuses osl-ephys' own parcel
+    time-course maths so output matches the RHINO backend.
+
+    Parameters
+    ----------
+    outdir : str
+        osl-ephys output directory.
+    subject : str
+        Subject label.
+    preproc_file : str
+        Preprocessed fif file.
+    epoch_file : str
+        Epoched fif file.  When given, epochs are reconstructed rather than
+        continuous data.
+    chantypes : str or list of str
+        Channel types to beamform (``'mag'`` for OPM data).
+    rank : dict
+        Rank used to regularise the covariance, e.g. ``{'mag': 60}``.
+    parcellation_file : str
+        Parcellation NIfTI, by name (resolved inside osl-ephys) or path.
+    method : str
+        Parcel time-course method: ``'spatial_basis'`` or ``'pca'``.
+    orthogonalisation : str or None
+        ``'symmetric'``, ``'local'`` or None.
+    subjects_dir : str, optional
+        FreeSurfer subjects directory.  Defaults to ``$SUBJECTS_DIR``.
+    trans : str, optional
+        Path to the ``-trans.fif``.
+    freq_range : list, optional
+        ``[l_freq, h_freq]`` bandpass applied before beamforming.
+    weight_norm : str, optional
+        Beamformer weight normalisation, as accepted by
+        :func:`mne.beamformer.make_lcmv`.
+    pick_ori : str, optional
+        Dipole orientation, as accepted by :func:`mne.beamformer.make_lcmv`.
+        osl-ephys' ``'max-power-pre-weight-norm'`` is not available here.
+    reg : float, optional
+        Covariance regularisation.
+    cov_method : str, optional
+        Covariance estimator passed to :func:`mne.compute_covariance`.
+    reduce_rank : bool, optional
+        Drop the smallest singular value of each source's leadfield.  MEG is
+        blind to radially oriented sources, so a free-orientation forward from
+        a single-layer BEM can be rank-deficient, and
+        :func:`mne.beamformer.make_lcmv` then fails with "Singular matrix
+        detected when estimating spatial filters".  Set this True if that
+        happens.  Defaults to False to match ``_reduce_rank`` in the
+        mne-bids-pipeline configs.
+    spatial_resolution : int, optional
+        MNI grid spacing in mm.  Defaults to the forward model's grid step.
+    reference_brain : str, optional
+        ``'parcellation'`` (default) or a path to a NIfTI in MNI space.
+    extra_chans : str or list of str, optional
+        Extra channels carried into the parcellated Raw file.
+    neighbour_distance : float, optional
+        Required when ``orthogonalisation='local'``.
+    reportdir : str, optional
+        Report directory.
+
+    Raises
+    ------
+    ValueError
+        If ``pick_ori`` is an osl-ephys-only option, or ``orthogonalisation``
+        is not recognised.
+    FileNotFoundError
+        If the forward model has not been built yet.
+    """
+    logger.info("fs_beamform_and_parcellate")
+
+    subjects_dir = _resolve_subjects_dir(subjects_dir)
+    trans_path = _resolve_trans(trans, subjects_dir, subject)
+    pick_ori = _resolve_pick_ori(pick_ori)
+
+    if isinstance(chantypes, str):
+        chantypes = [chantypes]
+
+    files = get_fs_filenames(outdir, subject)
+    if not op.exists(files["fwd_model"]):
+        raise FileNotFoundError(
+            f"Forward model not found: {files['fwd_model']}. Add fs_forward_model "
+            f"to the source_recon config before fs_beamform_and_parcellate."
+        )
+
+    data, is_epochs = _load_data(preproc_file, epoch_file)
+    data = _bandpass(data, freq_range)
+    chantype_data = data.copy().pick(chantypes)
+
+    fwd = mne.read_forward_solution(files["fwd_model"])
+
+    # --- Beamformer filters ---
+    logger.info("mne.beamformer.make_lcmv (chantypes=%s, rank=%s)", chantypes, rank)
+    data_cov = _compute_data_cov(chantype_data, is_epochs, cov_method)
+    filters = mne.beamformer.make_lcmv(
+        chantype_data.info,
+        fwd,
+        data_cov,
+        reg=reg,
+        noise_cov=None,
+        pick_ori=pick_ori,
+        weight_norm=weight_norm,
+        rank=rank,
+        reduce_rank=reduce_rank,
+    )
+    filters.save(files["filters"], overwrite=True)
+
+    filters_cov_plot = _plot_cov(data_cov, files["basedir"], outdir)
+
+    # --- Apply, morph to MNI, parcellate ---
+    logger.info("applying the beamformer")
+    bf_data = _apply_lcmv(chantype_data, filters, is_epochs)
+
+    bf_data_mni, coords_mni = _transform_to_mni(
+        fwd,
+        bf_data,
+        subject=subject,
+        subjects_dir=subjects_dir,
+        trans_path=trans_path,
+        parcellation_file=parcellation_file,
+        reference_brain=reference_brain,
+        spatial_resolution=spatial_resolution,
+    )
+
+    logger.info("parcellation using %s", parcellation_file)
+    parcellation_asmatrix = _resample_parcellation(
+        parcellation_file, coords_mni, files["parcdir"]
+    )
+    # osl-ephys' own parcel time-course maths, so both backends agree.
+    parcel_data, _, _ = parcellation._get_parcel_timeseries(
+        bf_data_mni, parcellation_asmatrix, method=method
+    )
+
+    parcel_data = _orthogonalise(
+        parcel_data, orthogonalisation, parcellation_file, neighbour_distance
+    )
+
+    parc_fif_file, _ = _save_parcellated(
+        parcel_data, data, is_epochs, files["parcdir"], extra_chans
+    )
+
+    parc_psd_plot, parc_corr_plot = _plot_parcellation(
+        parcel_data, data, parcellation_file, freq_range, files["parcdir"], outdir
+    )
+
+    if reportdir is not None:
+        src_report.add_to_data(
+            f"{reportdir}/{subject}/data.pkl",
+            {
+                "beamform_and_parcellate": True,
+                "beamform": True,
+                "parcellate": True,
+                "surface_extraction_method": "freesurfer",
+                "chantypes": chantypes,
+                "rank": rank,
+                "reg": reg,
+                "freq_range": freq_range,
+                "pick_ori": pick_ori,
+                "weight_norm": weight_norm,
+                "reduce_rank": reduce_rank,
+                "filters_cov_plot": filters_cov_plot,
+                "parcellation_file": parcellation_file,
+                "method": method,
+                "reference_brain": reference_brain,
+                "orthogonalisation": orthogonalisation,
+                "parc_fif_file": str(parc_fif_file),
+                "n_samples": parcel_data.shape[1],
+                "n_parcels": parcel_data.shape[0],
+                "n_epochs": parcel_data.shape[2] if parcel_data.ndim == 3 else None,
+                "parc_psd_plot": parc_psd_plot,
+                "parc_corr_plot": parc_corr_plot,
+                "parc_freqbands_plot": None,
+            },
+        )
+
+
+def _orthogonalise(
+    parcel_data: np.ndarray,
+    orthogonalisation: Optional[str],
+    parcellation_file: str,
+    neighbour_distance: Optional[float],
+) -> np.ndarray:
+    """Apply osl-ephys' leakage correction, if requested."""
+    if orthogonalisation in (None, "none", "None"):
+        return parcel_data
+
+    if orthogonalisation == "symmetric":
+        logger.info("symmetric orthogonalisation")
+        return parcellation.symmetric_orthogonalise(
+            parcel_data, maintain_magnitudes=True
+        )
+
+    if orthogonalisation == "local":
+        logger.info("local orthogonalisation")
+        if neighbour_distance is None:
+            raise ValueError(
+                "neighbour_distance must be set when orthogonalisation='local'."
+            )
+        return parcellation.local_orthogonalise(
+            parcel_data, parcellation_file, neighbour_distance
+        )
+
+    raise ValueError(
+        f"Unknown orthogonalisation {orthogonalisation!r}. Valid options: "
+        f"'symmetric', 'local', None."
+    )
+
+
+def _save_parcellated(parcel_data, data, is_epochs, parcdir, extra_chans):
+    """Write the parcellated data as an MNE Raw or Epochs file."""
+    os.makedirs(parcdir, exist_ok=True)
+
+    if is_epochs:
+        parc_fif_file = op.join(parcdir, "lcmv-parc-epo.fif")
+        parc_obj = parcellation.convert2mne_epochs(parcel_data, data)
+    else:
+        parc_fif_file = op.join(parcdir, "lcmv-parc-raw.fif")
+        parc_obj = parcellation.convert2mne_raw(
+            parcel_data, data, extra_chans=extra_chans
+        )
+
+    logger.info("saving %s", parc_fif_file)
+    parc_obj.save(parc_fif_file, overwrite=True)
+    return parc_fif_file, parc_obj
+
+
+def _plot_cov(data_cov, basedir: str, outdir) -> Optional[str]:
+    """Save a data-covariance figure for the report."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(6, 5))
+        image = ax.imshow(data_cov.data, cmap="RdBu_r")
+        ax.set_title("Data covariance")
+        fig.colorbar(image, ax=ax)
+        path = op.join(basedir, "filters_cov.png")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        return op.relpath(path, str(outdir))
+    except Exception as exc:  # pragma: no cover - plotting is best-effort
+        logger.warning("Could not render the covariance plot: %s", exc)
+        return None
+
+
+def _plot_parcellation(
+    parcel_data, data, parcellation_file, freq_range, parcdir, outdir
+):
+    """Save the parcel PSD and correlation figures for the report."""
+    os.makedirs(parcdir, exist_ok=True)
+    psd_path = op.join(parcdir, "psd.png")
+    corr_path = op.join(parcdir, "corr.png")
+
+    try:
+        parcellation.plot_psd(
+            parcel_data,
+            fs=data.info["sfreq"],
+            freq_range=freq_range,
+            parcellation_file=parcellation_file,
+            filename=psd_path,
+            freesurfer=False,
+        )
+        parcellation.plot_correlation(parcel_data, filename=corr_path)
+    except Exception as exc:  # pragma: no cover - plotting is best-effort
+        logger.warning("Could not render the parcellation plots: %s", exc)
+        return None, None
+
+    return op.relpath(psd_path, str(outdir)), op.relpath(corr_path, str(outdir))
+
+
+SOURCE_EXTRA_FUNCS = [fs_coregister, fs_forward_model, fs_beamform_and_parcellate]
+"""Custom wrappers passed to osl-ephys as ``extra_funcs`` for the source stage."""

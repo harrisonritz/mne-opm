@@ -141,7 +141,7 @@ the helper script is shown below.
 
 Run a single pipeline stage with explicit arguments (no pre-set defaults). Valid `<pipeline>` options:
 
-`nifti | bids | freesurfer | coreg | preproc | sensor | source | all | func | anat`
+`nifti | bids | freesurfer | coreg | preproc | sensor | source | beamformer | all | func | anat | osl`
 
 Usage (from repo root):
 
@@ -206,6 +206,86 @@ Details by stage:
 
 - `run_source.sh`
 	- Sources FreeSurfer env then runs `mne_bids_pipeline --steps=source`.
+
+- `run_osl.sh`
+	- Runs the osl-ephys pipeline (see below) via `src/custom/run_osl.py`.
+
+
+## The osl-ephys pipeline
+
+Alongside the mne-bids-pipeline route above, `custom.osl` runs an
+[osl-ephys](https://osl-ephys.readthedocs.io) pipeline over the same BIDS data,
+from preprocessing through to LCMV beamforming and parcellation. The two write
+to separate derivative trees and can be run side by side.
+
+It is configured with a **single YAML file per analysis** rather than a Python
+config, and processes **one subject per invocation**, which makes it usable as
+the body of a SLURM array job.
+
+```bash
+# check the config before submitting anything
+./mne-opm.sh osl --exp TSX --sub 007 --analysis trialResponse --stage validate \
+    --data /path/to/data --config /path/to/config
+
+# one subject, preprocessing through beamforming
+./mne-opm.sh osl --exp TSX --sub 007 --analysis trialResponse --stage all ...
+
+# once the array finishes, build the group reports (run once, not per subject)
+./mne-opm.sh osl --exp TSX --sub 007 --analysis trialResponse --stage collate ...
+```
+
+Stages are `preproc`, `source`, `all`, `group`, `collate` and `validate`. The
+config is read from `${CONFIG_DIR}/osl/<ANALYSIS>.yaml`.
+
+`group` runs after the array: it sign-flips every subject's parcel time courses
+against a template (a beamformer fixes each dipole's orientation only up to a
+sign, independently per subject, so averaging without this cancels the signal),
+then writes `(subjects, parcels, times)` arrays per condition and contrast.
+
+Two source backends are available, selected by `pipeline.source_backend`:
+
+- **`rhino`** (default) -- osl-ephys' native path. RHINO extracts surfaces from
+  the T1 and fits its own coregistration. **Requires FSL**, and does not use the
+  FreeSurfer/MNE coregistration produced by `mne-opm.sh coreg`.
+- **`freesurfer`** -- reuses the existing `recon-all` output and `-trans.fif`,
+  beamforms with `mne.beamformer.make_lcmv`, and morphs to MNI via FreeSurfer's
+  `talairach.xfm`. Parcel time courses use osl-ephys' own maths, so output is
+  comparable with the RHINO backend. **Needs no FSL.**
+
+FSL is unavoidable for the RHINO backend: osl-ephys' `make_lcmv` reads the
+forward model from the RHINO file tree, `transform_recon_timeseries` needs
+RHINO's transforms and calls `flirt`, and `resample_parcellation` calls `flirt`
+too. osl-ephys' own `surface_extraction_method='freesurfer'` path sidesteps FSL
+but only reaches minimum-norm estimates, not beamforming -- which is what
+`custom.osl.fs_bridge` exists to fill in.
+
+See [docs/api/osl.md](docs/api/osl.md) for the full description, and
+`TSX_OPM/config/TSX/osl/trialResponse.yaml` for a worked config.
+
+### Notes and gotchas
+
+- `osl_ephys...sign_flipping.apply_flips` reads `parc/parc-epo.fif` in its
+  epoched branch, but everything else in osl-ephys writes and expects
+  `parc/lcmv-parc-epo.fif`, so `fix_sign_ambiguity(epoched=True)` fails on a file
+  that never existed. `custom.osl.sign_flip.apply_flips` is the corrected
+  equivalent and is what the `group` stage uses.
+- `format_bids` converts triggers to annotations and drops the stim channels, so
+  osl-ephys' `find_events` cannot be used. The `events_from_annotations` step
+  (`custom.osl.extra_funcs`) rebuilds the events array from `raw.annotations`
+  instead; no change to `format_bids` is needed.
+- Use `extract_polhemus_from_info`, not the `extract_fiducials_from_fif` alias
+  the osl-ephys tutorials use. The alias is declared `(*args, **kwargs)`, and
+  `run_src_chain`'s argument check rejects that. `--stage=validate` catches it.
+- Do not use `find_bad_channels_maxwell`: the osl-ephys wrapper has a `NameError`
+  in it (`noisy + flat`, for `flats`) as of the pinned commit. Use osl-ephys'
+  own `bad_channels` instead.
+- EOG detection needs the `eye_nmf*` channels `format_bids` derives from
+  eye-tracking. Use `ica_autoreject_safe` rather than osl-ephys'
+  `ica_autoreject`: it skips EOG detection when those channels are absent, so a
+  subject recorded without eye-tracking does not fail the chain.
+- `ica_kurtosisreject` computes component time courses with `ica.get_sources()`,
+  not the osl-ephys tutorial's `get_components().T @ data`; see
+  [docs/api/osl.md](docs/api/osl.md) for why the two differ.
 
 
 ## Config files
