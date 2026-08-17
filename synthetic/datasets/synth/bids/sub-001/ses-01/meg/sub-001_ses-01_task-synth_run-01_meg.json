@@ -1,0 +1,26 @@
+{
+    "TaskName": "synth",
+    "Manufacturer": "Elekta",
+    "PowerLineFrequency": 60.0,
+    "SamplingFrequency": 200.0,
+    "SoftwareFilters": {
+        "SpatialCompensation": {
+            "GradientOrder": 0
+        }
+    },
+    "RecordingDuration": 99.995,
+    "RecordingType": "continuous",
+    "DewarPosition": "n/a",
+    "DigitizedLandmarks": true,
+    "DigitizedHeadPoints": true,
+    "MEGChannelCount": 144,
+    "MEGREFChannelCount": 0,
+    "AssociatedEmptyRoom": "/sub-001/ses-01/meg/sub-001_ses-01_task-noise_meg.fif",
+    "EEGChannelCount": 0,
+    "EOGChannelCount": 3,
+    "ECGChannelCount": 0,
+    "EMGChannelCount": 0,
+    "MiscChannelCount": 6,
+    "TriggerChannelCount": 0,
+    "EyetrackerChannelCount": 0
+}

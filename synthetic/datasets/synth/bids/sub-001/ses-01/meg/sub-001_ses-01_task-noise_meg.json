@@ -1,0 +1,25 @@
+{
+    "TaskName": "noise",
+    "Manufacturer": "Elekta",
+    "PowerLineFrequency": 60.0,
+    "SamplingFrequency": 200.0,
+    "SoftwareFilters": {
+        "SpatialCompensation": {
+            "GradientOrder": 0
+        }
+    },
+    "RecordingDuration": 39.995,
+    "RecordingType": "continuous",
+    "DewarPosition": "n/a",
+    "DigitizedLandmarks": true,
+    "DigitizedHeadPoints": true,
+    "MEGChannelCount": 144,
+    "MEGREFChannelCount": 0,
+    "EEGChannelCount": 0,
+    "EOGChannelCount": 0,
+    "ECGChannelCount": 0,
+    "EMGChannelCount": 0,
+    "MiscChannelCount": 0,
+    "TriggerChannelCount": 0,
+    "EyetrackerChannelCount": 0
+}

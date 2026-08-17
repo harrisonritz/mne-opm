@@ -19,6 +19,7 @@ using the provided run scripts.
 ## Contents
 - `src/custom/` - custom preprocessing helpers and OSL wrappers
 - `src/run/` - shell wrappers that run high-level pipeline stages (`run_all.sh`, `run_preproc.sh`, etc.)
+- `synthetic/` - a fully synthetic BIDS subject plus ready-to-run configs, so the pipeline can be exercised end to end without real data (see [`synthetic/README.md`](synthetic/README.md))
 - `local-mne-opm.sh` - convenience script to set defaults and invoke specific pipeline stages
 - `mne-opm.sh` - main CLI wrapper to run a single pipeline stage with explicit arguments
 - `install.sh` - environment creation and installation helper
@@ -254,6 +255,13 @@ outputs to disk when running headless.
 
 ```bash
 mne-opm.sh preproc --exp TSXpilot --sub 007 --config /path/to/config
+```
+
+- Run the whole pipeline against the bundled synthetic subject (no real data needed):
+
+```bash
+bash mne-opm.sh preproc --exp synth --sub 001 --session 01 --analysis trial \
+    --data synthetic/datasets --config synthetic/config
 ```
 
 

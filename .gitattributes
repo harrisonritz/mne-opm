@@ -1,2 +1,16 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Neuroimaging data in synthetic/ is binary. Auto-detection already gets these
+# right, but say so explicitly: a stray core.autocrlf would otherwise corrupt
+# them silently, and a corrupted FIF or FreeSurfer surface fails a long way
+# from the cause.
+*.fif binary
+*.mgz binary
+*.nii binary
+*.nii.gz binary
+*.surf binary
+*.curv binary
+*.sulc binary
+*.sphere binary
+*.reg binary

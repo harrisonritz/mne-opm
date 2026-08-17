@@ -1,0 +1,187 @@
+{
+  "spec": {
+    "task": "synth",
+    "session": "01",
+    "sfreq": 200.0,
+    "duration": 100.0,
+    "noise_duration": 40.0,
+    "n_slots": 48,
+    "line_freq": 60.0,
+    "seed": 0,
+    "head_jitter": 0.06,
+    "keep_raw": false
+  },
+  "template": "fsaverage",
+  "subjects": {
+    "001": {
+      "sources": [
+        {
+          "name": "occipital_visual",
+          "hemi": "lh",
+          "vertno": 2079,
+          "position_head_m": [
+            -0.03676710891723633,
+            -0.037937373207309,
+            0.04646427914373603
+          ],
+          "position_mri_m": [
+            -0.03676710891723633,
+            -0.038679370880126955,
+            0.0341655158996582
+          ],
+          "normal_head": [
+            0.7139576656574849,
+            -0.6482495681268449,
+            0.2646449490775789
+          ],
+          "radiality": 0.18173663659283273,
+          "visibility": 8.230315143009648e-05,
+          "latency_s": 0.07,
+          "width_s": 0.022,
+          "amplitude": 1.0,
+          "condition_gain": {
+            "A": 0.9,
+            "B": 0.9
+          }
+        },
+        {
+          "name": "left_temporal",
+          "hemi": "lh",
+          "vertno": 5074,
+          "position_head_m": [
+            -0.05499881744384766,
+            0.005130618055187457,
+            0.0009034545082797453
+          ],
+          "position_mri_m": [
+            -0.05499881744384766,
+            0.012,
+            -0.0027430465221405034
+          ],
+          "normal_head": [
+            -0.4569474755765531,
+            -0.16280202168131802,
+            -0.8744681276642912
+          ],
+          "radiality": 0.5911298448511597,
+          "visibility": 4.9130350816994905e-05,
+          "latency_s": 0.14,
+          "width_s": 0.03,
+          "amplitude": 1.2,
+          "condition_gain": {
+            "A": 1.0,
+            "B": 0.35
+          }
+        },
+        {
+          "name": "right_parietal",
+          "hemi": "rh",
+          "vertno": 3597,
+          "position_head_m": [
+            0.0373928337097168,
+            -0.02413776319057911,
+            0.05476089466367457
+          ],
+          "position_mri_m": [
+            0.0373928337097168,
+            -0.026631378173828126,
+            0.04484769439697266
+          ],
+          "normal_head": [
+            -0.3372195903842167,
+            0.036508817612370764,
+            0.940717839789194
+          ],
+          "radiality": 0.43465144951169016,
+          "visibility": 7.522042869823053e-05,
+          "latency_s": 0.23,
+          "width_s": 0.04,
+          "amplitude": 1.0,
+          "condition_gain": {
+            "A": 0.35,
+            "B": 1.0
+          }
+        }
+      ],
+      "noisy_channels": [
+        "C3 2D Z",
+        "CPz 2H X"
+      ],
+      "flat_channel": "CP3 3D Z",
+      "bad_segments_s": [
+        [
+          30.0,
+          30.8
+        ],
+        [
+          64.995,
+          65.795
+        ]
+      ],
+      "n_trials": 38,
+      "sfreq": 200.0,
+      "duration_s": 100.0,
+      "eye_channels": [
+        "eye_nmf1",
+        "eye_nmf2",
+        "eye_nmf3",
+        "xpos_right",
+        "ypos_right",
+        "pupil_right",
+        "x_head",
+        "y_head",
+        "distance"
+      ],
+      "subject": "001",
+      "session": "01",
+      "task": "synth",
+      "fs_subject": "sub-001_ses-01",
+      "head_mri_t": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.9831077483065405,
+          0.1830277443986125,
+          -0.006164621306763193
+        ],
+        [
+          0.0,
+          -0.1830277443986125,
+          0.9831077483065405,
+          0.005796497730944732
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "fiducials_mri_m": {
+        "lpa": [
+          -0.0813098853806504,
+          0.007121406877160977,
+          -0.004570285099484553
+        ],
+        "rpa": [
+          0.0813098853806504,
+          0.007121406877160977,
+          -0.004570285099484553
+        ],
+        "nasion": [
+          0.0,
+          0.11246544147944687,
+          0.015041889733150219
+        ]
+      },
+      "n_meg_channels": 144,
+      "trans_path": "derivatives/freesurfer/subjects/sub-001_ses-01/bem/sub-001_ses-01-trans.fif",
+      "trans_roundtrip_error": 3.766007505845437e-10
+    }
+  }
+}

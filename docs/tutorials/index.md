@@ -8,4 +8,5 @@ Step-by-step guides for common mne-opm workflows.
 quickstart
 configuration
 preprocessing
+synthetic-data
 ```
