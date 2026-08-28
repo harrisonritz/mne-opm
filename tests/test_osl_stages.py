@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import textwrap
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -141,13 +142,91 @@ class TestPreprocStage:
         def fake_gen_html_data(raw, outdir, **kwargs):
             captured["outdir"] = outdir
             captured["run_id"] = kwargs.get("run_id")
+            captured["logsdir"] = kwargs.get("logsdir")
 
         monkeypatch.setattr("osl_ephys.report.gen_html_data", fake_gen_html_data)
 
         cfg.pipeline.gen_report = True
         assert preproc_stage.run(cfg) is True
         assert captured["run_id"] == "sub-007_ses-01"
-        assert captured["outdir"].endswith("preproc_report/sub-007_ses-01")
+        assert captured["outdir"].as_posix().endswith(
+            "preproc_report/sub-007_ses-01"
+        )
+
+    def test_report_data_arguments_match_what_osl_can_consume(
+        self, cfg, monkeypatch
+    ):
+        # gen_html_data indexes outdir with ``/`` (so it must be a Path) and
+        # appends '.log'/'.error.log' to a string logsdir (so it must be the
+        # log base, not the logs directory).
+        touch_input(cfg)
+        captured = {}
+
+        monkeypatch.setattr(
+            "osl_ephys.preprocessing.run_proc_chain",
+            lambda *a, **k: {"raw": "RAW", "ica": None, "events": None},
+        )
+
+        def fake_gen_html_data(raw, outdir, **kwargs):
+            captured["outdir"] = outdir
+            captured["logsdir"] = kwargs.get("logsdir")
+
+        monkeypatch.setattr("osl_ephys.report.gen_html_data", fake_gen_html_data)
+
+        cfg.pipeline.gen_report = True
+        preproc_stage.run(cfg)
+
+        assert isinstance(captured["outdir"], Path)
+        assert isinstance(captured["logsdir"], str)
+        assert captured["logsdir"].endswith("logs/sub-007_ses-01_preproc")
+
+
+class TestReportPlotGuard:
+    """``_skip_failing_report_plots`` keeps one bad figure from losing a run."""
+
+    def test_a_failing_plot_is_skipped_and_the_rest_still_run(self, monkeypatch):
+        from osl_ephys.report import preproc_report
+
+        def boom(*a, **k):
+            raise ValueError("electrodes have overlapping positions")
+
+        monkeypatch.setattr(preproc_report, "plot_freqbands", boom)
+        monkeypatch.setattr(preproc_report, "plot_rawdata", lambda *a, **k: "raw.png")
+
+        with preproc_stage._skip_failing_report_plots():
+            assert preproc_report.plot_freqbands(None) is None
+            assert preproc_report.plot_rawdata(None) == "raw.png"
+
+    def test_a_failing_plot_spectra_keeps_its_two_return_values(self, monkeypatch):
+        # gen_html_data unpacks plot_spectra into two names.
+        from osl_ephys.report import preproc_report
+
+        def boom(*a, **k):
+            raise RuntimeError("nope")
+
+        monkeypatch.setattr(preproc_report, "plot_spectra", boom)
+
+        with preproc_stage._skip_failing_report_plots():
+            full, zoom = preproc_report.plot_spectra(None)
+
+        assert (full, zoom) == (None, None)
+
+    def test_the_originals_are_restored_afterwards(self, monkeypatch):
+        from osl_ephys.report import preproc_report
+
+        original = preproc_report.plot_sensors
+        with preproc_stage._skip_failing_report_plots():
+            assert preproc_report.plot_sensors is not original
+        assert preproc_report.plot_sensors is original
+
+    def test_the_originals_are_restored_when_the_block_raises(self):
+        from osl_ephys.report import preproc_report
+
+        original = preproc_report.plot_sensors
+        with pytest.raises(KeyError):
+            with preproc_stage._skip_failing_report_plots():
+                raise KeyError("gen_html_data blew up outside a plot")
+        assert preproc_report.plot_sensors is original
 
 
 # ---------------------------------------------------------------------------

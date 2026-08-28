@@ -6,6 +6,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from mne_bids import BIDSPath
 
 from custom.osl._config import (
     PIPELINE_DEFAULTS,
@@ -14,7 +15,7 @@ from custom.osl._config import (
     preproc_config,
     source_config,
 )
-from custom.osl._paths import find_smri, resolve_paths
+from custom.osl._paths import find_bids_raw, find_smri, resolve_paths
 
 
 MINIMAL_CONFIG = """
@@ -351,10 +352,84 @@ class TestResolvePaths:
         cfg.pipeline.trans = "/custom/my-trans.fif"
         assert resolve_paths(cfg.pipeline).trans == "/custom/my-trans.fif"
 
+    def test_input_points_at_the_first_split_when_the_run_was_split(self, tmp_path):
+        meg = tmp_path / "sub-007" / "ses-01" / "meg"
+        meg.mkdir(parents=True)
+        for split in ("01", "02", "03"):
+            (meg / f"sub-007_ses-01_task-TSX_run-01_split-{split}_meg.fif").touch()
+
+        cfg = load_config(write_config(tmp_path, MINIMAL_CONFIG), env={})
+        cfg.pipeline.bids_root = str(tmp_path)
+
+        assert resolve_paths(cfg.pipeline).input_fif.endswith(
+            "sub-007_ses-01_task-TSX_run-01_split-01_meg.fif"
+        )
+
+    def test_input_prefers_the_unsplit_file_when_it_exists(self, tmp_path):
+        meg = tmp_path / "sub-007" / "ses-01" / "meg"
+        meg.mkdir(parents=True)
+        (meg / "sub-007_ses-01_task-TSX_run-01_meg.fif").touch()
+
+        cfg = load_config(write_config(tmp_path, MINIMAL_CONFIG), env={})
+        cfg.pipeline.bids_root = str(tmp_path)
+
+        assert resolve_paths(cfg.pipeline).input_fif.endswith(
+            "sub-007_ses-01_task-TSX_run-01_meg.fif"
+        )
+
     def test_no_run_entity_when_run_is_null(self, tmp_path):
         cfg = load_config(write_config(tmp_path, MINIMAL_CONFIG), env={})
         cfg.pipeline.run = None
         assert "run-" not in resolve_paths(cfg.pipeline).input_fif
+
+
+class TestFindBidsRaw:
+    @staticmethod
+    def bids_path(root):
+        return BIDSPath(
+            root=root,
+            subject="007",
+            session="01",
+            task="TSX",
+            run="01",
+            datatype="meg",
+            suffix="meg",
+            extension=".fif",
+        )
+
+    def test_returns_the_unsplit_path_when_it_exists(self, tmp_path):
+        meg = tmp_path / "sub-007" / "ses-01" / "meg"
+        meg.mkdir(parents=True)
+        (meg / "sub-007_ses-01_task-TSX_run-01_meg.fif").touch()
+
+        resolved = find_bids_raw(self.bids_path(tmp_path))
+        assert resolved.split is None
+        assert resolved.fpath.exists()
+
+    def test_returns_the_first_split_when_the_unsplit_path_is_absent(self, tmp_path):
+        meg = tmp_path / "sub-007" / "ses-01" / "meg"
+        meg.mkdir(parents=True)
+        for split in ("01", "02"):
+            (meg / f"sub-007_ses-01_task-TSX_run-01_split-{split}_meg.fif").touch()
+
+        resolved = find_bids_raw(self.bids_path(tmp_path))
+        assert resolved.split == "01"
+        assert resolved.fpath.exists()
+
+    def test_returns_the_nominal_path_when_nothing_exists(self, tmp_path):
+        original = self.bids_path(tmp_path)
+        resolved = find_bids_raw(original)
+        assert resolved.fpath == original.fpath
+        assert not resolved.fpath.exists()
+
+    def test_does_not_mutate_the_input_path(self, tmp_path):
+        meg = tmp_path / "sub-007" / "ses-01" / "meg"
+        meg.mkdir(parents=True)
+        (meg / "sub-007_ses-01_task-TSX_run-01_split-01_meg.fif").touch()
+
+        original = self.bids_path(tmp_path)
+        find_bids_raw(original)
+        assert original.split is None
 
 
 class TestFindSmri:

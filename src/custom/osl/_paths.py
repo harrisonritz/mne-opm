@@ -22,6 +22,8 @@ Functions
 ---------
 resolve_paths
     Resolve every input and output path for one subject.
+find_bids_raw
+    Resolve a BIDS raw recording to the file that exists on disk.
 find_smri
     Locate a subject's T1w image under a BIDS root.
 
@@ -99,6 +101,49 @@ def find_smri(
     return None
 
 
+def find_bids_raw(bids_path: BIDSPath) -> BIDSPath:
+    """Resolve a BIDS raw recording to the file that exists on disk.
+
+    MNE writes recordings larger than ~2 GB as a chain of split files, so a
+    long run lives at ``..._split-01_meg.fif`` … ``..._split-NN_meg.fif``
+    instead of at the nominal ``..._meg.fif``.  Only the first split needs
+    locating: every FIF header stores a pointer to the next file in the
+    chain, so ``mne.io.read_raw_fif`` loads the whole recording from it.
+
+    :func:`mne_bids.read_raw_bids` resolves this internally -- which is why
+    the mne-bids-pipeline side of this package never sees the problem -- but
+    osl-ephys is handed a plain filename and reads it with
+    ``mne.io.read_raw_fif``, so the split has to be resolved here.
+
+    Parameters
+    ----------
+    bids_path : mne_bids.BIDSPath
+        Path to the nominal (unsplit) recording.
+
+    Returns
+    -------
+    resolved : mne_bids.BIDSPath
+        ``bids_path`` when the unsplit file exists, otherwise the first split.
+        When neither exists, ``bids_path`` is returned unchanged so callers
+        report the nominal name in their "not found" message.
+
+    Examples
+    --------
+    >>> find_bids_raw(bids_path).fpath  # doctest: +SKIP
+    PosixPath('.../sub-013_ses-01_task-TSX_run-01_split-01_meg.fif')
+    """
+    if bids_path.fpath.exists():
+        return bids_path
+
+    # BIDS split indices are two-digit and always start at 01
+    # (mne_bids.write_raw_bids uses ``split_naming="bids"``).
+    first_split = bids_path.copy().update(split="01")
+    if first_split.fpath.exists():
+        return first_split
+
+    return bids_path
+
+
 def resolve_paths(pipeline: SimpleNamespace) -> SimpleNamespace:
     """Resolve every input and output path for one subject.
 
@@ -133,6 +178,10 @@ def resolve_paths(pipeline: SimpleNamespace) -> SimpleNamespace:
     ``source_input_fif`` points at the epochs file when
     ``pipeline.source_input == 'epochs'`` and at the continuous preprocessed
     file otherwise.  It is the file the source stage reconstructs.
+
+    ``input_fif`` is resolved through :func:`find_bids_raw`, so it names the
+    first split (``..._split-01_meg.fif``) for recordings that BIDS conversion
+    had to split across several FIF files.
     """
     _require(pipeline, "subject", "task", "bids_root", "outdir")
 
@@ -140,15 +189,17 @@ def resolve_paths(pipeline: SimpleNamespace) -> SimpleNamespace:
     session = str(pipeline.session) if pipeline.session else None
     subject_label = pipeline.subject_label
 
-    bids_path = BIDSPath(
-        root=pipeline.bids_root,
-        subject=subject,
-        session=session,
-        task=pipeline.task,
-        run=str(pipeline.run) if pipeline.run else None,
-        datatype="meg",
-        suffix="meg",
-        extension=".fif",
+    bids_path = find_bids_raw(
+        BIDSPath(
+            root=pipeline.bids_root,
+            subject=subject,
+            session=session,
+            task=pipeline.task,
+            run=str(pipeline.run) if pipeline.run else None,
+            datatype="meg",
+            suffix="meg",
+            extension=".fif",
+        )
     )
 
     smri = pipeline.smri or find_smri(pipeline.bids_root, subject, session)

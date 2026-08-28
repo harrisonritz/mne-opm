@@ -23,7 +23,9 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+import functools
 import os
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 from ._config import preproc_config
@@ -65,6 +67,7 @@ def run(cfg: SimpleNamespace) -> bool:
             f"(mne-opm.sh bids) for subject {paths.subject} first."
         )
 
+
     print(f"[osl:preproc] subject:  {paths.subject_label}")
     print(f"[osl:preproc] input:    {paths.input_fif}")
     print(f"[osl:preproc] outdir:   {paths.outdir}")
@@ -101,11 +104,100 @@ def run(cfg: SimpleNamespace) -> bool:
     return True
 
 
+# Plot helpers that :func:`osl_ephys.report.gen_html_data` calls as module
+# globals of ``osl_ephys.report.preproc_report``, mapped to the value to fall
+# back on when one raises.  gen_html_data unpacks ``plot_spectra`` into two
+# names, so its fallback has to keep that arity; every other helper already
+# returns None when it has nothing to plot, and the report templates handle
+# that.
+_REPORT_PLOTS: dict[str, object] = {
+    "plot_flowchart": None,
+    "plot_rawdata": None,
+    "plot_channel_time_series": None,
+    "plot_sensors": None,
+    "plot_channel_dists": None,
+    "plot_spectra": (None, None),
+    "plot_freqbands": None,
+    "plot_digitisation_2d": None,
+    "plot_eog_summary": None,
+    "plot_ecg_summary": None,
+    "plot_events": None,
+    "plot_bad_ica": None,
+    "plot_custom_figures": None,
+}
+
+
+def _skip_on_failure(name: str, func, fallback):
+    """Wrap one report plot helper so a failure drops just that figure."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- a figure is not worth a run
+            import matplotlib.pyplot as plt
+
+            # The failed call may have left a figure open part-way through.
+            plt.close("all")
+            detail = str(exc).splitlines()[0][:200] or type(exc).__name__
+            print(f"[osl:preproc] report plot {name} failed, skipping: {detail}")
+            return fallback
+
+    return wrapper
+
+
+@contextmanager
+def _skip_failing_report_plots():
+    """Make the osl-ephys report plots best-effort for the enclosed block.
+
+    :func:`osl_ephys.report.gen_html_data` renders a dozen figures in one
+    pass with no error handling of its own, so a single unsupported figure
+    takes the whole subject's report -- and, in this pipeline, an otherwise
+    successful preprocessing run -- with it.  Several of them are unsupported
+    for triaxial OPM data: MNE refuses to build a topography when channels
+    share a sensor position, which is exactly how an OPM triplet is laid out
+    (``plot_freqbands`` raises "electrodes have overlapping positions").
+
+    Each helper is replaced for the duration of the block by a version that
+    reports the failure and returns the value gen_html_data expects for "no
+    figure", then restored.
+    """
+    from osl_ephys.report import preproc_report
+
+    originals = {}
+    try:
+        for name, fallback in _REPORT_PLOTS.items():
+            original = getattr(preproc_report, name, None)
+            if original is None:
+                # osl-ephys renamed or dropped this helper; nothing to guard.
+                continue
+            originals[name] = original
+            setattr(preproc_report, name, _skip_on_failure(name, original, fallback))
+        yield
+    finally:
+        for name, original in originals.items():
+            setattr(preproc_report, name, original)
+
+
 def _gen_report_data(dataset: dict, paths: SimpleNamespace) -> None:
     """Generate this subject's preprocessing report data.
 
     Mirrors what :func:`osl_ephys.preprocessing.run_proc_chain` does internally
     when ``gen_report=True``, minus the group-level page build.
+
+    Notes
+    -----
+    :func:`osl_ephys.report.gen_html_data` is picky about the types of its two
+    directory arguments:
+
+    * ``outdir`` is indexed with ``/`` (``outdir / '{0}.png'``), so it has to
+      be a :class:`~pathlib.Path` -- a string raises ``TypeError``.
+    * ``logsdir`` is treated as the log *base*: the function appends
+      ``'.log'`` / ``'.error.log'`` to it.  Only when it is a ``Path`` does the
+      function build that base itself, and it builds it from the report
+      directory name (``{logsdir}/{subject_label}``), which misses the
+      ``_preproc`` suffix osl-ephys actually writes its logs with.  Passing the
+      base as a string bypasses that and picks the log files up.
     """
     import matplotlib
 
@@ -114,22 +206,27 @@ def _gen_report_data(dataset: dict, paths: SimpleNamespace) -> None:
     report_data_dir = paths.preproc_reportdir / paths.subject_label
     os.makedirs(report_data_dir, exist_ok=True)
 
+    # osl-ephys writes {logsdir}/{subject_label}_preproc{.log,.error.log}
+    # (batch.run_proc_chain formats its log name with ftype minus "-raw").
+    logs_base = str(paths.logsdir / f"{paths.subject_label}_preproc")
+
     figures = dataset.get("fig") or None
 
     previous_backend = matplotlib.pyplot.get_backend()
     matplotlib.use("Agg")
     try:
-        gen_html_data(
-            dataset["raw"],
-            str(report_data_dir),
-            ica=dataset.get("ica"),
-            events=dataset.get("events"),
-            event_id=dataset.get("event_id"),
-            preproc_fif_filename=str(paths.preproc_fif),
-            logsdir=str(paths.logsdir),
-            run_id=paths.subject_label,
-            custom_figures=figures,
-        )
+        with _skip_failing_report_plots():
+            gen_html_data(
+                dataset["raw"],
+                report_data_dir,
+                ica=dataset.get("ica"),
+                events=dataset.get("events"),
+                event_id=dataset.get("event_id"),
+                preproc_fif_filename=str(paths.preproc_fif),
+                logsdir=logs_base,
+                run_id=paths.subject_label,
+                custom_figures=figures,
+            )
     finally:
         matplotlib.use(previous_backend)
 
