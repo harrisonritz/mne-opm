@@ -24,6 +24,8 @@ into a ``source_recon`` config like any built-in step::
       - fs_beamform_and_parcellate:
           chantypes: mag
           rank: {mag: 60}
+          freq_range: [1, 32]
+          decim: 6
           parcellation_file: Glasser52_binary_space-MNI152NLin6_res-8x8x8.nii.gz
           method: spatial_basis
           orthogonalisation: symmetric
@@ -73,6 +75,57 @@ _OSL_ONLY_PICK_ORI: dict[str, str] = {
 
 _SUBDIR = "fs_src"
 """Sub-directory of ``{outdir}/{subject}`` holding this backend's files."""
+
+_SOURCE_DTYPE = np.float32
+"""Dtype of the source-space array.
+
+Source reconstruction's peak memory is one ``(voxels, times, trials)`` array,
+which at a full-rate epoched recording runs to tens of GiB, so the dtype is
+worth a factor of two.  float32 carries ~7 significant digits, far more than
+the beamformer output is meaningful to, and the parcel time courses that come
+out of :func:`osl_ephys...parcellation._get_parcel_timeseries` are float64
+regardless.
+"""
+
+_MEMORY_WARN_FRACTION = 0.6
+"""Fraction of the job's memory budget at which to warn about the source array."""
+
+_RANK_TOL = 1e-6
+_RANK_TOL_KIND = "relative"
+"""Tolerance for the data-driven rank estimate, matching ``run_beamformer``.
+
+``tol='auto'`` is ``n_dim * max_s * eps_float64`` (~1e-13 relative), while the
+directions SSS and ICA null return from a float32 FIF at ~1e-7 relative -- so
+``'auto'`` counts every nulled direction and lands near the channel count.  An
+explicit relative tolerance is what separates the two.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Report payloads
+# ---------------------------------------------------------------------------
+
+
+def _drop_missing_plots(payload: dict) -> dict:
+    """Strip ``*_plot`` entries that name no file.
+
+    :func:`osl_ephys.report.src_report.gen_html_data` copies every plot it
+    finds in the report data by key, and -- ``parc_freqbands_plot`` aside --
+    tests only that the key is *present*, not that it holds a path.  A key left
+    at None therefore fails inside the report build rather than being skipped:
+    ``coreg_plot`` raises ``TypeError: argument of type 'NoneType' is not
+    iterable``, and the rest try to copy a file literally named "None".
+
+    Every figure here is optional (rendering them depends on the 3D stack and
+    on plotting libraries the pipeline treats as best-effort), so a figure that
+    was not produced is dropped from the payload and simply does not appear in
+    the report.
+    """
+    return {
+        key: value
+        for key, value in payload.items()
+        if value is not None or not key.endswith("_plot")
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +222,192 @@ def _bandpass(data, freq_range: Optional[list]):
     )
 
 
+def _decimate(data, decim: Optional[int], is_epochs: bool, freq_range):
+    """Reduce the sampling rate before beamforming.
+
+    Source reconstruction holds one ``(voxels, times, trials)`` array, so the
+    sampling rate scales its size directly: at 1200 Hz a one-second epoch is
+    1201 samples, and a few thousand trials on an 8 mm grid is tens of GiB.  A
+    recording already low-passed at ``freq_range[1]`` carries no information
+    above that, so decimating towards its Nyquist rate costs nothing.
+
+    Epochs are decimated (a straight sample slice, the band-limit having
+    already been imposed by :func:`_bandpass`); continuous data is resampled,
+    which applies its own anti-alias filter.
+
+    Parameters
+    ----------
+    data : mne.io.Raw or mne.Epochs
+        Band-passed data.
+    decim : int or None
+        Factor to decimate by.  None or 1 leaves the data untouched.
+    is_epochs : bool
+        Whether ``data`` is epoched.
+    freq_range : list or None
+        ``[l_freq, h_freq]`` already applied, used to reject a factor that
+        would alias the retained band.
+
+    Returns
+    -------
+    data : mne.io.Raw or mne.Epochs
+        The decimated data.
+
+    Raises
+    ------
+    ValueError
+        If ``decim`` is not a positive integer, or would take the sampling
+        rate to or below twice the low-pass edge.
+    """
+    if decim is None or decim == 1:
+        return data
+
+    decim = int(decim)
+    if decim < 1:
+        raise ValueError(f"decim must be a positive integer, got {decim}.")
+
+    sfreq = float(data.info["sfreq"])
+    new_sfreq = sfreq / decim
+
+    if freq_range is not None and new_sfreq <= 2 * freq_range[1]:
+        raise ValueError(
+            f"decim={decim} takes the sampling rate from {sfreq:.1f} Hz to "
+            f"{new_sfreq:.1f} Hz, at or below twice the {freq_range[1]} Hz "
+            f"low-pass, which would alias the band being reconstructed. The "
+            f"largest safe factor here is "
+            f"{max(1, int(sfreq // (2 * freq_range[1])))}."
+        )
+
+    logger.info(
+        "decimating by %d: %.1f -> %.1f Hz", decim, sfreq, new_sfreq
+    )
+    if is_epochs:
+        return data.decimate(decim)
+    return data.resample(new_sfreq)
+
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+
+
+def _cgroup_memory_limit() -> Optional[int]:
+    """Memory limit of this process' cgroup, in bytes, or None if unlimited.
+
+    This is the limit SLURM enforces, and whose breach is reported as
+    ``oom_kill event in StepId=...``.
+    """
+    candidates: list[Path] = []
+
+    try:
+        with open("/proc/self/cgroup") as f:
+            for line in f:
+                # cgroup v2: "0::/<path>"; v1: "<n>:memory:/<path>"
+                parts = line.strip().split(":", 2)
+                if len(parts) == 3 and parts[1] in ("", "memory"):
+                    rel = parts[2].lstrip("/")
+                    candidates.append(Path("/sys/fs/cgroup") / rel / "memory.max")
+                    candidates.append(
+                        Path("/sys/fs/cgroup/memory") / rel / "memory.limit_in_bytes"
+                    )
+    except OSError:
+        pass
+
+    # Fall back to the mount root, which is the job's own cgroup when SLURM
+    # puts the step in a cgroup namespace.
+    candidates.append(Path("/sys/fs/cgroup/memory.max"))
+    candidates.append(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+
+    for path in candidates:
+        try:
+            value = path.read_text().strip()
+        except OSError:
+            continue
+        # "max" on v2, and a sentinel near 2**63 on v1, both mean unlimited.
+        if value.isdigit() and 0 < int(value) < 2 ** 62:
+            return int(value)
+
+    return None
+
+
+def _memory_budget() -> Optional[int]:
+    """Memory this job may use, in bytes, or None if it cannot be determined.
+
+    Takes the smaller of the cgroup limit and SLURM's ``--mem``.
+    """
+    limits = []
+
+    cgroup = _cgroup_memory_limit()
+    if cgroup is not None:
+        limits.append(cgroup)
+
+    per_node = os.environ.get("SLURM_MEM_PER_NODE", "").strip()
+    if per_node.isdigit() and int(per_node) > 0:
+        limits.append(int(per_node) * 1024 ** 2)  # SLURM reports MB
+
+    return min(limits) if limits else None
+
+
+def _check_source_memory(n_voxels: int, n_times: int, n_trials: int) -> None:
+    """Warn or bail out before allocating a source array that cannot fit.
+
+    The source-space array is ``(n_voxels, n_times, n_trials)``, and
+    :func:`osl_ephys...parcellation._get_parcel_timeseries` makes one more of
+    the same shape when it standardises the voxel time courses, so two of them
+    is a floor on the peak.  ``numpy.zeros`` maps its pages lazily, so an
+    array far larger than memory allocates without complaint and the process
+    is only killed once the beamformer has spent an hour filling it -- with no
+    Python traceback, just SIGKILL.  Checking the shape up front turns that
+    into an error that says what to change.
+
+    Parameters
+    ----------
+    n_voxels, n_times, n_trials : int
+        Shape of the source-space array; ``n_trials`` is 1 for continuous data.
+
+    Raises
+    ------
+    MemoryError
+        If the floor on the peak already exceeds the job's memory budget.
+    """
+    itemsize = np.dtype(_SOURCE_DTYPE).itemsize
+    array_bytes = n_voxels * n_times * n_trials * itemsize
+    floor_bytes = 2 * array_bytes
+
+    gib = 1024 ** 3
+    logger.info(
+        "source array: %d voxels x %d samples x %d trials = %.1f GiB (%s)",
+        n_voxels, n_times, n_trials, array_bytes / gib,
+        np.dtype(_SOURCE_DTYPE).name,
+    )
+
+    budget = _memory_budget()
+    if budget is None:
+        return
+
+    advice = (
+        f"Reduce it with `decim` (the source stage's own decimation factor), "
+        f"which divides the sample count: the array is "
+        f"{array_bytes / gib:.1f} GiB at {n_times} samples per trial. Failing "
+        f"that, raise --mem, epoch a shorter window, or coarsen the source "
+        f"grid with `gridstep`."
+    )
+
+    if floor_bytes > budget:
+        raise MemoryError(
+            f"Source reconstruction needs at least "
+            f"{floor_bytes / gib:.1f} GiB (the {array_bytes / gib:.1f} GiB "
+            f"source array, plus the copy the parcellation makes of it), and "
+            f"this job's budget is {budget / gib:.1f} GiB. {advice}"
+        )
+
+    if floor_bytes > _MEMORY_WARN_FRACTION * budget:
+        logger.warning(
+            "source reconstruction will use at least %.1f GiB of this job's "
+            "%.1f GiB. %s",
+            floor_bytes / gib, budget / gib, advice,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Coregistration
 # ---------------------------------------------------------------------------
@@ -259,7 +498,7 @@ def fs_coregister(
     if reportdir is not None:
         src_report.add_to_data(
             f"{reportdir}/{subject}/data.pkl",
-            {
+            _drop_missing_plots({
                 "coregister": True,
                 "surface_extraction_method": "freesurfer",
                 "already_coregistered": True,
@@ -274,7 +513,7 @@ def fs_coregister(
                 ),
                 "coreg_plot": coreg_plot,
                 "trans_file": trans_path,
-            },
+            }),
         )
 
 
@@ -703,6 +942,66 @@ def _transform_to_mni(
     coords_mni : numpy.ndarray
         ``(3, nvoxels)`` grid coordinates in mm.
     """
+    coords_mni, grid_index, dipole_index = _mni_mapping(
+        fwd,
+        subject=subject,
+        subjects_dir=subjects_dir,
+        trans_path=trans_path,
+        parcellation_file=parcellation_file,
+        reference_brain=reference_brain,
+        spatial_resolution=spatial_resolution,
+    )
+
+    timeseries_mni = np.zeros(
+        (coords_mni.shape[1],) + recon_timeseries.shape[1:],
+        dtype=recon_timeseries.dtype,
+    )
+    timeseries_mni[grid_index] = recon_timeseries[dipole_index]
+
+    return timeseries_mni, coords_mni
+
+
+def _mni_mapping(
+    fwd: mne.Forward,
+    subject: str,
+    subjects_dir: str,
+    trans_path: str,
+    parcellation_file: str,
+    reference_brain: str,
+    spatial_resolution: Optional[int],
+):
+    """Match each MNI grid point to its nearest reconstructed dipole.
+
+    Split out from :func:`_transform_to_mni` so the mapping can be built
+    before the beamformer runs, which lets :func:`_apply_lcmv_to_mni` write
+    straight onto the MNI grid and lets the size of the source array be
+    checked before an hour is spent filling it.
+
+    Parameters
+    ----------
+    fwd : mne.Forward
+        Forward solution the beamformer was built from.  Its source positions
+        are in head coordinates, in metres.
+    subject, subjects_dir, trans_path : str
+        FreeSurfer subject, subjects directory, and head<->MRI transform.
+    parcellation_file : str
+        Parcellation, used to define the target grid.
+    reference_brain : str
+        See :func:`_mni_grid_from_reference`.
+    spatial_resolution : int or None
+        Target grid spacing in mm.  Defaults to the forward model's own
+        grid step.
+
+    Returns
+    -------
+    coords_mni : numpy.ndarray
+        ``(3, nvoxels)`` grid coordinates in mm.
+    grid_index : numpy.ndarray
+        Indices of the grid points that have a dipole within one grid step;
+        every other grid point stays at zero.
+    dipole_index : numpy.ndarray
+        The dipole feeding each of those grid points, same length.
+    """
     from scipy.spatial import KDTree
 
     vs = fwd["src"][0]
@@ -728,21 +1027,16 @@ def _transform_to_mni(
     kdtree = KDTree(recon_coords_mni)
     distances, indices = kdtree.query(coords_mni.T)
     within = distances < spatial_resolution
-
-    timeseries_mni = np.zeros(
-        (coords_mni.shape[1],) + recon_timeseries.shape[1:],
-        dtype=recon_timeseries.dtype,
-    )
-    timeseries_mni[within] = recon_timeseries[indices[within]]
+    grid_index = np.flatnonzero(within)
 
     logger.info(
         "mapped %d/%d MNI grid points onto %d dipoles",
-        int(within.sum()),
+        grid_index.size,
         coords_mni.shape[1],
         recon_coords_mni.shape[0],
     )
 
-    return timeseries_mni, coords_mni
+    return coords_mni, grid_index, indices[grid_index]
 
 
 # ---------------------------------------------------------------------------
@@ -778,22 +1072,139 @@ def _resolve_pick_ori(pick_ori: Optional[str]) -> Optional[str]:
     return pick_ori
 
 
-def _compute_data_cov(data, is_epochs: bool, cov_method: str):
+def _resolve_rank(rank, data):
+    """Resolve the rank used for the covariance and for ``make_lcmv``.
+
+    Mirrors :func:`custom.run_beamformer.resolve_rank`, so both routes through
+    this repository regularise the beamformer the same way.
+
+    Parameters
+    ----------
+    rank : str or dict or None
+        ``'data'`` estimates the rank from this subject's own data; anything
+        else (an explicit ``{ch_type: n}``, ``'info'``, None) is handed to MNE
+        untouched.
+    data : mne.io.Raw or mne.Epochs
+        The data the beamformer is built from, already picked to ``chantypes``.
+
+    Returns
+    -------
+    rank : dict or str or None
+        A ``{ch_type: n}`` dict when estimated, otherwise ``rank`` unchanged.
+
+    Notes
+    -----
+    ``'data'`` takes the element-wise **minimum** of two estimates, because
+    neither is trustworthy alone:
+
+    * ``rank='info'`` reads the SSS bookkeeping out of ``info['proc_history']``,
+      so it knows the Maxwell basis dimension but nothing about what ICA
+      removed afterwards -- it *overstates* the rank of cleaned data.
+    * the data-driven estimate sees ICA, but only at a sensible tolerance
+      (:data:`_RANK_TOL`); it can still be fooled, and is then capped by the
+      info rank.
+    """
+    if rank != "data":
+        logger.info("using the configured rank: %s", rank)
+        return rank
+
+    candidates = {}
+    try:
+        candidates["info"] = mne.compute_rank(data, rank="info", verbose=False)
+    except Exception as exc:  # noqa: BLE001 -- no proc_history / no projections
+        logger.info("no info-based rank available (%s)", exc)
+    candidates["data"] = mne.compute_rank(
+        data, tol=_RANK_TOL, tol_kind=_RANK_TOL_KIND, verbose=False
+    )
+
+    for name, value in candidates.items():
+        extra = f" (tol={_RANK_TOL}, tol_kind={_RANK_TOL_KIND!r})" if name == "data" else ""
+        logger.info("%s rank%s: %s", name, extra, value)
+
+    keys = set().union(*(c.keys() for c in candidates.values()))
+    resolved = {
+        key: min(c[key] for c in candidates.values() if key in c) for key in keys
+    }
+    logger.info("using the element-wise minimum rank: %s", resolved)
+
+    # A data estimate at or above the info rank means the tolerance did not
+    # separate the nulled directions from the retained ones, so the result is
+    # just the info rank and whatever ICA removed goes unaccounted for.
+    info_rank = candidates.get("info")
+    if info_rank is not None and any(
+        candidates["data"].get(key, 0) >= value for key, value in info_rank.items()
+    ):
+        logger.warning(
+            "the data-driven rank is not below the info rank, so it is not "
+            "detecting the rank lost to SSS/ICA -- check it against "
+            "src/custom/rank_check.py before trusting the result."
+        )
+
+    return resolved
+
+
+def _n_parcels(parcellation_file: str) -> int:
+    """Number of parcels in a parcellation NIfTI (its 4th dimension)."""
+    import nibabel as nib
+
+    return int(nib.load(parcellation.find_file(parcellation_file)).shape[3])
+
+
+def _check_orthogonalisation_rank(
+    rank, orthogonalisation: Optional[str], parcellation_file: str
+) -> None:
+    """Fail before beamforming when symmetric orthogonalisation cannot work.
+
+    :func:`osl_ephys...parcellation.symmetric_orthogonalise` requires the
+    parcel time courses to be linearly independent, and they inherit the rank
+    the beamformer was regularised to.  A rank below the parcel count therefore
+    always ends in "Not full rank, rank required is N, but rank is only M" --
+    but only after the forward model, the beamformer and the parcellation have
+    all been computed, half an hour into the job.
+    """
+    if orthogonalisation != "symmetric" or not isinstance(rank, dict):
+        return
+
+    n_parcels = _n_parcels(parcellation_file)
+    too_low = {key: value for key, value in rank.items() if value < n_parcels}
+    if too_low:
+        raise ValueError(
+            f"orthogonalisation='symmetric' needs the {n_parcels} parcel time "
+            f"courses of {op.basename(parcellation_file)} to be linearly "
+            f"independent, but the beamformer rank is {too_low}, which caps "
+            f"them at that many dimensions. Raise the rank (rank: data "
+            f"estimates it from this subject's data), use a parcellation with "
+            f"at most {min(too_low.values())} parcels, or set "
+            f"orthogonalisation to 'local' or null."
+        )
+
+
+def _compute_data_cov(data, is_epochs: bool, cov_method: str, rank):
     """Compute the data covariance the beamformer is built from.
 
     osl-ephys' ``beamforming.make_lcmv`` estimates this internally; MNE's
     expects it as an argument, so it is computed here over the whole of
     whatever was passed in (every epoch, or the full continuous recording
     excluding bad segments).
+
+    ``rank`` is the resolved rank, passed on so the covariance is regularised
+    in the same subspace the beamformer inverts it in.
     """
-    logger.info("computing the data covariance (method=%s)", cov_method)
+    logger.info("computing the data covariance (method=%s, rank=%s)", cov_method, rank)
     if is_epochs:
-        return mne.compute_covariance(data, method=cov_method, verbose=False)
-    return mne.compute_raw_covariance(data, method=cov_method, verbose=False)
+        return mne.compute_covariance(data, method=cov_method, rank=rank, verbose=False)
+    return mne.compute_raw_covariance(
+        data, method=cov_method, rank=rank, verbose=False
+    )
 
 
 def _apply_lcmv(data, filters, is_epochs: bool) -> np.ndarray:
-    """Apply the beamformer, returning ``(ndipoles, ntpts[, ntrials])``."""
+    """Apply the beamformer, returning ``(ndipoles, ntpts[, ntrials])``.
+
+    The pipeline itself goes through :func:`_apply_lcmv_to_mni`, which fuses
+    this with :func:`_transform_to_mni` to avoid holding both arrays; this
+    stays as the unfused reference the two are checked against.
+    """
     if not is_epochs:
         return mne.beamformer.apply_lcmv_raw(data, filters).data
 
@@ -814,6 +1225,66 @@ def _apply_lcmv(data, filters, is_epochs: bool) -> np.ndarray:
     return out
 
 
+def _apply_lcmv_to_mni(data, filters, is_epochs: bool, mapping) -> np.ndarray:
+    """Beamform straight onto the MNI grid, returning ``(nvoxels, ntpts[, ntrials])``.
+
+    The two-step route -- reconstruct every trial into a
+    ``(ndipoles, ntpts, ntrials)`` array with :func:`_apply_lcmv`, then morph
+    that whole array with :func:`_transform_to_mni` -- holds both arrays at
+    once, and on an epoched recording each runs to tens of GiB.  Writing each
+    trial onto the grid as it leaves the beamformer means only one of them
+    ever exists, halving the peak for identical output.
+
+    Parameters
+    ----------
+    data : mne.io.Raw or mne.Epochs
+        Data to beamform, already picked to the beamformed channel types.
+    filters : instance of Beamformer
+        LCMV filters from :func:`mne.beamformer.make_lcmv`.
+    is_epochs : bool
+        Whether ``data`` is epoched.
+    mapping : tuple
+        ``(coords_mni, grid_index, dipole_index)`` from :func:`_mni_mapping`.
+
+    Returns
+    -------
+    timeseries_mni : numpy.ndarray
+        ``(nvoxels, ntpts)`` or ``(nvoxels, ntpts, ntrials)``, in
+        :data:`_SOURCE_DTYPE`.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` is epoched but holds no epochs.
+    """
+    coords_mni, grid_index, dipole_index = mapping
+    n_voxels = coords_mni.shape[1]
+
+    if not is_epochs:
+        stc = mne.beamformer.apply_lcmv_raw(data, filters)
+        out = np.zeros((n_voxels, stc.data.shape[1]), dtype=_SOURCE_DTYPE)
+        out[grid_index] = stc.data[dipole_index]
+        return out
+
+    n_trials = len(data)
+    if n_trials == 0:
+        raise ValueError("No epochs to beamform.")
+
+    stcs = mne.beamformer.apply_lcmv_epochs(data, filters, return_generator=True)
+
+    out = None
+    for trial, stc in enumerate(stcs):
+        if out is None:
+            # Allocate once from the first estimate, so the time axis comes
+            # from the beamformer rather than being assumed.
+            out = np.zeros(
+                (n_voxels, stc.data.shape[1], n_trials), dtype=_SOURCE_DTYPE
+            )
+        out[grid_index, :, trial] = stc.data[dipole_index]
+
+    return out
+
+
 def fs_beamform_and_parcellate(
     outdir,
     subject,
@@ -827,6 +1298,7 @@ def fs_beamform_and_parcellate(
     subjects_dir=None,
     trans=None,
     freq_range=None,
+    decim=None,
     weight_norm="unit-noise-gain-invariant",
     pick_ori="max-power",
     reg=0.05,
@@ -859,8 +1331,12 @@ def fs_beamform_and_parcellate(
         continuous data.
     chantypes : str or list of str
         Channel types to beamform (``'mag'`` for OPM data).
-    rank : dict
-        Rank used to regularise the covariance, e.g. ``{'mag': 60}``.
+    rank : str or dict
+        Rank used to regularise the covariance and the beamformer.  ``'data'``
+        estimates it from this subject's own data (see :func:`_resolve_rank`),
+        which is what an array job wants since the rank differs per subject.
+        An explicit ``{ch_type: n}``, ``'info'`` or None is passed to MNE
+        unchanged.
     parcellation_file : str
         Parcellation NIfTI, by name (resolved inside osl-ephys) or path.
     method : str
@@ -873,6 +1349,14 @@ def fs_beamform_and_parcellate(
         Path to the ``-trans.fif``.
     freq_range : list, optional
         ``[l_freq, h_freq]`` bandpass applied before beamforming.
+    decim : int, optional
+        Decimate in time by this factor after band-passing, before the
+        covariance and the beamformer.  Peak memory is one
+        ``(voxels, times, trials)`` array, so this divides it: an epoched
+        recording kept at an acquisition rate far above ``freq_range[1]``
+        needs tens of GiB it cannot use, since the band-pass has already
+        removed everything the extra samples could carry.  Defaults to None,
+        which leaves the sampling rate alone.
     weight_norm : str, optional
         Beamformer weight normalisation, as accepted by
         :func:`mne.beamformer.make_lcmv`.
@@ -905,10 +1389,15 @@ def fs_beamform_and_parcellate(
     Raises
     ------
     ValueError
-        If ``pick_ori`` is an osl-ephys-only option, or ``orthogonalisation``
-        is not recognised.
+        If ``pick_ori`` is an osl-ephys-only option, ``orthogonalisation`` is
+        not recognised, ``decim`` would alias the retained band, or the
+        resolved rank is below the parcel count while
+        ``orthogonalisation='symmetric'``.
     FileNotFoundError
         If the forward model has not been built yet.
+    MemoryError
+        If the source-space array cannot fit in the job's memory budget; see
+        :func:`_check_source_memory`.
     """
     logger.info("fs_beamform_and_parcellate")
 
@@ -928,13 +1417,36 @@ def fs_beamform_and_parcellate(
 
     data, is_epochs = _load_data(preproc_file, epoch_file)
     data = _bandpass(data, freq_range)
+    data = _decimate(data, decim, is_epochs, freq_range)
     chantype_data = data.copy().pick(chantypes)
 
     fwd = mne.read_forward_solution(files["fwd_model"])
 
+    # Built before the beamformer rather than after it: the grid size is what
+    # sets peak memory, and this is the last cheap moment to refuse a job that
+    # cannot fit.
+    mapping = _mni_mapping(
+        fwd,
+        subject=subject,
+        subjects_dir=subjects_dir,
+        trans_path=trans_path,
+        parcellation_file=parcellation_file,
+        reference_brain=reference_brain,
+        spatial_resolution=spatial_resolution,
+    )
+    coords_mni = mapping[0]
+    _check_source_memory(
+        coords_mni.shape[1],
+        n_times=len(data.times),
+        n_trials=len(data) if is_epochs else 1,
+    )
+
     # --- Beamformer filters ---
+    rank = _resolve_rank(rank, chantype_data)
+    _check_orthogonalisation_rank(rank, orthogonalisation, parcellation_file)
+
     logger.info("mne.beamformer.make_lcmv (chantypes=%s, rank=%s)", chantypes, rank)
-    data_cov = _compute_data_cov(chantype_data, is_epochs, cov_method)
+    data_cov = _compute_data_cov(chantype_data, is_epochs, cov_method, rank)
     filters = mne.beamformer.make_lcmv(
         chantype_data.info,
         fwd,
@@ -952,18 +1464,7 @@ def fs_beamform_and_parcellate(
 
     # --- Apply, morph to MNI, parcellate ---
     logger.info("applying the beamformer")
-    bf_data = _apply_lcmv(chantype_data, filters, is_epochs)
-
-    bf_data_mni, coords_mni = _transform_to_mni(
-        fwd,
-        bf_data,
-        subject=subject,
-        subjects_dir=subjects_dir,
-        trans_path=trans_path,
-        parcellation_file=parcellation_file,
-        reference_brain=reference_brain,
-        spatial_resolution=spatial_resolution,
-    )
+    bf_data_mni = _apply_lcmv_to_mni(chantype_data, filters, is_epochs, mapping)
 
     logger.info("parcellation using %s", parcellation_file)
     parcellation_asmatrix = _resample_parcellation(
@@ -989,7 +1490,7 @@ def fs_beamform_and_parcellate(
     if reportdir is not None:
         src_report.add_to_data(
             f"{reportdir}/{subject}/data.pkl",
-            {
+            _drop_missing_plots({
                 "beamform_and_parcellate": True,
                 "beamform": True,
                 "parcellate": True,
@@ -1013,7 +1514,7 @@ def fs_beamform_and_parcellate(
                 "parc_psd_plot": parc_psd_plot,
                 "parc_corr_plot": parc_corr_plot,
                 "parc_freqbands_plot": None,
-            },
+            }),
         )
 
 

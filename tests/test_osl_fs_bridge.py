@@ -28,6 +28,131 @@ def atlas():
 
 
 # ---------------------------------------------------------------------------
+# Beamformer rank
+# ---------------------------------------------------------------------------
+
+
+PARCELLATION_N = 52
+"""Parcels in the Glasser52 atlas used throughout these tests."""
+
+
+class TestResolveRank:
+    """``rank: data`` mirrors run_beamformer.resolve_rank."""
+
+    def test_an_explicit_rank_is_passed_through(self):
+        assert fs_bridge._resolve_rank({"mag": 60}, None) == {"mag": 60}
+        assert fs_bridge._resolve_rank("info", None) == "info"
+        assert fs_bridge._resolve_rank(None, None) is None
+
+    def test_data_takes_the_minimum_of_the_info_and_data_estimates(
+        self, monkeypatch
+    ):
+        # The info rank knows the Maxwell basis but not what ICA removed, so
+        # the data estimate has to be able to pull it down.
+        calls = []
+
+        def fake_compute_rank(data, rank=None, tol=None, tol_kind=None, verbose=None):
+            calls.append(rank)
+            return {"mag": 102} if rank == "info" else {"mag": 83}
+
+        monkeypatch.setattr("mne.compute_rank", fake_compute_rank)
+        assert fs_bridge._resolve_rank("data", object()) == {"mag": 83}
+
+    def test_the_info_rank_caps_a_data_estimate_that_ran_away(self, monkeypatch):
+        # tol='auto' style over-estimates must not raise the rank above what
+        # the Maxwell basis can support.
+        def fake_compute_rank(data, rank=None, tol=None, tol_kind=None, verbose=None):
+            return {"mag": 102} if rank == "info" else {"mag": 185}
+
+        monkeypatch.setattr("mne.compute_rank", fake_compute_rank)
+        assert fs_bridge._resolve_rank("data", object()) == {"mag": 102}
+
+    def test_the_data_estimate_stands_alone_without_proc_history(
+        self, monkeypatch
+    ):
+        def fake_compute_rank(data, rank=None, tol=None, tol_kind=None, verbose=None):
+            if rank == "info":
+                raise ValueError("no proc_history")
+            return {"mag": 185}
+
+        monkeypatch.setattr("mne.compute_rank", fake_compute_rank)
+        assert fs_bridge._resolve_rank("data", object()) == {"mag": 185}
+
+    def test_the_data_estimate_uses_an_explicit_relative_tolerance(
+        self, monkeypatch
+    ):
+        # tol='auto' is ~1e-13 relative and counts every direction SSS/ICA
+        # nulled, so it must not be what gets used.
+        seen = {}
+
+        def fake_compute_rank(data, rank=None, tol=None, tol_kind=None, verbose=None):
+            if rank != "info":
+                seen["tol"], seen["tol_kind"] = tol, tol_kind
+            return {"mag": 83}
+
+        monkeypatch.setattr("mne.compute_rank", fake_compute_rank)
+        fs_bridge._resolve_rank("data", object())
+        assert seen == {"tol": 1e-6, "tol_kind": "relative"}
+
+
+class TestOrthogonalisationRankCheck:
+    """Symmetric orthogonalisation needs rank >= n_parcels; fail before beamforming."""
+
+    def test_a_rank_below_the_parcel_count_is_rejected(self):
+        with pytest.raises(ValueError, match="linearly independent"):
+            fs_bridge._check_orthogonalisation_rank(
+                {"mag": 40}, "symmetric", PARCELLATION
+            )
+
+    def test_a_sufficient_rank_passes(self):
+        fs_bridge._check_orthogonalisation_rank(
+            {"mag": PARCELLATION_N}, "symmetric", PARCELLATION
+        )
+
+    def test_other_orthogonalisations_are_not_checked(self):
+        # 'local' and None do not require full-rank parcel time courses.
+        for orthogonalisation in ("local", None):
+            fs_bridge._check_orthogonalisation_rank(
+                {"mag": 40}, orthogonalisation, PARCELLATION
+            )
+
+    def test_a_rank_mne_resolves_itself_is_not_checked(self):
+        # 'info'/None are resolved inside MNE, so there is no number to test.
+        fs_bridge._check_orthogonalisation_rank("info", "symmetric", PARCELLATION)
+
+    def test_the_parcel_count_comes_from_the_atlas(self):
+        assert fs_bridge._n_parcels(PARCELLATION) == PARCELLATION_N
+
+
+# ---------------------------------------------------------------------------
+# Report payloads
+# ---------------------------------------------------------------------------
+
+
+class TestDropMissingPlots:
+    """osl-ephys' report copies plots by key without checking for None."""
+
+    def test_a_plot_that_was_not_rendered_is_dropped(self):
+        payload = fs_bridge._drop_missing_plots(
+            {"coregister": True, "coreg_plot": None}
+        )
+        assert payload == {"coregister": True}
+
+    def test_a_rendered_plot_is_kept(self):
+        payload = fs_bridge._drop_missing_plots(
+            {"coreg_plot": "sub-007/fs_src/coreg.html"}
+        )
+        assert payload == {"coreg_plot": "sub-007/fs_src/coreg.html"}
+
+    def test_non_plot_keys_keep_their_none_values(self):
+        # e.g. n_init_coreg, which the report renders as "None".
+        payload = fs_bridge._drop_missing_plots(
+            {"n_init_coreg": None, "n_epochs": None}
+        )
+        assert payload == {"n_init_coreg": None, "n_epochs": None}
+
+
+# ---------------------------------------------------------------------------
 # File layout and path resolution
 # ---------------------------------------------------------------------------
 
@@ -483,7 +608,9 @@ class TestBeamforming:
             reduce_rank=True,
         )
         options.update(kwargs)
-        cov = fs_bridge._compute_data_cov(data, is_epochs, "shrunk")
+        cov = fs_bridge._compute_data_cov(
+            data, is_epochs, "shrunk", options["rank"]
+        )
         return mne.beamformer.make_lcmv(data.info, setup.fwd, cov, **options)
 
     def test_epochs_stack_as_dipoles_times_trials(self, sphere_setup):
@@ -519,7 +646,9 @@ class TestBeamforming:
 
     def test_covariance_estimators_from_the_config(self, sphere_setup):
         for method in ("empirical", "shrunk"):
-            cov = fs_bridge._compute_data_cov(sphere_setup.epochs, True, method)
+            cov = fs_bridge._compute_data_cov(
+                sphere_setup.epochs, True, method, None
+            )
             assert cov.data.shape == (40, 40)
 
     def test_output_feeds_the_mni_transform(self, sphere_setup, monkeypatch):
@@ -562,3 +691,228 @@ class TestRegistry:
             "fs_forward_model",
             "fs_beamform_and_parcellate",
         ]
+
+
+# ---------------------------------------------------------------------------
+# Memory: decimation, budget, and the fused beamform-onto-grid path
+# ---------------------------------------------------------------------------
+
+
+class TestDecimate:
+    """`decim` divides the source array, which is what sets peak memory."""
+
+    def test_none_and_one_leave_the_data_untouched(self, sphere_setup):
+        for decim in (None, 1):
+            out = fs_bridge._decimate(sphere_setup.epochs, decim, True, [1, 32])
+            assert out is sphere_setup.epochs
+
+    def test_epochs_are_decimated(self, sphere_setup):
+        epochs = sphere_setup.epochs.copy()
+        n_times = len(epochs.times)
+
+        out = fs_bridge._decimate(epochs, 2, True, [1, 32])
+
+        assert out.info["sfreq"] == pytest.approx(sphere_setup.epochs.info["sfreq"] / 2)
+        assert len(out.times) == int(np.ceil(n_times / 2))
+
+    def test_continuous_data_is_resampled(self, sphere_setup):
+        raw = sphere_setup.raw.copy()
+        out = fs_bridge._decimate(raw, 2, False, [1, 32])
+        assert out.info["sfreq"] == pytest.approx(sphere_setup.raw.info["sfreq"] / 2)
+
+    def test_rejects_a_factor_that_would_alias_the_retained_band(self, sphere_setup):
+        # 200 Hz / 4 = 50 Hz, below twice the 32 Hz low-pass.
+        with pytest.raises(ValueError, match="would alias"):
+            fs_bridge._decimate(sphere_setup.epochs.copy(), 4, True, [1, 32])
+
+    def test_reports_the_largest_safe_factor(self, sphere_setup):
+        with pytest.raises(ValueError, match="largest safe factor here is 3"):
+            fs_bridge._decimate(sphere_setup.epochs.copy(), 4, True, [1, 32])
+
+    def test_rejects_a_non_positive_factor(self, sphere_setup):
+        with pytest.raises(ValueError, match="positive integer"):
+            fs_bridge._decimate(sphere_setup.epochs.copy(), 0, True, None)
+
+    def test_no_band_limit_means_no_alias_check(self, sphere_setup):
+        out = fs_bridge._decimate(sphere_setup.epochs.copy(), 4, True, None)
+        assert out.info["sfreq"] == pytest.approx(sphere_setup.epochs.info["sfreq"] / 4)
+
+
+class TestMemoryBudget:
+    def test_reads_slurm_mem_per_node_as_megabytes(self, monkeypatch):
+        monkeypatch.setattr(fs_bridge, "_cgroup_memory_limit", lambda: None)
+        monkeypatch.setenv("SLURM_MEM_PER_NODE", "131072")
+        assert fs_bridge._memory_budget() == 131072 * 1024 ** 2
+
+    def test_takes_the_smaller_of_cgroup_and_slurm(self, monkeypatch):
+        monkeypatch.setattr(fs_bridge, "_cgroup_memory_limit", lambda: 8 * 1024 ** 3)
+        monkeypatch.setenv("SLURM_MEM_PER_NODE", "131072")
+        assert fs_bridge._memory_budget() == 8 * 1024 ** 3
+
+    def test_none_when_nothing_reports_a_limit(self, monkeypatch):
+        monkeypatch.setattr(fs_bridge, "_cgroup_memory_limit", lambda: None)
+        monkeypatch.delenv("SLURM_MEM_PER_NODE", raising=False)
+        assert fs_bridge._memory_budget() is None
+
+    def test_cgroup_sentinel_values_read_as_unlimited(self, monkeypatch, tmp_path):
+        # cgroup v2 writes "max"; v1 writes a number near 2**63.
+        for value in ("max", str(2 ** 63 - 1)):
+            path = tmp_path / "memory.max"
+            path.write_text(value)
+            monkeypatch.setattr(fs_bridge.Path, "read_text", lambda self: value)
+            monkeypatch.setattr(
+                "builtins.open", lambda *a, **k: (_ for _ in ()).throw(OSError())
+            )
+            assert fs_bridge._cgroup_memory_limit() is None
+
+
+class TestSourceMemoryCheck:
+    """np.zeros maps lazily, so an oversized array OOM-kills instead of raising."""
+
+    def test_raises_when_the_array_cannot_fit(self, monkeypatch):
+        monkeypatch.setattr(fs_bridge, "_memory_budget", lambda: 8 * 1024 ** 3)
+        # 2859 voxels x 1201 samples x 3200 trials -- the shape that killed
+        # sub-044 with no traceback.
+        with pytest.raises(MemoryError, match="Source reconstruction needs"):
+            fs_bridge._check_source_memory(2859, n_times=1201, n_trials=3200)
+
+    def test_the_error_names_decim_as_the_lever(self, monkeypatch):
+        monkeypatch.setattr(fs_bridge, "_memory_budget", lambda: 1024 ** 3)
+        with pytest.raises(MemoryError, match="decim"):
+            fs_bridge._check_source_memory(2859, n_times=1201, n_trials=3200)
+
+    def test_passes_when_the_array_fits(self, monkeypatch):
+        monkeypatch.setattr(fs_bridge, "_memory_budget", lambda: 128 * 1024 ** 3)
+        fs_bridge._check_source_memory(2859, n_times=201, n_trials=3200)
+
+    def test_warns_when_the_array_dominates_the_budget(self, monkeypatch, caplog):
+        monkeypatch.setattr(fs_bridge, "_memory_budget", lambda: 128 * 1024 ** 3)
+        with caplog.at_level("WARNING", logger=fs_bridge.logger.name):
+            # sub-044's real shape: 41 GiB of source array in a 128 GiB
+            # job, which fits, but only just once the parcellation makes its
+            # own copy of it.
+            fs_bridge._check_source_memory(2859, n_times=1201, n_trials=3200)
+        assert "source reconstruction will use at least" in caplog.text
+
+    def test_silent_when_the_budget_is_unknown(self, monkeypatch):
+        monkeypatch.setattr(fs_bridge, "_memory_budget", lambda: None)
+        fs_bridge._check_source_memory(2859, n_times=1201, n_trials=3200)
+
+
+class TestApplyLcmvToMni:
+    """The fused path must match beamform-then-morph exactly, at half the peak."""
+
+    @staticmethod
+    def _mapping(monkeypatch, setup, n_grid=5):
+        grid = np.zeros((3, n_grid))
+        grid[0] = np.arange(n_grid) * 8.0
+        n_sources = setup.fwd["src"][0]["nuse"]
+
+        monkeypatch.setattr(
+            fs_bridge, "_mni_grid_from_reference", lambda *a, **k: grid
+        )
+        monkeypatch.setattr(
+            fs_bridge.mne, "head_to_mni", lambda *a, **k: np.zeros((n_sources, 3))
+        )
+        monkeypatch.setattr(fs_bridge, "_read_mri_head_t", lambda path: None)
+
+        return fs_bridge._mni_mapping(
+            setup.fwd,
+            subject="sub-007",
+            subjects_dir="/fs",
+            trans_path="/fs/trans.fif",
+            parcellation_file=PARCELLATION,
+            reference_brain="parcellation",
+            spatial_resolution=8,
+        )
+
+    @staticmethod
+    def _filters(setup, data, is_epochs):
+        import mne
+
+        cov = fs_bridge._compute_data_cov(data, is_epochs, "shrunk", {"mag": 20})
+        return mne.beamformer.make_lcmv(
+            data.info,
+            setup.fwd,
+            cov,
+            reg=0.05,
+            noise_cov=None,
+            pick_ori="max-power",
+            weight_norm="unit-noise-gain-invariant",
+            rank={"mag": 20},
+            reduce_rank=True,
+        )
+
+    def test_matches_the_two_step_route_on_epochs(self, sphere_setup, monkeypatch):
+        mapping = self._mapping(monkeypatch, sphere_setup)
+        filters = self._filters(sphere_setup, sphere_setup.epochs, True)
+
+        fused = fs_bridge._apply_lcmv_to_mni(
+            sphere_setup.epochs, filters, True, mapping
+        )
+        stepwise, _ = fs_bridge._transform_to_mni(
+            sphere_setup.fwd,
+            fs_bridge._apply_lcmv(sphere_setup.epochs, filters, True),
+            subject="sub-007",
+            subjects_dir="/fs",
+            trans_path="/fs/trans.fif",
+            parcellation_file=PARCELLATION,
+            reference_brain="parcellation",
+            spatial_resolution=8,
+        )
+
+        assert fused.shape == stepwise.shape
+        np.testing.assert_allclose(fused, stepwise, rtol=1e-6)
+
+    def test_matches_the_two_step_route_on_continuous_data(
+        self, sphere_setup, monkeypatch
+    ):
+        mapping = self._mapping(monkeypatch, sphere_setup)
+        filters = self._filters(sphere_setup, sphere_setup.raw, False)
+
+        fused = fs_bridge._apply_lcmv_to_mni(sphere_setup.raw, filters, False, mapping)
+        stepwise, _ = fs_bridge._transform_to_mni(
+            sphere_setup.fwd,
+            fs_bridge._apply_lcmv(sphere_setup.raw, filters, False),
+            subject="sub-007",
+            subjects_dir="/fs",
+            trans_path="/fs/trans.fif",
+            parcellation_file=PARCELLATION,
+            reference_brain="parcellation",
+            spatial_resolution=8,
+        )
+
+        assert fused.shape == stepwise.shape
+        np.testing.assert_allclose(fused, stepwise, rtol=1e-6)
+
+    def test_output_is_the_single_precision_source_dtype(
+        self, sphere_setup, monkeypatch
+    ):
+        mapping = self._mapping(monkeypatch, sphere_setup)
+        filters = self._filters(sphere_setup, sphere_setup.epochs, True)
+        out = fs_bridge._apply_lcmv_to_mni(
+            sphere_setup.epochs, filters, True, mapping
+        )
+        assert out.dtype == fs_bridge._SOURCE_DTYPE
+
+    def test_grid_points_with_no_nearby_dipole_stay_at_zero(
+        self, sphere_setup, monkeypatch
+    ):
+        # The synthetic dipoles all sit at the MNI origin, so only the first
+        # grid point is within one 8 mm step.
+        mapping = self._mapping(monkeypatch, sphere_setup)
+        filters = self._filters(sphere_setup, sphere_setup.epochs, True)
+
+        out = fs_bridge._apply_lcmv_to_mni(
+            sphere_setup.epochs, filters, True, mapping
+        )
+        assert np.any(out[0] != 0)
+        np.testing.assert_array_equal(out[1:], 0)
+
+    def test_raises_on_an_empty_epochs_object(self, sphere_setup, monkeypatch):
+        mapping = self._mapping(monkeypatch, sphere_setup)
+        filters = self._filters(sphere_setup, sphere_setup.epochs, True)
+
+        empty = sphere_setup.epochs[:0]
+        with pytest.raises(ValueError, match="No epochs to beamform"):
+            fs_bridge._apply_lcmv_to_mni(empty, filters, True, mapping)

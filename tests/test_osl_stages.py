@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pickle
 import textwrap
 from pathlib import Path
@@ -99,6 +100,7 @@ class TestPreprocStage:
             "events_from_annotations",
             "ica_autoreject_safe",
             "ica_kurtosisreject",
+            "bad_channels_clean",
         ]
 
     def test_suppresses_osl_report_generation(self, cfg, monkeypatch):
@@ -227,6 +229,47 @@ class TestReportPlotGuard:
             with preproc_stage._skip_failing_report_plots():
                 raise KeyError("gen_html_data blew up outside a plot")
         assert preproc_report.plot_sensors is original
+
+
+class TestHeadless3D:
+    """``cv2`` poisons Qt for the whole process when osl-ephys imports it."""
+
+    def test_the_cv2_qt_plugin_path_is_cleared(self, monkeypatch):
+        from custom.osl._headless import setup_headless_3d
+
+        monkeypatch.setenv(
+            "QT_QPA_PLATFORM_PLUGIN_PATH", "/venv/lib/python3.13/site-packages/cv2/qt/plugins"
+        )
+        setup_headless_3d()
+        assert "QT_QPA_PLATFORM_PLUGIN_PATH" not in os.environ
+
+    def test_a_plugin_path_we_did_not_set_is_left_alone(self, monkeypatch):
+        from custom.osl._headless import setup_headless_3d
+
+        monkeypatch.setenv("QT_QPA_PLATFORM_PLUGIN_PATH", "/opt/qt/plugins")
+        setup_headless_3d()
+        assert os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] == "/opt/qt/plugins"
+
+    def test_the_qt_platform_is_left_alone(self, monkeypatch):
+        # Forcing QT_QPA_PLATFORM=offscreen breaks VTK under xvfb-run
+        # (BadWindow) and does not help when there is no display at all.
+        from custom.osl._headless import setup_headless_3d
+
+        monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+        setup_headless_3d()
+        assert "QT_QPA_PLATFORM" not in os.environ
+
+    def test_rendering_is_switched_off_screen(self):
+        import pyvista
+
+        from custom.osl._headless import setup_headless_3d
+
+        pyvista.OFF_SCREEN = False
+        try:
+            setup_headless_3d()
+            assert pyvista.OFF_SCREEN is True
+        finally:
+            pyvista.OFF_SCREEN = False
 
 
 # ---------------------------------------------------------------------------

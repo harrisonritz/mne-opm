@@ -385,3 +385,63 @@ class TestContrasts:
 
     def test_condition_names_survive_the_npz_key_round_trip(self):
         assert group_stage._safe_key("response/left") == "response__left"
+
+
+class TestWorkerCount:
+    """`group.n_workers` is a ceiling; the job's cores and subjects clamp it."""
+
+    def test_caps_workers_at_the_cpu_budget(self, monkeypatch):
+        monkeypatch.setattr(group_stage, "_available_cpus", lambda: 4)
+        assert group_stage._resolve_n_workers(8, n_subjects=10) == 4
+
+    def test_caps_workers_at_the_number_of_subjects(self, monkeypatch):
+        monkeypatch.setattr(group_stage, "_available_cpus", lambda: 16)
+        assert group_stage._resolve_n_workers(8, n_subjects=2) == 2
+
+    def test_keeps_the_configured_count_when_it_fits(self, monkeypatch):
+        monkeypatch.setattr(group_stage, "_available_cpus", lambda: 16)
+        assert group_stage._resolve_n_workers(8, n_subjects=10) == 8
+
+    def test_falls_back_to_the_config_when_cpus_are_unknown(self, monkeypatch):
+        monkeypatch.setattr(group_stage, "_available_cpus", lambda: None)
+        assert group_stage._resolve_n_workers(8, n_subjects=10) == 8
+
+    def test_never_returns_fewer_than_one_worker(self, monkeypatch):
+        monkeypatch.setattr(group_stage, "_available_cpus", lambda: 0)
+        assert group_stage._resolve_n_workers(0, n_subjects=0) == 1
+
+    def test_available_cpus_takes_the_smallest_signal(self, monkeypatch):
+        monkeypatch.setattr(group_stage.os, "sched_getaffinity", lambda _: set(range(32)))
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "4")
+        monkeypatch.setenv("MAX_WORKERS", "12")
+        assert group_stage._available_cpus() == 4
+
+    def test_available_cpus_ignores_unset_and_junk_env_vars(self, monkeypatch):
+        monkeypatch.setattr(group_stage.os, "sched_getaffinity", lambda _: set(range(6)))
+        monkeypatch.setenv("SLURM_CPUS_PER_TASK", "")
+        monkeypatch.delenv("MAX_WORKERS", raising=False)
+        assert group_stage._available_cpus() == 6
+
+    def test_sign_flip_all_runs_serially_once_clamped(self, monkeypatch, tmp_path):
+        """Two subjects on one core must not start a Dask cluster."""
+        monkeypatch.setattr(group_stage, "_available_cpus", lambda: 1)
+
+        def boom(*args, **kwargs):
+            raise AssertionError("should not have started a dask cluster")
+
+        monkeypatch.setattr(group_stage, "_flip_with_dask", boom)
+        monkeypatch.setattr(
+            group_stage.sign_flip,
+            "flip_subject",
+            lambda subject, **kw: {"subject": subject, "n_flipped": 0, "error": None},
+        )
+
+        results = group_stage._sign_flip_all(
+            tmp_path,
+            ["sub-001", "sub-002"],
+            {"n_workers": 8, "template": "sub-001"},
+            epoched=True,
+            source_method="lcmv",
+            groupdir=tmp_path,
+        )
+        assert [r["subject"] for r in results] == ["sub-001", "sub-002"]

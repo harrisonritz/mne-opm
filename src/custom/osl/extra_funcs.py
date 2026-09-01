@@ -26,6 +26,8 @@ ica_autoreject_safe
     osl-ephys' ``ica_autoreject``, skipping detectors whose channels are absent.
 ica_kurtosisreject
     Mark ICs whose time course has excessive kurtosis.
+bad_channels_clean
+    osl-ephys' ``bad_channels``, measured on the un-annotated data only.
 
 Constants
 ---------
@@ -349,9 +351,199 @@ def ica_kurtosisreject(dataset: Dict[str, Any], userargs: Dict[str, Any]) -> Dic
     return dataset
 
 
+# Channel-type strings osl-ephys' ``bad_channels`` accepts, and the
+# :func:`mne.pick_types` keyword each one sets.  Mirrored so a step can be
+# swapped between the two without changing its ``picks``.
+_PICK_TYPES: dict[str, dict] = {
+    "mag": dict(meg="mag"),
+    "grad": dict(meg="grad"),
+    "meg": dict(meg=True),
+    "eeg": dict(eeg=True),
+    "eog": dict(eog=True),
+    "ecg": dict(ecg=True),
+    "misc": dict(misc=True),
+}
+
+
+def _channel_sds(raw, chinds, reject_by_annotation, block: int = 200_000):
+    """Per-channel standard deviation, read a block of samples at a time.
+
+    Equivalent to ``np.std(raw.get_data(picks=chinds, ...), axis=1)`` but never
+    materialising the whole recording.  Uses the shifted-data form of the
+    variance so that accumulating over millions of samples stays stable.
+
+    Parameters
+    ----------
+    raw : mne.io.Raw
+        Recording to measure.
+    chinds : numpy.ndarray
+        Channel indices to measure.
+    reject_by_annotation : str or None
+        Passed to :meth:`mne.io.Raw.get_data` for each block.
+    block : int, optional
+        Samples read at a time.
+
+    Returns
+    -------
+    sd : numpy.ndarray
+        ``(n_channels,)`` standard deviations (population, as ``np.std``).
+    n_kept : int
+        Samples the standard deviations were computed over.
+    """
+    shift = None
+    total = np.zeros(len(chinds))
+    total_sq = np.zeros(len(chinds))
+    n_kept = 0
+
+    for start in range(0, raw.n_times, block):
+        data = raw.get_data(
+            picks=chinds,
+            start=start,
+            stop=min(start + block, raw.n_times),
+            reject_by_annotation=reject_by_annotation,
+        )
+        if data.shape[1] == 0:  # the whole block is annotated bad
+            continue
+        if shift is None:
+            shift = data[:, 0].copy()
+        data = data - shift[:, None]
+        total += data.sum(axis=1)
+        total_sq += np.square(data).sum(axis=1)
+        n_kept += data.shape[1]
+
+    if n_kept == 0:
+        return np.zeros(len(chinds)), 0
+
+    mean = total / n_kept
+    return np.sqrt(np.maximum(total_sq / n_kept - mean**2, 0.0)), n_kept
+
+
+def bad_channels_clean(dataset: Dict[str, Any], userargs: Dict[str, Any]) -> Dict:
+    """osl-ephys' ``bad_channels``, measured on the un-annotated data only.
+
+    Same detector as :func:`osl_ephys.preprocessing.osl_wrappers.bad_channels`
+    -- a generalised ESD test over each channel's standard deviation -- with
+    one change: the samples inside ``bad_segment`` annotations are left out of
+    that standard deviation.
+
+    osl-ephys' version reads the data with a plain ``raw.get_data(picks=...)``,
+    so every transient the preceding ``bad_segments`` steps just annotated
+    still counts toward the metric.  On a long recording those transients
+    dominate: for sub-013 (64 min) they lift the median channel SD from 0.29 pT
+    to 1.94 pT and smear the ranking into a continuum, so GESD flags the few
+    channels with the largest *transients* and masking hides the ones that are
+    steadily noisy.  Those sensors then survive into epoching at 3-6x the
+    typical channel amplitude and blow the peak-to-peak rejection on almost
+    every trial -- 34 of 5054 epochs survived for sub-013, where omitting the
+    annotated segments here recovers about 3750.
+
+    Use it in place of ``bad_channels``, with the same options::
+
+        preproc:
+          - bad_segments: {segment_len: 500, picks: mag}
+          - bad_channels_clean: {picks: mag, significance_level: 0.05}
+
+    Parameters
+    ----------
+    dataset : dict
+        osl-ephys dataset dict.  Must contain ``'raw'``.
+    userargs : dict
+        Step options:
+
+        ``picks`` : str
+            Channel type to test, as :func:`mne.pick_types` names them; see
+            :data:`_PICK_TYPES`.  Channels already marked bad are skipped, so
+            repeated passes look only at what is left.
+        ``significance_level`` : float, optional
+            GESD significance level.  Default 0.05, as in osl-ephys.
+        ``ref_meg`` : str, optional
+            Passed to :func:`mne.pick_types`.  Default ``'auto'``.
+        ``reject_by_annotation`` : str or None, optional
+            ``'omit'`` (default) drops annotated bad spans from the metric;
+            None keeps them, reproducing osl-ephys' behaviour exactly.
+
+    Returns
+    -------
+    dataset : dict
+        The input dict, with newly detected channels appended to
+        ``dataset['raw'].info['bads']``.
+
+    Raises
+    ------
+    ValueError
+        If ``picks`` is missing, names a channel type this detector does not
+        handle, or the recording has no usable samples left.
+    """
+    from sails.utils import gesd
+
+    logger.info("CUSTOM Stage - %s", "bad_channels_clean")
+    logger.info("userargs: %s", str(userargs))
+
+    userargs = dict(userargs)
+    picks = userargs.pop("picks", None)
+    ref_meg = userargs.pop("ref_meg", "auto")
+    significance_level = userargs.pop("significance_level", 0.05)
+    reject_by_annotation = userargs.pop("reject_by_annotation", "omit")
+    if userargs:
+        raise ValueError(
+            f"bad_channels_clean got unexpected options {sorted(userargs)}. "
+            f"Valid options: picks, significance_level, ref_meg, "
+            f"reject_by_annotation."
+        )
+    if picks not in _PICK_TYPES:
+        raise ValueError(
+            f"bad_channels_clean needs picks to be one of "
+            f"{sorted(_PICK_TYPES)}, got {picks!r}."
+        )
+
+    raw = dataset["raw"]
+    chinds = mne.pick_types(
+        raw.info, ref_meg=ref_meg, exclude="bads", **_PICK_TYPES[picks]
+    )
+    if chinds.size == 0:
+        logger.warning("bad_channels_clean: no %s channels left to test", picks)
+        return dataset
+
+    sd, n_kept = _channel_sds(raw, chinds, reject_by_annotation)
+    if n_kept == 0:
+        raise ValueError(
+            "bad_channels_clean: every sample is inside a bad annotation, so "
+            "there is nothing to measure. Check the bad_segments steps above."
+        )
+    logger.info(
+        "measuring %d %s channels over %.1f%% of the recording (%s annotated "
+        "segments)",
+        len(chinds),
+        picks,
+        100 * n_kept / raw.n_times,
+        "excluding" if reject_by_annotation else "including",
+    )
+
+    # This is what ``detect_artefacts(axis=0, reject_mode='dim')`` does -- it
+    # reduces to ``gesd(np.std(data, axis=1))`` -- but reached without holding
+    # a second copy of the recording, which for a 64-minute OPM file is 7 GB.
+    bdinds, _ = gesd(sd, alpha=significance_level)
+
+    ch_names = np.array(raw.ch_names)[chinds]
+    bad = [str(name) for name in ch_names[np.where(bdinds)[0]]]
+    logger.info(
+        "Modality %s - %d/%d channels rejected     (%f%%)",
+        picks,
+        len(bad),
+        len(bdinds),
+        100 * len(bad) / len(bdinds),
+    )
+    if bad:
+        logger.info("Marking as bad: %s", bad)
+        raw.info["bads"].extend(bad)
+
+    return dataset
+
+
 PREPROC_EXTRA_FUNCS = [
     events_from_annotations,
     ica_autoreject_safe,
     ica_kurtosisreject,
+    bad_channels_clean,
 ]
 """Custom functions passed to osl-ephys as ``extra_funcs`` for the preproc stage."""

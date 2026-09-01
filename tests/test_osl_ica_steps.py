@@ -239,11 +239,12 @@ class TestIcaKurtosisReject:
 
 
 class TestRegistry:
-    def test_all_three_steps_are_registered(self):
+    def test_every_step_is_registered(self):
         assert [f.__name__ for f in PREPROC_EXTRA_FUNCS] == [
             "events_from_annotations",
             "ica_autoreject_safe",
             "ica_kurtosisreject",
+            "bad_channels_clean",
         ]
 
     def test_steps_resolve_through_osls_dispatcher(self):

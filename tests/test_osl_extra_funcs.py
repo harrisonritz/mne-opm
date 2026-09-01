@@ -9,6 +9,8 @@ import pytest
 from custom.osl.extra_funcs import (
     DEFAULT_EXCLUDE_PREFIXES,
     PREPROC_EXTRA_FUNCS,
+    _channel_sds,
+    bad_channels_clean,
     events_from_annotations,
 )
 
@@ -195,6 +197,131 @@ class TestEventsFromAnnotations:
         assert set(epochs.event_id) == set(TRIGGER_CODES)
 
 
+@pytest.fixture
+def raw_with_a_noisy_channel(raw_meg):
+    """Raw where one channel is steadily noisy and another has one transient.
+
+    The transient is annotated, the way the ``bad_segments`` steps ahead of
+    this one annotate theirs.  osl-ephys' detector measures the transient and
+    misses the steadily-noisy channel; measuring the un-annotated data only
+    reverses that.
+    """
+    raw = raw_meg.copy()
+    picks = mne.pick_types(raw.info, meg=True)
+    data = raw.get_data()
+
+    steady = picks[0]
+    data[steady] *= 12.0
+
+    spiky = picks[1]
+    onset, duration = 2.0, 0.5
+    start = int(onset * raw.info["sfreq"])
+    stop = int((onset + duration) * raw.info["sfreq"])
+    data[spiky, start:stop] *= 400.0
+
+    out = mne.io.RawArray(data, raw.info.copy(), verbose="error")
+    out.set_annotations(
+        mne.Annotations(onset=[onset], duration=[duration], description=["bad_segment_mag"])
+    )
+    return out, out.ch_names[steady], out.ch_names[spiky]
+
+
+class TestBadChannelsClean:
+    """The GESD metric has to ignore what bad_segments already annotated."""
+
+    def test_the_steadily_noisy_channel_is_found(self, raw_with_a_noisy_channel):
+        raw, steady, _ = raw_with_a_noisy_channel
+        bad_channels_clean({"raw": raw}, {"picks": "mag"})
+        assert steady in raw.info["bads"]
+
+    def test_keeping_the_annotated_segment_hides_it(self, raw_with_a_noisy_channel):
+        # This is osl-ephys' behaviour, and the bug being worked around: the
+        # annotated transient dominates the SDs and masks the noisy channel.
+        raw, steady, spiky = raw_with_a_noisy_channel
+        bad_channels_clean(
+            {"raw": raw}, {"picks": "mag", "reject_by_annotation": None}
+        )
+        assert spiky in raw.info["bads"]
+        assert steady not in raw.info["bads"]
+
+    def test_channels_already_marked_bad_are_not_retested(
+        self, raw_with_a_noisy_channel
+    ):
+        raw, steady, _ = raw_with_a_noisy_channel
+        raw.info["bads"] = [steady]
+        bad_channels_clean({"raw": raw}, {"picks": "mag"})
+        assert raw.info["bads"].count(steady) == 1
+
+    def test_the_dataset_is_returned_for_the_next_step(
+        self, raw_with_a_noisy_channel
+    ):
+        raw, _, _ = raw_with_a_noisy_channel
+        dataset = {"raw": raw}
+        assert bad_channels_clean(dataset, {"picks": "mag"}) is dataset
+
+    def test_an_unknown_channel_type_is_rejected(self, raw_meg):
+        with pytest.raises(ValueError, match="picks"):
+            bad_channels_clean({"raw": raw_meg}, {"picks": "seeg"})
+
+    def test_a_missing_picks_is_rejected(self, raw_meg):
+        with pytest.raises(ValueError, match="picks"):
+            bad_channels_clean({"raw": raw_meg}, {})
+
+    def test_unknown_options_are_rejected(self, raw_meg):
+        # A typo in the YAML should fail here, not be silently ignored.
+        with pytest.raises(ValueError, match="significance_leve"):
+            bad_channels_clean(
+                {"raw": raw_meg}, {"picks": "mag", "significance_leve": 0.05}
+            )
+
+    def test_raises_when_everything_is_annotated_bad(self, raw_meg):
+        raw = raw_meg.copy()
+        raw.set_annotations(
+            mne.Annotations(
+                onset=[0.0],
+                duration=[raw.times[-1] + 1.0],
+                description=["bad_segment_mag"],
+            )
+        )
+        with pytest.raises(ValueError, match="every sample"):
+            bad_channels_clean({"raw": raw}, {"picks": "mag"})
+
+
+class TestChannelSds:
+    """The streamed metric has to equal the one-shot one it replaces."""
+
+    def test_it_matches_np_std_whatever_the_block_size(self, raw_meg):
+        picks = mne.pick_types(raw_meg.info, meg=True)
+        expected = raw_meg.get_data(picks=picks).std(axis=1)
+        for block in (raw_meg.n_times, 1000, 137):
+            sd, n_kept = _channel_sds(raw_meg, picks, None, block=block)
+            assert n_kept == raw_meg.n_times
+            assert np.allclose(sd, expected, rtol=1e-9)
+
+    def test_omitting_annotations_matches_get_data(self, raw_meg):
+        raw = raw_meg.copy()
+        raw.set_annotations(
+            mne.Annotations([2.0], [1.5], ["bad_segment_mag"])
+        )
+        picks = mne.pick_types(raw.info, meg=True)
+        expected = raw.get_data(picks=picks, reject_by_annotation="omit")
+
+        sd, n_kept = _channel_sds(raw, picks, "omit", block=500)
+
+        assert n_kept == expected.shape[1] < raw.n_times
+        assert np.allclose(sd, expected.std(axis=1), rtol=1e-6)
+
+    def test_a_fully_annotated_recording_keeps_nothing(self, raw_meg):
+        raw = raw_meg.copy()
+        raw.set_annotations(
+            mne.Annotations([0.0], [raw.times[-1] + 1.0], ["bad_segment_mag"])
+        )
+        picks = mne.pick_types(raw.info, meg=True)
+        sd, n_kept = _channel_sds(raw, picks, "omit")
+        assert n_kept == 0
+        assert not sd.any()
+
+
 class TestRegistry:
     def test_the_step_is_registered_under_its_config_name(self):
         # osl-ephys matches extra_funcs by __name__, so the function name is
@@ -202,6 +329,9 @@ class TestRegistry:
         assert "events_from_annotations" in [
             f.__name__ for f in PREPROC_EXTRA_FUNCS
         ]
+
+    def test_bad_channels_clean_is_registered(self):
+        assert "bad_channels_clean" in [f.__name__ for f in PREPROC_EXTRA_FUNCS]
 
     def test_default_exclude_prefixes(self):
         assert DEFAULT_EXCLUDE_PREFIXES == ("BAD", "EDGE")

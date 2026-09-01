@@ -34,6 +34,7 @@ from types import SimpleNamespace
 from typing import Optional
 
 from ._config import source_config
+from ._headless import setup_headless_3d
 from ._paths import resolve_paths
 from .fs_bridge import SOURCE_EXTRA_FUNCS
 
@@ -70,6 +71,10 @@ def run(cfg: SimpleNamespace) -> bool:
         If the config has no ``source_recon`` section.
     """
     from osl_ephys.source_recon import run_src_chain
+
+    # Must follow the import above: it pulls in cv2, whose bundled Qt plugins
+    # would otherwise abort the process the moment a 3D figure is drawn.
+    setup_headless_3d()
 
     pipeline = cfg.pipeline
     paths = resolve_paths(pipeline)

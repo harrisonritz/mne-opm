@@ -221,7 +221,9 @@ def _sign_flip_all(
         **options,
     )
 
-    n_workers = int(group_cfg.get("n_workers", 1) or 1)
+    n_workers = _resolve_n_workers(
+        int(group_cfg.get("n_workers", 1) or 1), len(subjects)
+    )
     if n_workers > 1:
         results = _flip_with_dask(subjects, work, n_workers)
     else:
@@ -252,6 +254,69 @@ def _sign_flip_all(
         f"subject(s)"
     )
     return results
+
+
+def _available_cpus() -> Optional[int]:
+    """Number of CPUs this process may actually use.
+
+    Takes the smallest of the signals that are present: the CPU affinity mask
+    the scheduler set for this process, SLURM's per-task allocation, and the
+    ``--workers`` value ``mne-opm.sh`` exports as ``MAX_WORKERS``.
+
+    Returns
+    -------
+    n_cpus : int or None
+        The CPU budget, or None if none of the signals is available.
+    """
+    counts = []
+
+    sched_getaffinity = getattr(os, "sched_getaffinity", None)
+    if sched_getaffinity is not None:
+        counts.append(len(sched_getaffinity(0)))
+
+    for var in ("SLURM_CPUS_PER_TASK", "MAX_WORKERS"):
+        value = os.environ.get(var, "").strip()
+        if value.isdigit() and int(value) > 0:
+            counts.append(int(value))
+
+    return min(counts) if counts else None
+
+
+def _resolve_n_workers(requested: int, n_subjects: int) -> int:
+    """Clamp the configured Dask worker count to what the job can support.
+
+    ``group.n_workers`` in the config is a ceiling, not a demand.  Starting
+    more workers than the job has cores oversubscribes the CPUs, and -- since
+    Dask splits the job's memory limit evenly between the workers it starts --
+    shrinks each worker's share until the sign-flip search, which holds a
+    subject's time-delay-embedded covariances in memory, is killed for
+    exceeding it.  More workers than subjects wastes memory the same way, the
+    flip search being one task per subject.
+
+    Parameters
+    ----------
+    requested : int
+        ``group.n_workers`` from the config.
+    n_subjects : int
+        Number of subjects to sign-flip; one task each.
+
+    Returns
+    -------
+    n_workers : int
+        Worker count to start, at least 1.
+    """
+    cpus = _available_cpus()
+
+    limits = [requested, n_subjects] + ([cpus] if cpus is not None else [])
+    n_workers = max(1, min(limits))
+
+    if n_workers < requested:
+        print(
+            f"[osl:group] capping dask workers at {n_workers}: config asked "
+            f"for {requested}, with {n_subjects} subject(s) and "
+            f"{cpus if cpus is not None else 'unknown'} usable cpu(s)"
+        )
+    return n_workers
 
 
 def _flip_with_dask(subjects: Sequence[str], work: dict, n_workers: int) -> list[dict]:
