@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from custom.osl import collate as collate_stage
+from custom.osl import group as group_stage
 from custom.osl import preproc as preproc_stage
 from custom.osl import source as source_stage
 from custom.osl._config import load_config
@@ -529,25 +530,45 @@ class TestCli:
         self.run_osl = run_osl
 
     def test_every_stage_is_dispatchable(self, cfg, monkeypatch):
+        from custom.osl import repair_parc as repair_parc_stage
+        from custom.osl import validate as validate_stage
+
         called = []
         for name, module in [
             ("preproc", preproc_stage),
             ("source", source_stage),
             ("collate", collate_stage),
+            ("validate", validate_stage),
+            ("repair-parc", repair_parc_stage),
         ]:
             monkeypatch.setattr(
                 module, "run", lambda c, n=name: called.append(n) or True
             )
-        from custom.osl import validate as validate_stage
 
-        monkeypatch.setattr(
-            validate_stage, "run", lambda c: called.append("validate") or True
-        )
-
-        for stage in ("preproc", "source", "collate", "validate"):
+        stages = ("preproc", "source", "collate", "validate", "repair-parc")
+        for stage in stages:
             assert self.run_osl.run_stage(stage, cfg) is True
 
-        assert called == ["preproc", "source", "collate", "validate"]
+        assert called == list(stages)
+
+    def test_no_advertised_stage_is_unroutable(self, cfg, monkeypatch):
+        # Every name argparse accepts must reach a stage; a choice added to
+        # STAGE_CHOICES without a branch in run_stage would raise here.
+        from custom.osl import repair_parc as repair_parc_stage
+        from custom.osl import validate as validate_stage
+
+        for module in (
+            preproc_stage,
+            source_stage,
+            group_stage,
+            collate_stage,
+            validate_stage,
+            repair_parc_stage,
+        ):
+            monkeypatch.setattr(module, "run", lambda c: True)
+
+        for stage in self.run_osl.STAGE_CHOICES:
+            assert self.run_osl.run_stage(stage, cfg) is True
 
     def test_all_runs_preproc_then_source(self, cfg, monkeypatch):
         called = []

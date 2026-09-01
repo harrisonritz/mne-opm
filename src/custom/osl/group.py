@@ -167,14 +167,13 @@ def _resolve_subjects(
             else str(s)
             for s in subjects
         ]
+        found = sign_flip.available_subjects(outdir, labels, epoched, source_method)
     else:
-        # Discover from the output tree: any subject directory with parcel data.
-        labels = sorted(
-            child.name for child in outdir.iterdir() if (child / "parc").is_dir()
-        )
-        print(f"[osl:group] discovered {len(labels)} subject director(ies)")
+        # Discover from the output tree: any subject directory with parcel
+        # data. run() prints the count; available_subjects logs each subject
+        # directory that turned out to have no parcellated file in it.
+        found = sign_flip.discover_subjects(outdir, epoched, source_method)
 
-    found = sign_flip.available_subjects(outdir, labels, epoched, source_method)
     if len(found) < 2:
         raise ValueError(
             f"Sign flipping needs two or more subjects with parcellated data "

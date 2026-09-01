@@ -42,6 +42,10 @@ Examples
     # After the array job, build the group reports
     python src/custom/run_osl.py --stage=collate --config=osl/trial.yaml
 
+    # One-off: restore condition names and tmin on parcel files written
+    # before custom.osl.parcel_epochs replaced osl-ephys' parcel converter
+    python src/custom/run_osl.py --stage=repair-parc --config=osl/trial.yaml
+
 Configuration
 -------------
 The config is a YAML file (see ``custom.osl._config``) holding a ``pipeline``
@@ -67,6 +71,7 @@ if _SRC_DIR not in sys.path:
 from custom.osl import collate as collate_stage
 from custom.osl import group as group_stage
 from custom.osl import preproc as preproc_stage
+from custom.osl import repair_parc as repair_parc_stage
 from custom.osl import source as source_stage
 from custom.osl import validate as validate_stage
 from custom.osl._config import load_config
@@ -79,6 +84,7 @@ STAGE_CHOICES: list[str] = [
     "group",
     "collate",
     "validate",
+    "repair-parc",
 ]
 
 
@@ -154,6 +160,8 @@ def run_stage(stage: str, cfg) -> bool:
         return source_stage.run(cfg)
     if stage == "group":
         return group_stage.run(cfg)
+    if stage == "repair-parc":
+        return repair_parc_stage.run(cfg)
     if stage == "collate":
         return collate_stage.run(cfg)
     if stage == "validate":

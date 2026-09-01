@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import mne
 import numpy as np
 import pytest
 
@@ -493,6 +494,97 @@ class TestResampleParcellation:
         assert np.isfinite(parcel_ts).all()
         assert weights.shape == (coords.shape[1], 52)
         assert assignments.shape == (coords.shape[1], 52)
+
+
+# ---------------------------------------------------------------------------
+# Saving the parcellated output
+# ---------------------------------------------------------------------------
+
+
+class TestSaveParcellated:
+    """The parcel file must stay usable by the group stage.
+
+    osl-ephys' own converter drops ``event_id`` and ``tmin``, which the group
+    stage needs to average by condition -- and does so silently, so only an
+    explicit check catches a regression here.
+    """
+
+    N_PARCELS = 3
+    N_TIMES = 8
+    N_EPOCHS = 4
+
+    def _epochs(self, sfreq=100.0, tmin=-0.02):
+        events = np.column_stack(
+            [
+                np.arange(self.N_EPOCHS) * self.N_TIMES + 50,
+                np.zeros(self.N_EPOCHS, int),
+                np.tile([201, 202], self.N_EPOCHS // 2),
+            ]
+        )
+        return mne.EpochsArray(
+            np.random.RandomState(0).randn(self.N_EPOCHS, 2, self.N_TIMES) * 1e-12,
+            mne.create_info(["MEG0", "MEG1"], sfreq, "mag"),
+            events=events,
+            event_id={"response/left": 201, "response/right": 202},
+            tmin=tmin,
+            verbose=False,
+        )
+
+    def _parc_data(self):
+        return np.random.RandomState(1).randn(
+            self.N_PARCELS, self.N_TIMES, self.N_EPOCHS
+        )
+
+    def test_the_condition_names_reach_the_file(self, tmp_path):
+        epochs = self._epochs()
+        path, _ = fs_bridge._save_parcellated(
+            self._parc_data(), epochs, True, str(tmp_path), "stim"
+        )
+
+        written = mne.read_epochs(path, preload=True, verbose="ERROR")
+        assert written.event_id == epochs.event_id
+        assert len(written["response/left"]) == 2
+
+    def test_the_epoch_time_axis_reaches_the_file(self, tmp_path):
+        epochs = self._epochs(tmin=-0.02)
+        path, _ = fs_bridge._save_parcellated(
+            self._parc_data(), epochs, True, str(tmp_path), "stim"
+        )
+
+        written = mne.read_epochs(path, preload=True, verbose="ERROR")
+        assert written.tmin == pytest.approx(-0.02)
+        assert written.times == pytest.approx(epochs.times)
+
+    def test_the_rate_is_the_decimated_one_the_beamformer_saw(self, tmp_path):
+        # _save_parcellated is handed the decimated object, not the raw rate.
+        epochs = self._epochs(sfreq=200.0)
+        path, _ = fs_bridge._save_parcellated(
+            self._parc_data(), epochs, True, str(tmp_path), "stim"
+        )
+
+        written = mne.read_epochs(path, preload=False, verbose="ERROR")
+        assert written.info["sfreq"] == pytest.approx(200.0)
+
+    def test_the_parcel_data_is_written_unchanged(self, tmp_path):
+        parc_data = self._parc_data()
+        path, _ = fs_bridge._save_parcellated(
+            parc_data, self._epochs(), True, str(tmp_path), "stim"
+        )
+
+        written = mne.read_epochs(path, preload=True, verbose="ERROR")
+        assert written.get_data(copy=False) == pytest.approx(
+            np.swapaxes(parc_data.T, 1, 2)
+        )
+
+    def test_the_file_is_named_where_the_group_stage_looks(self, tmp_path):
+        from custom.osl import sign_flip
+
+        parcdir = tmp_path / "sub-007_ses-01" / "parc"
+        path, _ = fs_bridge._save_parcellated(
+            self._parc_data(), self._epochs(), True, str(parcdir), "stim"
+        )
+        expected = sign_flip.parc_file(tmp_path, "sub-007_ses-01", True, "lcmv")
+        assert str(path) == str(expected)
 
 
 # ---------------------------------------------------------------------------

@@ -37,6 +37,7 @@ from ._config import source_config
 from ._headless import setup_headless_3d
 from ._paths import resolve_paths
 from .fs_bridge import SOURCE_EXTRA_FUNCS
+from .parcel_epochs import preserving_epoch_metadata
 
 
 # Steps that take the resolved FreeSurfer paths, and the pipeline keys they
@@ -110,22 +111,27 @@ def run(cfg: SimpleNamespace) -> bool:
     print(f"[osl:source] smri:     {paths.smri}")
     print(f"[osl:source] steps:    {[next(iter(s)) for s in config['source_recon']]}")
 
-    flag = run_src_chain(
-        config,
-        outdir=str(paths.outdir),
-        subject=paths.subject_label,
-        preproc_file=None if use_epochs else source_input,
-        smri_file=paths.smri,
-        epoch_file=source_input if use_epochs else None,
-        surface_extraction_method=surface_extraction_method,
-        logsdir=str(paths.logsdir),
-        reportdir=str(paths.src_reportdir),
-        gen_report=False,
-        extra_funcs=extra_funcs,
-        random_seed=(
-            pipeline.random_seed if pipeline.random_seed is not None else "auto"
-        ),
-    )
+    # osl-ephys' own parcel converter drops the condition names and the epoch
+    # time axis, which the group stage needs to average by condition. The
+    # rhino backend runs osl-ephys' beamform_and_parcellate, so the fix has to
+    # be installed around the chain rather than in a wrapper of ours.
+    with preserving_epoch_metadata():
+        flag = run_src_chain(
+            config,
+            outdir=str(paths.outdir),
+            subject=paths.subject_label,
+            preproc_file=None if use_epochs else source_input,
+            smri_file=paths.smri,
+            epoch_file=source_input if use_epochs else None,
+            surface_extraction_method=surface_extraction_method,
+            logsdir=str(paths.logsdir),
+            reportdir=str(paths.src_reportdir),
+            gen_report=False,
+            extra_funcs=extra_funcs,
+            random_seed=(
+                pipeline.random_seed if pipeline.random_seed is not None else "auto"
+            ),
+        )
 
     if not flag:
         print(

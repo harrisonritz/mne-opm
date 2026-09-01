@@ -31,6 +31,8 @@ parc_file
     Path to a subject's parcellated data.
 sflip_file
     Path to a subject's sign-flipped parcellated data.
+discover_subjects
+    Subject labels with parcellated data under an output directory.
 find_template
     Pick the template subject to align everyone else to.
 find_flips_for_subject
@@ -116,6 +118,42 @@ def sflip_file(
     return op.join(
         str(outdir), subject, f"{subject}_sflip_{source_method}-parc-{suffix}.fif"
     )
+
+
+def discover_subjects(
+    outdir: str | Path,
+    epoched: bool = True,
+    source_method: str = "lcmv",
+) -> list[str]:
+    """Return every subject label under ``outdir`` that has parcellated data.
+
+    The stages that run once over the whole sample -- the group analysis, and
+    the parcel repair -- take their subject list from the output tree rather
+    than from a config, so that they pick up exactly the subjects whose source
+    stage succeeded.
+
+    Parameters
+    ----------
+    outdir : str or Path
+        osl-ephys output directory.
+    epoched : bool, optional
+        Look for epoched rather than continuous parcellated data.
+    source_method : str, optional
+        Inverse method prefix on the parcel file.
+
+    Returns
+    -------
+    subjects : list of str
+        Subject labels, sorted.  Empty when ``outdir`` does not exist.
+    """
+    outdir = Path(outdir)
+    if not outdir.is_dir():
+        return []
+
+    labels = sorted(
+        child.name for child in outdir.iterdir() if (child / "parc").is_dir()
+    )
+    return available_subjects(outdir, labels, epoched, source_method)
 
 
 def available_subjects(

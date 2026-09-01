@@ -25,6 +25,10 @@ collate
     across every subject present in the report directories.
 validate
     Check a config without running anything.
+repair-parc
+    One-off migration: restore the condition names and the epoch time axis on
+    parcel files written before ``parcel_epochs`` replaced osl-ephys' parcel
+    converter.
 
 Source backends
 ---------------
@@ -57,6 +61,11 @@ group
     The group-level ``group`` stage: sign flipping and group contrasts.
 sign_flip
     Dipole sign-flipping helpers used by the group stage.
+parcel_epochs
+    Parcel ``Epochs`` that keep their condition names and epoch time axis,
+    which osl-ephys' own converter drops.
+repair_parc
+    The ``repair-parc`` stage.
 validate
     Config validation.
 
@@ -70,7 +79,9 @@ from . import (
     extra_funcs,
     fs_bridge,
     group,
+    parcel_epochs,
     preproc,
+    repair_parc,
     sign_flip,
     source,
     validate,
@@ -84,6 +95,7 @@ from .extra_funcs import (
     ica_kurtosisreject,
 )
 from .fs_bridge import SOURCE_EXTRA_FUNCS
+from .parcel_epochs import convert2mne_epochs, preserving_epoch_metadata
 from .validate import validate_config
 
 __all__ = [
@@ -94,7 +106,9 @@ __all__ = [
     "extra_funcs",
     "fs_bridge",
     "group",
+    "parcel_epochs",
     "preproc",
+    "repair_parc",
     "sign_flip",
     "source",
     "validate",
@@ -111,4 +125,7 @@ __all__ = [
     "ica_autoreject_safe",
     "ica_kurtosisreject",
     "validate_config",
+    # Parcel epochs
+    "convert2mne_epochs",
+    "preserving_epoch_metadata",
 ]

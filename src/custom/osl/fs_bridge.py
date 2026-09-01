@@ -62,6 +62,8 @@ from osl_ephys.report import src_report
 from osl_ephys.source_recon import parcellation
 from osl_ephys.source_recon.rhino import utils as rhino_utils
 
+from .parcel_epochs import convert2mne_epochs
+
 
 logger = logging.getLogger(__name__)
 
@@ -1551,12 +1553,19 @@ def _orthogonalise(
 
 
 def _save_parcellated(parcel_data, data, is_epochs, parcdir, extra_chans):
-    """Write the parcellated data as an MNE Raw or Epochs file."""
+    """Write the parcellated data as an MNE Raw or Epochs file.
+
+    Epochs go through :func:`custom.osl.parcel_epochs.convert2mne_epochs`
+    rather than osl-ephys' own, which drops the condition names and the epoch
+    time axis; see that module for what goes wrong downstream when they are
+    lost.  ``data`` is the decimated object the beamformer was applied to, so
+    its sampling rate matches ``parcel_data``.
+    """
     os.makedirs(parcdir, exist_ok=True)
 
     if is_epochs:
         parc_fif_file = op.join(parcdir, "lcmv-parc-epo.fif")
-        parc_obj = parcellation.convert2mne_epochs(parcel_data, data)
+        parc_obj = convert2mne_epochs(parcel_data, data)
     else:
         parc_fif_file = op.join(parcdir, "lcmv-parc-raw.fif")
         parc_obj = parcellation.convert2mne_raw(

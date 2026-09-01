@@ -20,7 +20,17 @@ SFREQ = 100.0
 
 
 def make_parc_epochs(n_epochs=8, n_parcels=N_PARCELS, seed=0, flips=None):
-    """Parcellated Epochs named the way osl-ephys' convert2mne_epochs names them."""
+    """Parcellated Epochs as the source stage writes them.
+
+    Channels follow osl-ephys' ``parcel_N`` convention, and the condition
+    names and time axis are the ones
+    :func:`custom.osl.parcel_epochs.convert2mne_epochs` preserves.  osl-ephys'
+    own converter drops both -- see
+    :class:`tests.test_osl_parcel_epochs.TestConvert2mneEpochs` -- and a
+    parcel file in that state makes the condition averaging below fill every
+    subject with NaN, which is why the group stage is only ever handed
+    labelled input.
+    """
     rng = np.random.RandomState(seed)
     info = mne.create_info(
         [f"parcel_{i}" for i in range(n_parcels)], SFREQ, ["misc"] * n_parcels
@@ -86,6 +96,16 @@ class TestPaths:
         assert sign_flip.sflip_file("/out", "sub-007", epoched=True).endswith(
             "/out/sub-007/sub-007_sflip_lcmv-parc-epo.fif"
         )
+
+    def test_discover_subjects_finds_every_subject_with_parcel_data(self, tmp_path):
+        write_subject(tmp_path, "sub-001")
+        write_subject(tmp_path, "sub-000")
+        (tmp_path / "logs").mkdir()  # not a subject directory
+
+        assert sign_flip.discover_subjects(tmp_path) == ["sub-000", "sub-001"]
+
+    def test_discover_subjects_on_a_missing_directory_is_empty(self, tmp_path):
+        assert sign_flip.discover_subjects(tmp_path / "nope") == []
 
     def test_available_subjects_reports_only_what_exists(self, tmp_path):
         write_subject(tmp_path, "sub-001")
