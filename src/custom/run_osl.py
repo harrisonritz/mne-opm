@@ -16,6 +16,8 @@ all
 group
     Sign-flip every subject against a template, then compute group condition
     averages and contrasts.  Run once, after the array finishes.
+group-plot
+    Re-render the saved group figures without re-running sign flipping.
 collate
     Rebuild the group-level HTML reports across all subjects.  Run once, after
     the array finishes -- not per subject.
@@ -41,6 +43,9 @@ Examples
 
     # After the array job, build the group reports
     python src/custom/run_osl.py --stage=collate --config=osl/trial.yaml
+
+    # Re-render the saved group figures after editing custom.osl.group
+    python src/custom/run_osl.py --stage=group-plot --config=osl/trial.yaml
 
     # One-off: restore condition names and tmin on parcel files written
     # before custom.osl.parcel_epochs replaced osl-ephys' parcel converter
@@ -82,6 +87,7 @@ STAGE_CHOICES: list[str] = [
     "source",
     "all",
     "group",
+    "group-plot",
     "collate",
     "validate",
     "repair-parc",
@@ -160,6 +166,8 @@ def run_stage(stage: str, cfg) -> bool:
         return source_stage.run(cfg)
     if stage == "group":
         return group_stage.run(cfg)
+    if stage == "group-plot":
+        return group_stage.plot_only(cfg)
     if stage == "repair-parc":
         return repair_parc_stage.run(cfg)
     if stage == "collate":
@@ -208,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     except (KeyError, ValueError) as e:
         print(f"\n[ERROR] Configuration error: {e}")
         return 1
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"\n[ERROR] Stage '{args.stage}' failed: {e}")
         import traceback
 

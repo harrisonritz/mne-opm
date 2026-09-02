@@ -20,6 +20,8 @@ source
 group
     Sign-flip every subject's parcel time courses against a template and
     compute group-level condition averages and contrasts.
+group-plot
+    Re-render the saved group figures without re-running sign flipping.
 collate
     Regenerate the group-level preprocessing and source-recon HTML reports
     across every subject present in the report directories.

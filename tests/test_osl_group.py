@@ -328,6 +328,16 @@ class TestGroupStage:
         assert (groupdir / "sign_flip_summary.png").exists()
         assert (groupdir / "contrast_responseHand.png").exists()
 
+    def test_plot_only_rerenders_saved_figures(self, group_cfg):
+        cfg, outdir = group_cfg
+        group_stage.run(cfg)
+
+        path = outdir / "group" / "contrast_responseHand.png"
+        path.unlink()
+
+        assert group_stage.plot_only(cfg) is True
+        assert path.exists()
+
     def test_honours_a_pinned_template(self, group_cfg):
         cfg, outdir = group_cfg
         cfg.group["template"] = "sub-002"
@@ -405,6 +415,49 @@ class TestContrasts:
 
     def test_condition_names_survive_the_npz_key_round_trip(self):
         assert group_stage._safe_key("response/left") == "response__left"
+
+
+class TestGlassBrain:
+    def test_peak_activity_snapshot_uses_the_largest_l2_norm(self):
+        data = np.zeros((2, 3, 4))
+        data[:, :, 1] = np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        data[:, :, 2] = np.array([[0.0, 2.0, -3.0], [0.0, 2.0, -3.0]])
+
+        values, peak_index, peak_norm = group_stage._peak_activity_snapshot(
+            data, np.array([-0.1, 0.0, 0.1, 0.2])
+        )
+
+        assert peak_index == 2
+        np.testing.assert_allclose(values, [0.0, 2.0, -3.0])
+        assert peak_norm == pytest.approx(np.sqrt(13.0))
+
+    def test_peak_glass_brain_plot_writes_a_png(self, tmp_path, monkeypatch):
+        nib = pytest.importorskip("nibabel")
+        pytest.importorskip("nilearn")
+
+        from osl_ephys.source_recon import parcellation
+
+        atlas = np.zeros((5, 5, 5, 3), float)
+        atlas[1, 1, 1, 0] = 1.0
+        atlas[2, 2, 1, 1] = 1.0
+        atlas[3, 1, 3, 2] = 1.0
+        atlas_path = tmp_path / "atlas.nii.gz"
+        nib.save(nib.Nifti1Image(atlas, np.eye(4)), atlas_path)
+
+        monkeypatch.setattr(parcellation, "find_file", lambda _: str(atlas_path))
+
+        centroids = group_stage._parcel_centroids_from_atlas(
+            "atlas.nii.gz", ["parcel_0", "parcel_1", "parcel_2"]
+        )
+        data = np.zeros((2, 3, 4))
+        data[:, :, 2] = np.array([[1.0, -2.0, 3.0], [1.0, -2.0, 3.0]])
+        times = np.array([-0.1, 0.0, 0.1, 0.2])
+
+        group_stage._plot_peak_glass_brain(
+            tmp_path, "responseHand", data, times, centroids
+        )
+
+        assert (tmp_path / "glass_brain_responseHand.png").exists()
 
 
 class TestWorkerCount:

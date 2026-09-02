@@ -20,27 +20,32 @@ Outputs land in ``{outdir}/group/``:
 ``group_contrasts.npz``          Per-contrast ``(subjects, parcels, times)``
 ``sign_flip_summary.png``        Flips per subject, template match metric
 ``contrast_<name>.png``          Group-mean contrast, per parcel
+``glass_brain_<name>.png``       Peak-norm parcel activity on a glass brain
 ===============================  ============================================
 
 Functions
 ---------
 run
     Run the group stage.
+plot_only
+    Re-render the group figures from saved arrays.
 
 Author: Harrison Ritz, 2025
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional, Sequence
+from typing import Any, cast
 
 import numpy as np
 
 from . import sign_flip
+from ._config import source_config
 from ._paths import resolve_paths
 
 
@@ -138,9 +143,105 @@ def run(cfg: SimpleNamespace) -> bool:
         )
         print(f"[osl:group] wrote {groupdir / 'group_contrasts.npz'}")
 
-    _plot(groupdir, results, stacked, contrasts, times)
+    _plot(cfg, groupdir, results, stacked, contrasts, times, parcel_names)
 
     return True
+
+
+def plot_only(cfg: SimpleNamespace) -> bool:
+    """Re-render the group figures from saved arrays on disk.
+
+    This reuses the arrays and sign-flip summary written by :func:`run`, so a
+    plotting change can be exercised without re-running sign flipping or the
+    condition averaging.
+
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Config from :func:`custom.osl._config.load_config`. Only the
+        ``pipeline`` and ``source_recon`` sections are needed.
+
+    Returns
+    -------
+    success : bool
+        True if the figures were written.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the saved group arrays are missing.
+    ValueError
+        If the saved condition and contrast archives disagree on their parcel
+        names or time axis.
+    """
+    paths = resolve_paths(cfg.pipeline)
+    groupdir = paths.outdir / "group"
+
+    stacked, times, parcel_names = _load_saved_group_arrays(
+        groupdir / "group_parcel_evoked.npz"
+    )
+
+    contrasts = {}
+    contrasts_path = groupdir / "group_contrasts.npz"
+    if contrasts_path.exists():
+        contrasts, contrast_times, contrast_parcels = _load_saved_group_arrays(
+            contrasts_path
+        )
+        if not np.array_equal(contrast_times, times):
+            raise ValueError(
+                f"saved contrast times in {contrasts_path} do not match "
+                f"{groupdir / 'group_parcel_evoked.npz'}."
+            )
+        if contrast_parcels != parcel_names:
+            raise ValueError(
+                f"saved contrast parcels in {contrasts_path} do not match "
+                f"{groupdir / 'group_parcel_evoked.npz'}."
+            )
+
+    results = _load_saved_sign_flip_results(groupdir / "template_subject.txt")
+    _plot(cfg, groupdir, results, stacked, contrasts, times, parcel_names)
+    return True
+
+
+def _load_saved_group_arrays(
+    path: Path,
+) -> tuple[dict[str, np.ndarray], np.ndarray, list[str]]:
+    """Load one saved group archive written by :func:`run`."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"saved group output not found: {path}. Run the group stage first."
+        )
+
+    with np.load(path, allow_pickle=False) as archive:
+        times = np.array(archive["times"], float)
+        parcel_names = [str(name) for name in archive["parcels"].tolist()]
+        arrays = {
+            name: np.array(archive[name])
+            for name in archive.files
+            if name not in {"subjects", "times", "parcels"}
+        }
+
+    return arrays, times, parcel_names
+
+
+def _load_saved_sign_flip_results(path: Path) -> list[dict]:
+    """Recover sign-flip results from ``template_subject.txt`` for plotting."""
+    if not path.exists():
+        return []
+
+    with open(path, "r") as f:
+        summary = json.load(f)
+
+    subjects = summary.get("subjects") or {}
+    return [
+        {
+            "subject": subject,
+            "n_flipped": info.get("n_flipped", 0),
+            "error": info.get("error"),
+            "metrics": info.get("metrics") or [],
+        }
+        for subject, info in subjects.items()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +342,11 @@ def _sign_flip_all(
         "epoched": epoched,
         "source_method": source_method,
         "subjects": {
-            r["subject"]: {"n_flipped": r["n_flipped"], "error": r["error"]}
+            r["subject"]: {
+                "n_flipped": r["n_flipped"],
+                "error": r["error"],
+                "metrics": r.get("metrics") or [],
+            }
             for r in results
         },
     }
@@ -255,7 +360,7 @@ def _sign_flip_all(
     return results
 
 
-def _available_cpus() -> Optional[int]:
+def _available_cpus() -> int | None:
     """Number of CPUs this process may actually use.
 
     Takes the smallest of the signals that are present: the CPU affinity mask
@@ -344,7 +449,7 @@ def _flip_with_dask(subjects: Sequence[str], work: dict, n_workers: int) -> list
 def _stack_conditions(
     outdir: Path,
     subjects: Sequence[str],
-    conditions: Optional[Sequence[str]],
+    conditions: Sequence[str] | None,
     epoched: bool,
     source_method: str,
     group_cfg: dict,
@@ -467,24 +572,207 @@ def _compute_contrasts(
 
 
 def _plot(
+    cfg: SimpleNamespace,
     groupdir: Path,
     results: Sequence[dict],
     stacked: dict[str, np.ndarray],
     contrasts: dict[str, np.ndarray],
     times: np.ndarray,
+    parcel_names: Sequence[str],
 ) -> None:
-    """Write the sign-flip summary and per-contrast group figures."""
+    """Write the sign-flip summary, time courses and glass-brain figures."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    series = {**stacked, **contrasts}
+
     try:
         _plot_sign_flip(groupdir, results, plt)
-        for name, data in {**stacked, **contrasts}.items():
+    except Exception as exc:  # pragma: no cover  # noqa: BLE001
+        print(f"[osl:group] could not render sign-flip summary: {exc}")
+
+    for name, data in series.items():
+        try:
             _plot_parcels(groupdir, name, data, times, plt)
-    except Exception as exc:  # pragma: no cover - plotting is best-effort
-        print(f"[osl:group] could not render a figure: {exc}")
+        except Exception as exc:  # pragma: no cover  # noqa: BLE001
+            print(
+                f"[osl:group] could not render time-course figure for "
+                f"{name.replace('__', '/')}: {exc}"
+            )
+
+    try:
+        centroids = _resolve_parcel_centroids(cfg, parcel_names)
+    except Exception as exc:  # pragma: no cover  # noqa: BLE001
+        print(f"[osl:group] skipping glass-brain parcel plots: {exc}")
+        return
+
+    for name, data in series.items():
+        try:
+            _plot_peak_glass_brain(groupdir, name, data, times, centroids)
+        except Exception as exc:  # pragma: no cover  # noqa: BLE001
+            print(
+                f"[osl:group] could not render glass-brain figure for "
+                f"{name.replace('__', '/')}: {exc}"
+            )
+
+
+def _resolve_parcel_centroids(
+    cfg: SimpleNamespace, parcel_names: Sequence[str]
+) -> np.ndarray:
+    """Resolve MNI parcel centroids for the atlas the source stage used."""
+    parcellation_file = _resolve_group_parcellation_file(cfg)
+    if parcellation_file is None:
+        raise ValueError("no parcellation_file found in source_recon config")
+    return _parcel_centroids_from_atlas(parcellation_file, parcel_names)
+
+
+def _resolve_group_parcellation_file(cfg: SimpleNamespace) -> str | None:
+    """Parcellation file declared on the active source-reconstruction backend."""
+    try:
+        steps = source_config(cfg)["source_recon"]
+    except ValueError:
+        return None
+
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        for name, options in step.items():
+            if "beamform_and_parcellate" not in name:
+                continue
+            if isinstance(options, dict) and options.get("parcellation_file"):
+                return str(options["parcellation_file"])
+
+    return None
+
+
+def _parcel_centroids_from_atlas(
+    parcellation_file: str, parcel_names: Sequence[str]
+) -> np.ndarray:
+    """Parcel centroids in MNI coordinates from a 4D atlas image."""
+    from nibabel.affines import apply_affine
+    from nibabel.loadsave import load
+
+    from osl_ephys.source_recon import parcellation
+
+    resolved = parcellation.find_file(parcellation_file)
+    if not isinstance(resolved, str):
+        raise TypeError(
+            f"expected one parcellation file path for {parcellation_file!r}, "
+            f"got {resolved!r}."
+        )
+
+    atlas = cast(Any, load(resolved))
+    data = np.asarray(atlas.get_fdata(), float)
+    if data.ndim != 4:
+        raise ValueError(
+            f"parcel glass-brain plots need a 4D parcellation, got {data.shape}."
+        )
+
+    parcel_indices = _parcel_indices(parcel_names, data.shape[3])
+    centroids = np.empty((len(parcel_indices), 3), float)
+
+    for row, parcel_index in enumerate(parcel_indices):
+        weights = np.asarray(data[..., parcel_index], float)
+        mask = weights > 0
+        if not np.any(mask):
+            raise ValueError(
+                f"parcel {parcel_index} has no non-zero voxels in "
+                f"{parcellation_file}."
+            )
+        xyz = apply_affine(atlas.affine, np.argwhere(mask))
+        centroids[row] = np.average(xyz, axis=0, weights=weights[mask])
+
+    return centroids
+
+
+def _parcel_indices(parcel_names: Sequence[str], n_atlas_parcels: int) -> list[int]:
+    """Map saved parcel channel names onto atlas parcel indices."""
+    indices = []
+    for position, name in enumerate(parcel_names):
+        name = str(name)
+        if name.startswith("parcel_"):
+            suffix = name[len("parcel_") :]
+            if suffix.isdigit():
+                index = int(suffix)
+                if index >= n_atlas_parcels:
+                    raise ValueError(
+                        f"parcel index {index} from {name!r} is outside atlas "
+                        f"range 0..{n_atlas_parcels - 1}."
+                    )
+                indices.append(index)
+                continue
+
+        if len(parcel_names) == n_atlas_parcels:
+            indices.append(position)
+            continue
+
+        raise ValueError(
+            f"cannot map parcel name {name!r} onto an atlas with "
+            f"{n_atlas_parcels} parcel(s). Need 'parcel_N' names, or an "
+            f"ordered full-length parcel list."
+        )
+
+    return indices
+
+
+def _peak_activity_snapshot(
+    data: np.ndarray, times: np.ndarray
+) -> tuple[np.ndarray, int, float]:
+    """Group-mean parcel values at the time of the largest L2 norm."""
+    del times  # kept for symmetry with the plotting call-site
+
+    group_mean = np.nanmean(data, axis=0)
+    if not np.isfinite(group_mean).any():
+        raise ValueError("all parcel values are NaN")
+
+    norms = np.linalg.norm(np.nan_to_num(group_mean, nan=0.0), axis=0)
+    index = int(np.argmax(norms))
+    return group_mean[:, index], index, float(norms[index])
+
+
+def _plot_peak_glass_brain(
+    groupdir: Path,
+    name: str,
+    data: np.ndarray,
+    times: np.ndarray,
+    centroids: np.ndarray,
+) -> None:
+    """Plot the peak-norm parcel activity over a nilearn glass brain."""
+    from nilearn import plotting
+
+    values, peak_index, peak_norm = _peak_activity_snapshot(data, times)
+    vmax = float(np.nanmax(np.abs(values)))
+    if not np.isfinite(vmax) or vmax == 0:
+        vmax = 1.0
+
+    path = groupdir / f"glass_brain_{name}.png"
+    node_size = cast(Any, 60)
+    display = cast(
+        Any,
+        plotting.plot_markers(
+        values,
+        centroids,
+        node_size=node_size,
+        node_cmap="RdBu_r",
+        node_vmin=-vmax,
+        node_vmax=vmax,
+        alpha=0.85,
+        output_file=str(path),
+        display_mode="ortho",
+        title=(
+            f"{name.replace('__', '/')} at t={float(times[peak_index]):.3f} s "
+            f"(||activity||={peak_norm:.3g})"
+        ),
+        annotate=False,
+        black_bg=False,
+        colorbar=True,
+        ),
+    )
+    if display is not None and hasattr(display, "close"):
+        display.close()
+    print(f"[osl:group] wrote {path}")
 
 
 def _plot_sign_flip(groupdir: Path, results: Sequence[dict], plt) -> None:
@@ -502,8 +790,10 @@ def _plot_sign_flip(groupdir: Path, results: Sequence[dict], plt) -> None:
     axes[0].set_title("Sign flips per subject")
 
     for result in ok:
-        if result["metrics"]:
-            axes[1].plot(result["metrics"], alpha=0.6, marker="o", markersize=3)
+        if result.get("metrics"):
+            axes[1].plot(
+                result["metrics"], alpha=0.6, marker="o", markersize=3
+            )
     axes[1].set_xlabel("initialisation")
     axes[1].set_ylabel("covariance correlation with template")
     axes[1].set_title("Template match")
@@ -545,3 +835,4 @@ def _plot_parcels(
     path = groupdir / f"contrast_{name}.png"
     fig.savefig(path, dpi=150)
     plt.close(fig)
+    print(f"[osl:group] wrote {path}")

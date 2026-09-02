@@ -14,7 +14,8 @@ fi
 # used by the mne-bids-pipeline stages, and lives in its own config subdirectory.
 export CONFIG_PATH="${OSL_CONFIG_PATH:-$CONFIG_DIR/osl/$ANALYSIS.yaml}"
 
-# preproc | source | all | collate.  Set with --stage, or export OSL_STAGE.
+# preproc | source | all | group | group-plot | collate | validate |
+# repair-parc. Set with --stage, or export OSL_STAGE.
 OSL_STAGE="${OSL_STAGE:-all}"
 
 
