@@ -8,6 +8,7 @@ in the preprocessing subpackage.
 Provided analyses (CLI --analysis):
     init           -> Clear leftover proc-<custom_proc> derivatives from a
                       previous run so preprocessing starts from the raw data
+    annotate_breaks -> Mark recording breaks before artifact detection
     regress        -> Regress out a configurable list of sensor signals
     bad_segments   -> Detect & annotate bad raw data segments (legacy)
     bad_segments_1 -> Stage 1: coarse bad segment detection (pre-spatial filter)
@@ -52,6 +53,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Callable
@@ -74,6 +76,7 @@ from custom.preprocessing._config import load_config, normalize_analysis_key
 ANALYSIS_REGISTRY: dict[str, str] = {
     "init": "init_derivatives",
     "initderivatives": "init_derivatives",
+    "annotatebreaks": "annotate_breaks",
     "regress": "regress",
     "badsegments": "bad_segments",
     "badsegments1": "bad_segments",
@@ -94,6 +97,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
 ANALYSIS_CHOICES: list[str] = [
     "init",
     "init_derivatives",
+    "annotate_breaks",
     "regress",
     "bad_segments",
     "bad_segments_1",
@@ -222,8 +226,23 @@ def main() -> int:
     print()
 
     try:
-        # Load configuration
-        cfg = load_config(args.config)
+        # Init clears stale derivatives. The response selector runs before
+        # responses in proc-init have been reduced to one per trial, so its
+        # config must not attempt the response-aligned metadata join yet.
+        skip_metadata_phase = analysis_key in {
+            "init", "initderivatives", "selecttrialresponse"
+        }
+        previous_skip_metadata = os.environ.get("MNE_OPM_SKIP_METADATA")
+        if skip_metadata_phase:
+            os.environ["MNE_OPM_SKIP_METADATA"] = "1"
+        try:
+            cfg = load_config(args.config)
+        finally:
+            if skip_metadata_phase:
+                if previous_skip_metadata is None:
+                    os.environ.pop("MNE_OPM_SKIP_METADATA", None)
+                else:
+                    os.environ["MNE_OPM_SKIP_METADATA"] = previous_skip_metadata
 
         # Extract stage suffix for staged analyses (e.g., badsegments1 -> "1")
         if analysis_key.startswith("badsegments") and len(analysis_key) > len(

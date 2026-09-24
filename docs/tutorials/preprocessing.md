@@ -8,10 +8,15 @@ and how to configure it.
 The `run_preproc.sh` script runs these steps in sequence:
 
 ```text
-bad_channels -> manual_channel -> apply_hfc -> apply_zca
-    -> bad_segments -> MNE preprocessing -> auto_ica
+init -> annotate_breaks (trialResponse) -> select_trial_response
+    -> regress -> bad_segments_1 -> bad_channels -> manual_channel
+    -> apply_hfc -> apply_zca -> MNE preprocessing -> bad_ICs
     -> manual_ica -> MNE ICA apply -> bad_epochs
 ```
+
+For `trialResponse`, `annotate_breaks` saves `BAD_break` annotations before
+segment and channel scoring. The first bad-segment pass uses conservative
+settings before Maxwell filtering; the standard wrapper does not run stage 2.
 
 Each custom step is a module in `custom.preprocessing` with a `run(cfg)`
 function. They can be run individually via:
@@ -76,7 +81,7 @@ eigendecomposition.
 4. Creates projection vectors from the noise subspace
 5. Applies projections to the data
 
-## Bad segment detection (`bad_segments`)
+## Bad segment detection (`bad_segments_1`)
 
 Detects and annotates bad data segments using osl-ephys tools.
 
@@ -84,7 +89,7 @@ Detects and annotates bad data segments using osl-ephys tools.
 
 **What it does:**
 1. Loads raw data
-2. Runs segment-based artifact detection (default 1-second segments)
+2. Runs segment-based artifact detection using the configured stage-1 window
 3. Annotates bad segments in the raw data
 4. Saves back to BIDS
 
@@ -111,16 +116,21 @@ standard preprocessing (filtering, resampling, etc.):
 mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 ```
 
-## Automatic ICA (`auto_ica`)
+## Automatic ICA (`bad_ICs`)
 
-Automatically labels ICA components by correlating them with reference sensors.
+Combines configured ICA scores with PCA, then runs GESD on the retained PCs.
 
-**Config flag:** `_auto_ica = True` (also requires `spatial_filter = "ica"`)
+**Config flag:** `_bad_ICs = True` (also requires `spatial_filter = "ica"`)
+
+`_bad_ICs_include_preexcluded = True` keeps components already in `ica.exclude`
+in the PCA fit and GESD test. Set it to `False` to fit and test only the
+remaining components. The components TSV retains each tested metric's raw
+score for all components; omitted candidates have no new PC score.
 
 **What it does:**
 1. Loads the ICA solution computed by mne-bids-pipeline
-2. Correlates ICA components with reference channel signals
-3. Labels highly correlated components as artifacts
+2. Computes the configured temporal, spatial, and correlation scores
+3. Flags outlying components by PCA→GESD
 4. Saves updated exclusion list to BIDS
 
 ## Manual ICA review (`manual_ica`)

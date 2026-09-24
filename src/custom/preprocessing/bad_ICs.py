@@ -68,6 +68,11 @@ Optional:
         Save ``ica.plot_overlay`` PNGs (report-style evoked butterfly) after
         each per-PC GESD step plus a final overlay, and the PCA diagnostic
         figures, into the participant's ``meg/ICA`` directory. Default: True.
+    _bad_ICs_include_preexcluded : bool
+        Include components already in ``ica.exclude`` in the PCA fit and
+        GESD candidate set. Default: True (historical behavior). False tests
+        only remaining components; retained metric scores are still saved
+        for every component.
 
 Author: Harrison Ritz, 2025
 """
@@ -312,7 +317,7 @@ class BadICAnalysis(BaseAnalysis):
 
         # (b) Cumulative per-PC (per-eigenscore) overlays.
         for p in range(gesd.n_pcs):
-            cumulative |= set(np.where(gesd.per_pc_flagged[p])[0].tolist())
+            cumulative |= set(gesd.item_indices[gesd.per_pc_flagged[p]].tolist())
             ica.exclude = sorted(cumulative)
             self._save_ica_overlay(ica, evoked, p + 1, f"gesd-PC{p + 1}")
 
@@ -832,30 +837,68 @@ class BadICAnalysis(BaseAnalysis):
         names = [s.name for s in score_specs]
         sides = [s.side for s in score_specs]
 
-        # Skip when too few components remain after existing exclusions.
-        n_remaining = n_comps - len(ica.exclude)
-        if n_remaining < 5:
+        include_preexcluded = getattr(self.cfg, "_bad_ICs_include_preexcluded", True)
+        if not isinstance(include_preexcluded, bool):
+            raise ValueError("_bad_ICs_include_preexcluded must be True or False")
+        excluded_before = set(ica.exclude)
+        candidate_indices = np.array(
+            [
+                i for i in range(n_comps)
+                if include_preexcluded or i not in excluded_before
+            ],
+            dtype=int,
+        )
+        self._all_score_specs = score_specs
+        self.log(
+            f"PCA-GESD candidates: {len(candidate_indices)}/{n_comps} "
+            f"(include pre-excluded: {include_preexcluded})"
+        )
+
+        n_remaining = n_comps - len(excluded_before)
+        if n_remaining < 5 or len(candidate_indices) < 5:
             self.log(
-                f"Too few components remaining ({n_remaining}) for PCA-GESD; skipping"
+                f"Too few unexcluded components ({n_remaining}) for "
+                "PCA-GESD; skipping"
             )
-            return ica, empty_result(names, sides, n_comps, alpha)
+            result = empty_result(names, sides, len(candidate_indices), alpha)
+            result.item_indices = candidate_indices
+            return ica, result
+
+        candidate_specs = []
+        for spec in score_specs:
+            values = np.asarray(spec.values).reshape(-1)
+            if values.size != n_comps:
+                self.log(
+                    f"metric '{spec.name}' length {values.size} != "
+                    f"{n_comps}; dropping"
+                )
+                continue
+            candidate_specs.append(
+                MetricSpec(spec.name, values[candidate_indices], spec.side)
+            )
+
+        if not candidate_specs:
+            result = empty_result([], [], len(candidate_indices), alpha)
+            result.item_indices = candidate_indices
+            return ica, result
 
         result = run_pca_gesd(
-            score_specs,
+            candidate_specs,
             alpha=alpha,
             p_out=p_out,
             n_pcs=n_pcs,
             min_items=5,
             log=self.log,
         )
+        result.item_indices = candidate_indices
 
         # Record per-PC attribution and extend the exclude list.
         for p in range(result.n_pcs):
-            for i in np.where(result.per_pc_flagged[p])[0].tolist():
+            for i in result.item_indices[result.per_pc_flagged[p]].tolist():
                 self._component_labels[i].append(f"GESD_PC{p + 1}")
-        outlier_idx = np.where(result.flagged)[0].tolist()
+        outlier_idx = result.item_indices[result.flagged].tolist()
         if outlier_idx:
-            ica.exclude.extend(outlier_idx)
+            ica.exclude = sorted(set(ica.exclude).union(outlier_idx))
 
         self.log(f"After unified GESD: {len(set(ica.exclude))} excluded components")
         return ica, result
@@ -874,7 +917,7 @@ class BadICAnalysis(BaseAnalysis):
             return
 
         out_dir, basename = self._overlay_basepath()
-        item_names = [f"IC{i:03d}" for i in range(gesd.n_items)]
+        item_names = [f"IC{i:03d}" for i in gesd.item_indices]
         save_pca_gesd_figures(
             gesd,
             out_dir,
@@ -1170,13 +1213,21 @@ class BadICAnalysis(BaseAnalysis):
 
             # Eigenscore per component per PC
             for p in range(n_pcs):
-                data[f"gesd_score_PC{p + 1}"] = np.round(
-                    gesd.eigenscores[p], 4
-                ).tolist()
+                scores = np.full(n_comps, np.nan)
+                scores[gesd.item_indices] = gesd.eigenscores[p]
+                data[f"gesd_score_PC{p + 1}"] = np.round(scores, 4).tolist()
 
             # Raw (pre-standardization) value per input score per component
+            all_scores = {
+                spec.name: np.asarray(spec.values, dtype=float)
+                for spec in getattr(self, "_all_score_specs", [])
+            }
             for j, sname in enumerate(metric_names):
-                data[f"score_{sname}"] = np.round(gesd.M[j], 6).tolist()
+                values = all_scores.get(sname)
+                if values is None or values.size != n_comps:
+                    values = np.full(n_comps, np.nan)
+                    values[gesd.item_indices] = gesd.M[j]
+                data[f"score_{sname}"] = np.round(values, 6).tolist()
 
             # PC loadings (shared across components, stored once per row
             # for self-contained CSV analysis)

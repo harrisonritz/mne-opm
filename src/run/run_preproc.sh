@@ -11,6 +11,10 @@ fi
 
 # set config
 export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
+# The selector creates the proc-init FIF required for response alignment.
+unset MNE_OPM_REQUIRE_RESPONSE_METADATA
+unset MNE_OPM_BREAKS_ALREADY_ANNOTATED
+unset MNE_OPM_STAGE1_BREAKS_SAVED
 
 
 # timing helpers
@@ -72,6 +76,20 @@ rank_check init
 
 
 
+if [ "$ANALYSIS" = "trialResponse" ]; then
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= CUSTOM: annotate recording breaks =============================================="
+	echo ""
+	python $ROOT_DIR/src/custom/custom_preproc.py --analysis=annotate_breaks --config=$CONFIG_PATH
+	if [ "$?" -eq 0 ]; then
+		export MNE_OPM_BREAKS_ALREADY_ANNOTATED=1
+	fi
+	_print_timing "CUSTOM: annotate recording breaks" $STEP_START
+fi
+
+
+
 STEP_START=$SECONDS
 echo ""
 echo "======================= CUSTOM: select first response per trial =============================================="
@@ -79,6 +97,7 @@ echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=select_trial_response --config=$CONFIG_PATH
 _print_timing "CUSTOM: select first response per trial" $STEP_START
 rank_check init
+export MNE_OPM_REQUIRE_RESPONSE_METADATA=1
 
 
 
@@ -97,6 +116,9 @@ echo ""
 echo "======================= OSL: bad segment 1 =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH
+if [ "$?" -eq 0 ] && [ "$ANALYSIS" = "trialResponse" ]; then
+	export MNE_OPM_STAGE1_BREAKS_SAVED=1
+fi
 _print_timing "OSL: bad segment 1" $STEP_START
 rank_check init
 
@@ -207,5 +229,3 @@ echo "======================= BEAMFORMER =======================================
 echo ""
 source "$ROOT_DIR/src/run/run_beamformer.sh"
 _print_timing "BEAMFORMER" $STEP_START
-
-

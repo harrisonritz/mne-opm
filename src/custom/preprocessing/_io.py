@@ -179,6 +179,49 @@ def count_condition_events_in_tsv(events_tsv_path, conditions):
     return n_events, matched_names
 
 
+def reconcile_trial_metadata(meta_dfs, n_trial_events, *, policy="error"):
+    """Reconcile behavioral rows with trial triggers before a positional join.
+
+    ``trim_restart`` preserves the historical small-surplus trim for known
+    task restarts. It is explicitly opt-in because counts alone cannot locate
+    a missing trigger within a recording. The caller must subsequently check
+    response sides against the trigger stream.
+
+    Returns the reconciled DataFrame and a description of any trim performed.
+    """
+    if policy not in {"error", "trim_restart"}:
+        raise ValueError(f"Unknown metadata mismatch policy: {policy!r}")
+    if not meta_dfs:
+        raise ValueError("No behavioral metadata files were provided")
+
+    metadata = pd.concat(meta_dfs, ignore_index=True)
+    excess = len(metadata) - n_trial_events
+    if excess == 0:
+        return metadata, None
+    if excess < 0:
+        raise RuntimeError(
+            f"Metadata has {-excess} fewer rows than trial events "
+            f"({len(metadata)} vs {n_trial_events}); refusing a positional join."
+        )
+    if policy == "error" or excess > 20:
+        raise RuntimeError(
+            f"Metadata has {excess} more rows than trial events "
+            f"({len(metadata)} vs {n_trial_events}); refusing an unverified "
+            "positional join. For a known restart with 1-20 extra rows, "
+            "set TSX_METADATA_MISMATCH_POLICY=trim_restart."
+        )
+
+    if len(meta_dfs) > 1 and excess <= len(meta_dfs[0]):
+        trimmed = [meta_dfs[0].iloc[: len(meta_dfs[0]) - excess], *meta_dfs[1:]]
+        metadata = pd.concat(trimmed, ignore_index=True)
+        location = "end of first metadata file (restart boundary)"
+    else:
+        metadata = metadata.iloc[:n_trial_events].reset_index(drop=True)
+        location = "end of metadata"
+    assert len(metadata) == n_trial_events
+    return metadata, location
+
+
 def first_response_per_trial(
     raw,
     *,

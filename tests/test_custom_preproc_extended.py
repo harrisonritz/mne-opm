@@ -6,6 +6,7 @@ header/footer formatting.
 
 from __future__ import annotations
 
+import os
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -135,6 +136,29 @@ class TestMain:
 
         captured = capsys.readouterr()
         assert "apply_hfc" in captured.out.lower() or "applyhfc" in captured.out.lower()
+
+    @patch("custom.custom_preproc.parse_args")
+    @patch("custom.custom_preproc.load_config")
+    @patch("custom.custom_preproc.import_analysis_module")
+    def test_response_selector_loads_config_before_metadata_alignment(
+        self, mock_import, mock_config, mock_args, monkeypatch
+    ):
+        from custom.custom_preproc import main
+
+        monkeypatch.delenv("MNE_OPM_SKIP_METADATA", raising=False)
+        mock_args.return_value = SimpleNamespace(
+            analysis="select_trial_response", config="/tmp/config.py"
+        )
+        seen = []
+        mock_config.side_effect = lambda path: (
+            seen.append(os.environ.get("MNE_OPM_SKIP_METADATA"))
+            or SimpleNamespace()
+        )
+        mock_import.return_value = MagicMock()
+
+        assert main() == 0
+        assert seen == ["1"]
+        assert "MNE_OPM_SKIP_METADATA" not in os.environ
 
 
 # ---------------------------------------------------------------------------

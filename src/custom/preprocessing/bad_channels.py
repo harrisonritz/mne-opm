@@ -17,7 +17,7 @@ Available per-channel metrics (each selectable via ``cfg._channel_metrics``):
 * **kurtosis** — signed square root of the per-channel temporal kurtosis;
   transient/spiky channels have heavy-tailed amplitude distributions.
   ``side=+1``.
-* **lof** — log of the Local Outlier Factor (MNE), flagging channels anomalous
+* **lof** — log of the Local Outlier Factor, flagging channels anomalous
   relative to their spatial neighbours.  ``side=+1``.
 * **psd** — per-channel mean log10 power over ``[psd_fmin, psd_fmax]``;
   two-tailed (``side=0``) so both dead/low-power and noisy/high-power channels
@@ -360,18 +360,25 @@ class BadChannelsAnalysis(BaseAnalysis):
         self.log(f"initial bad channels ({len(raw.info['bads'])}): {raw.info['bads']}")
         self.log(f"number of channels to test: {ch_idx.size}")
 
-        # Bandpass-filtered copy for variance/kurtosis/spatial metrics.
-        filt = raw.copy().notch_filter(
-            np.arange(60, 241, 60), 
-            method="spectrum_fit",
-            n_jobs=-1,
-            ).filter(
+        # Do not filter across BAD spans: ringing outside an annotation would
+        # otherwise leak a large artifact into the channel scores.
+        filt = (
+            raw.copy()
+            .notch_filter(
+                np.arange(60, 241, 60),
+                method="spectrum_fit",
+                n_jobs=-1,
+                skip_by_annotation=("edge", "bad"),
+            )
+            .filter(
                 l_freq=self.cfg._bad_channel_lfreq,
                 h_freq=self.cfg._bad_channel_hfreq,
                 method="iir",
                 n_jobs=-1,
-                )
-        
+                skip_by_annotation=("edge", "bad"),
+            )
+        )
+
         data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")
 
         specs: List[MetricSpec] = []
@@ -390,7 +397,7 @@ class BadChannelsAnalysis(BaseAnalysis):
             specs.append(MetricSpec("kurtosis", signed_sqrt(kurt), 0))
 
         if "lof" in selected:
-            lof = self._lof_scores(filt, ch_idx)
+            lof = self._lof_scores(data)
             if lof is not None:
                 specs.append(MetricSpec("lof", log_transform(lof), 1))
 
@@ -449,28 +456,26 @@ class BadChannelsAnalysis(BaseAnalysis):
             counts += np.asarray(mask, dtype=float)
         return counts / n_windows
 
-    def _lof_scores(
-        self, filt: mne.io.BaseRaw, ch_idx: np.ndarray
-    ) -> "np.ndarray | None":
+    def _lof_scores(self, data: np.ndarray) -> "np.ndarray | None":
         """Per-channel Local Outlier Factor (higher = more outlying).
 
-        MNE returns *negative* outlier factors (≈ -1 for inliers, more negative
-        for outliers); we negate so high = bad.  Returns ``None`` on failure.
+        ``data`` has already omitted BAD-annotated spans. Sklearn returns
+        negative outlier factors (≈ -1 for inliers, more negative for outliers);
+        we negate so high = bad. Returns ``None`` on failure.
         """
+        from sklearn.neighbors import LocalOutlierFactor
+
         n_neighbors = int(
             getattr(self.cfg, "_bad_channel_lof_neighbors", _DEFAULT_LOF_NEIGHBORS)
         )
-        n_good = int(ch_idx.size)
+        n_good = int(data.shape[0])
         if n_good < 3:
             return None
         n_neighbors = min(n_neighbors, n_good - 1)
         try:
-            _, scores = mne.preprocessing.find_bad_channels_lof(
-                filt,
-                n_neighbors=n_neighbors,
-                picks=ch_idx,
-                return_scores=True,
-            )
+            model = LocalOutlierFactor(n_neighbors=n_neighbors)
+            model.fit_predict(data)
+            scores = model.negative_outlier_factor_
         except Exception as exc:
             self.log(f"  [lof] skipped ({exc})")
             return None

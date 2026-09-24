@@ -28,6 +28,7 @@ import pandas as pd
 import pytest
 
 from custom.preprocessing._io import (
+    assert_response_alignment,
     count_condition_events_in_raw,
     count_condition_events_in_tsv,
     drop_response_rows_from_events_tsv,
@@ -611,57 +612,46 @@ class TestResponseAlignmentCheck:
             ]
         )
 
-    def _analysis(self, *, column=None, metadata=None):
-        cfg = SimpleNamespace(_select_trial_response=True)
-        if column is not None:
-            cfg._response_metadata_column = column
-        if metadata is not None:
-            cfg.epochs_custom_metadata = metadata
-        return SelectTrialResponseAnalysis(cfg)
+    def _check(self, metadata, *, column="resp"):
+        return assert_response_alignment(
+            self._raw(),
+            metadata,
+            column,
+            response_left="z",
+            response_right="m",
+            context="test",
+        )
 
     def test_passes_when_metadata_matches(self):
         meta = pd.DataFrame({"resp": ["left", "right", None, "left"]})
-        analysis = self._analysis(column="resp", metadata=meta)
-        # Should not raise.
-        analysis._check_response_alignment("test", self._raw())
+        assert self._check(meta) == 4
 
     def test_normalizes_case_whitespace_and_no_response_markers(self):
         meta = pd.DataFrame({"resp": ["Left ", "RIGHT", "n/a", "left"]})
-        analysis = self._analysis(column="resp", metadata=meta)
-        analysis._check_response_alignment("test", self._raw())
+        assert self._check(meta) == 4
+
+    def test_accepts_behavioral_button_codes(self):
+        meta = pd.DataFrame({"resp": ["z", "m", None, "z"]})
+        assert self._check(meta) == 4
 
     def test_raises_on_side_mismatch(self):
         # Trial b recorded as 'left' but the trigger says 'right'.
         meta = pd.DataFrame({"resp": ["left", "left", None, "left"]})
-        analysis = self._analysis(column="resp", metadata=meta)
         with pytest.raises(RuntimeError, match="not aligned"):
-            analysis._check_response_alignment("test", self._raw())
+            self._check(meta)
 
     def test_raises_on_no_response_disagreement(self):
         # Trial c had no trigger response but metadata claims 'right'.
         meta = pd.DataFrame({"resp": ["left", "right", "right", "left"]})
-        analysis = self._analysis(column="resp", metadata=meta)
         with pytest.raises(RuntimeError, match="not aligned"):
-            analysis._check_response_alignment("test", self._raw())
+            self._check(meta)
 
     def test_raises_on_count_mismatch(self):
         meta = pd.DataFrame({"resp": ["left", "right", None]})  # only 3 rows
-        analysis = self._analysis(column="resp", metadata=meta)
         with pytest.raises(RuntimeError, match="count mismatch"):
-            analysis._check_response_alignment("test", self._raw())
+            self._check(meta)
 
     def test_raises_when_column_absent(self):
         meta = pd.DataFrame({"other": ["left", "right", None, "left"]})
-        analysis = self._analysis(column="resp", metadata=meta)
         with pytest.raises(ValueError, match="not found in metadata columns"):
-            analysis._check_response_alignment("test", self._raw())
-
-    def test_noop_when_column_not_configured(self):
-        meta = pd.DataFrame({"resp": ["wrong", "values", "here", "x"]})
-        analysis = self._analysis(metadata=meta)  # no _response_metadata_column
-        # Skipped silently despite mismatching metadata.
-        analysis._check_response_alignment("test", self._raw())
-
-    def test_noop_when_no_metadata(self):
-        analysis = self._analysis(column="resp")  # no epochs_custom_metadata
-        analysis._check_response_alignment("test", self._raw())
+            self._check(meta)

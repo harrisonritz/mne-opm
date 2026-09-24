@@ -61,8 +61,9 @@ Optional:
         See *config-trial.py* for a full example.
     process_empty_room : bool
         Also process empty room noise recording. Default: False.
-    find_breaks : bool
-        Annotate recording breaks before detection. Default: False.
+    _bad_segments_find_breaks : bool
+        Annotate breaks in stage 1 if the earlier ``annotate_breaks`` step
+        failed. Defaults to False; other analyses let MNE annotate breaks.
 
 Usage
 -----
@@ -81,6 +82,8 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
+import os
+from collections import Counter
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -333,26 +336,36 @@ class BadSegmentsAnalysis(BaseAnalysis):
         if (
             not is_noise
             and self.stage in (None, "1")
-            and getattr(self.cfg, "find_breaks", False)
+            and os.environ.get("MNE_OPM_BREAKS_ALREADY_ANNOTATED") != "1"
+            and getattr(self.cfg, "_bad_segments_find_breaks", False)
         ):
-            mne.preprocessing.annotate_break(
+            break_annotations = mne.preprocessing.annotate_break(
                 raw,
                 min_break_duration=self.cfg.min_break_duration,
                 t_start_after_previous=self.cfg.t_break_annot_start_after_previous_event,
                 t_stop_before_next=self.cfg.t_break_annot_stop_before_next_event,
             )
+            if len(break_annotations):
+                raw.set_annotations(raw.annotations + break_annotations)
 
         # --- Filter a copy for detection ---------------------------------
         filt = raw.copy().filter(
             l_freq=self.cfg.l_freq,
             h_freq=self.cfg.h_freq,
             method="iir",
+            skip_by_annotation=("edge", "bad"),
         )
 
         # filt already inherits annotations from raw.copy() (breaks, prior BADs)
         # so osl_bad_segments will respect them during metric computation.
 
-        n_annots_before = len(filt.annotations)
+        before_annotations = Counter(
+            zip(
+                filt.annotations.onset,
+                filt.annotations.duration,
+                filt.annotations.description,
+            )
+        )
 
         # --- Run OSL detection on filtered copy --------------------------
         detected = osl_bad_segments(
@@ -367,13 +380,23 @@ class BadSegmentsAnalysis(BaseAnalysis):
         )
 
         # --- Transfer new annotations to unfiltered raw ------------------
-        n_annots_after = len(detected.annotations)
-        n_new = n_annots_after - n_annots_before
+        # MNE sorts annotations by onset when OSL appends them. Comparing the
+        # before/after multisets preserves interleaved annotations and repeats.
+        new_annotations = []
+        for annotation in detected.annotations:
+            key = (
+                annotation["onset"],
+                annotation["duration"],
+                annotation["description"],
+            )
+            if before_annotations[key]:
+                before_annotations[key] -= 1
+            else:
+                new_annotations.append(key)
 
-        if n_new > 0:
-            new_onsets = detected.annotations.onset[n_annots_before:]
-            new_durations = detected.annotations.duration[n_annots_before:]
-            new_descriptions = list(detected.annotations.description[n_annots_before:])
+        n_new = len(new_annotations)
+        if n_new:
+            new_onsets, new_durations, new_descriptions = zip(*new_annotations)
             raw.annotations.append(new_onsets, new_durations, new_descriptions)
 
         # Count total bad annotations on the original raw

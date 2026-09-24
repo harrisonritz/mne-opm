@@ -41,10 +41,9 @@ trial- and response-locked analyses that do not set the flag are untouched.
 
 Placement
 ---------
-Run **after** the spatial-filter steps (HFC/ZCA) and **before**
-``mne_bids_pipeline --steps=preprocessing`` (epoching).  Maxwell/frequency
-filtering inside mne-bids-pipeline preserve annotations, so the reduced response
-set propagates to epoching.
+Run after the early ``annotate_breaks`` step and before segment/channel
+detection and ``mne_bids_pipeline --steps=preprocessing`` (epoching).
+Subsequent spatial and frequency filtering preserve the reduced response set.
 
 Usage
 -----

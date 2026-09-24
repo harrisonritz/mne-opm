@@ -137,6 +137,9 @@ class PCAGesdResult:
         Union boolean mask of flagged items, shape ``(n_items,)``.
     n_items : int
         Number of items.
+    item_indices : np.ndarray
+        Original item indices corresponding to the columns in ``M`` and
+        ``eigenscores``. Usually ``arange(n_items)``; ICA may test a subset.
     """
 
     metric_names: List[str]
@@ -154,6 +157,7 @@ class PCAGesdResult:
     per_pc_flagged: List[np.ndarray]
     flagged: np.ndarray
     n_items: int
+    item_indices: np.ndarray
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +264,7 @@ def empty_result(
         per_pc_flagged=[],
         flagged=np.zeros(n_items, dtype=bool),
         n_items=n_items,
+        item_indices=np.arange(n_items),
     )
 
 
@@ -357,31 +362,17 @@ def run_pca_gesd(
         parts = [f"{names[i]}={loadings[i, p]:.2f}" for i in range(k)]
         _log(f"  PC{p + 1}: {', '.join(parts)}")
 
-    # dot product approach
-    # pc_sides = np.sign(loadings.T @ sides)
-
-    # Per-PC tail direction: product of sign(loading * side) across metrics.
-    # If any metric has side=0 (both tails), the product is 0 → test both tails.
-    # pc_sides = np.prod(np.sign(loadings * sides[:, np.newaxis]), axis=0)
-
-    # Voting approach: sum of absolute loadings per side.
-    # print("calculating vote per side")
-    # vote = {s: np.sum(np.abs(loadings[sides == s, :]), axis=0) for s in [-1, 0, 1]}
-    # _log(f"Vote per side: {vote}")
-    # print("get pc_sides")
-    # pc_sides = max(vote, key=lambda s: vote[s])  # vectorised with np.argmax
-    # print(f"pc_sides: {pc_sides}")
-
-    # Per-PC tail direction: weighted plurality vote across metrics.
-    # For each PC, sum |loading| separately for side={-1, 0, 1}; the winning
-    # side becomes pc_side.  side=0 (both-tails) only wins if two-tailed metrics
-    # collectively carry more loading weight on that PC than either directed group.
-    vote_matrix = np.stack(
-        [np.abs(np.sum(loadings[sides == s, :], axis=0)) for s in [-1, 0, 1]],
-        axis=0,
-    )  # (3, n_pcs); rows correspond to sides [-1, 0, 1]
-    pc_sides = np.array([-1, 0, 1])[np.argmax(vote_matrix, axis=0)]
-    _log(f"PC sides (vote): {pc_sides.tolist()}")
+    # PCA axis signs are arbitrary. A high-is-bad metric with a negative
+    # loading makes bad items appear in the *lower* PC tail. Test one tail only
+    # when every contributing metric points to that same PC tail; otherwise
+    # test both tails so mixed artifact types remain detectable.
+    pc_sides = np.zeros(n_pcs, dtype=int)
+    for p in range(n_pcs):
+        contributing = np.abs(loadings[:, p]) > 1e-12
+        directed = np.sign(loadings[contributing, p]) * sides[contributing]
+        if directed.size and np.all(directed == directed[0]):
+            pc_sides[p] = int(directed[0])
+    _log(f"PC sides (loading-aware): {pc_sides.tolist()}")
 
     # Šidák correction across PCs, then GESD per eigenscore.
     alpha_per_pc = sidak_alpha(alpha, n_pcs)
@@ -417,6 +408,7 @@ def run_pca_gesd(
         per_pc_flagged=per_pc_flagged,
         flagged=flagged,
         n_items=n_items,
+        item_indices=np.arange(n_items),
     )
 
 
@@ -528,6 +520,9 @@ def _fig_standardized(result: PCAGesdResult, item_label: str):
     im = ax.imshow(data, aspect="auto", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
     ax.set_yticks(range(k))
     ax.set_yticklabels(result.metric_names, fontsize=8)
+    tick_positions = np.unique(np.linspace(0, n_items - 1, min(n_items, 8), dtype=int))
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(result.item_indices[tick_positions], fontsize=8)
     ax.set_xlabel(f"{item_label} index")
     ax.set_title("Standardized metrics")
     fig.colorbar(im, ax=ax, shrink=0.8, label="z")
@@ -544,7 +539,7 @@ def _fig_pc_outliers(result: PCAGesdResult, item_label: str):
     nrow = int(np.ceil(n_pcs / ncol))
     fig, axes = plt.subplots(nrow, ncol, figsize=(4 * ncol, 3 * nrow), squeeze=False)
     n_items = result.eigenscores.shape[1]
-    x = np.arange(n_items)
+    x = result.item_indices
     for p in range(n_pcs):
         ax = axes[p // ncol][p % ncol]
         y = result.eigenscores[p]
