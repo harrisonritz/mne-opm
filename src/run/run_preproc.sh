@@ -76,17 +76,19 @@ rank_check init
 
 
 
-if [ "$ANALYSIS" = "trialResponse" ]; then
-	STEP_START=$SECONDS
-	echo ""
-	echo "======================= CUSTOM: annotate recording breaks =============================================="
-	echo ""
-	python $ROOT_DIR/src/custom/custom_preproc.py --analysis=annotate_breaks --config=$CONFIG_PATH
-	if [ "$?" -eq 0 ]; then
-		export MNE_OPM_BREAKS_ALREADY_ANNOTATED=1
-	fi
-	_print_timing "CUSTOM: annotate recording breaks" $STEP_START
+# Breaks are annotated once, first, in proc-init, so segment and channel
+# scoring and mne-bids-pipeline all see the same BAD_break spans.  The step is
+# a no-op when the config sets find_breaks=False; the config turns its own
+# find_breaks off once these variables are exported, so MNE adds no duplicates.
+STEP_START=$SECONDS
+echo ""
+echo "======================= CUSTOM: annotate recording breaks =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=annotate_breaks --config=$CONFIG_PATH
+if [ "$?" -eq 0 ]; then
+	export MNE_OPM_BREAKS_ALREADY_ANNOTATED=1
 fi
+_print_timing "CUSTOM: annotate recording breaks" $STEP_START
 
 
 
@@ -116,7 +118,7 @@ echo ""
 echo "======================= OSL: bad segment 1 =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH
-if [ "$?" -eq 0 ] && [ "$ANALYSIS" = "trialResponse" ]; then
+if [ "$?" -eq 0 ]; then
 	export MNE_OPM_STAGE1_BREAKS_SAVED=1
 fi
 _print_timing "OSL: bad segment 1" $STEP_START

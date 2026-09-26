@@ -341,6 +341,107 @@ def first_response_per_trial(
     return trial_has_response, keep_ann_idx, drop_ann_idx, keep_onsets
 
 
+def trial_following_event(
+    raw,
+    *,
+    event_conditions,
+    trial_conditions=("trial",),
+):
+    """Pair each event annotation with the first trial annotation that follows it.
+
+    Used by event-locked analyses whose epochs are not trials (e.g. the TSX
+    switch cue, ``CSI``) but whose metadata is per-trial: the returned indices
+    select, from the per-trial metadata, the row of the trial each event
+    precedes.  The positional join is only valid when every event is followed
+    by its own trial, so two events with no trial between them (a duplicated or
+    spurious trigger) and an event with no later trial are errors rather than
+    being silently paired.
+
+    Event and trial annotations are matched hierarchically, using the same
+    ``mne.event.match_event_names`` logic as :func:`first_response_per_trial`.
+
+    The ``raw`` object is **not** modified.
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw object whose ``annotations`` are inspected.
+    event_conditions : iterable of str
+        Condition names identifying the locking events (e.g. ``('CSI',)``).
+    trial_conditions : iterable of str
+        Condition names identifying trial-onset annotations.
+
+    Returns
+    -------
+    trial_idx : numpy.ndarray of int
+        One entry per event annotation, in chronological order: the index, in
+        the chronologically ordered trial annotations, of the first trial whose
+        onset is strictly after the event.  ``len`` equals the number of events
+        counted by :func:`count_condition_events_in_raw` for
+        ``event_conditions``.
+    lags : numpy.ndarray of float
+        Seconds from each event to its trial.
+
+    Raises
+    ------
+    RuntimeError
+        If an event has no later trial, or two events share the same trial.
+    """
+    ann = raw.annotations
+    if len(ann) == 0:
+        return np.zeros(0, dtype=int), np.zeros(0, dtype=float)
+
+    unique_names = sorted(set(ann.description))
+
+    def _matched(conds):
+        try:
+            names = mne.event.match_event_names(
+                event_names=unique_names,
+                keys=list(conds),
+                on_missing="ignore",
+            )
+        except KeyError:
+            return set()
+        return set(names)
+
+    event_names = _matched(event_conditions)
+    trial_names = _matched(trial_conditions)
+    overlap = event_names & trial_names
+    if overlap:
+        raise ValueError(
+            f"Annotations {sorted(overlap)} match both event_conditions "
+            f"{list(event_conditions)} and trial_conditions {list(trial_conditions)}"
+        )
+
+    onsets = np.asarray(ann.onset, dtype=float)
+    descriptions = np.asarray(ann.description)
+    event_onsets = np.sort(
+        onsets[[d in event_names for d in descriptions]], kind="stable"
+    )
+    trial_onsets = np.sort(
+        onsets[[d in trial_names for d in descriptions]], kind="stable"
+    )
+
+    trial_idx = np.searchsorted(trial_onsets, event_onsets, side="right")
+    orphans = np.flatnonzero(trial_idx >= len(trial_onsets))
+    if orphans.size:
+        raise RuntimeError(
+            f"{orphans.size} event(s) {list(event_conditions)} have no later trial "
+            f"annotation (first at t={event_onsets[orphans[0]]:.3f} s)."
+        )
+    shared = np.flatnonzero(np.diff(trial_idx) == 0)
+    if shared.size:
+        raise RuntimeError(
+            f"{shared.size} pair(s) of consecutive events {list(event_conditions)} "
+            f"have no trial between them (first at t="
+            f"{event_onsets[shared[0]]:.3f} s and "
+            f"{event_onsets[shared[0] + 1]:.3f} s); refusing to pair them with "
+            "the same trial."
+        )
+    lags = trial_onsets[trial_idx] - event_onsets
+    return trial_idx.astype(int), lags
+
+
 def trial_response_side_keep_first(
     raw,
     *,
