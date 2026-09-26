@@ -8,15 +8,19 @@ and how to configure it.
 The `run_preproc.sh` script runs these steps in sequence:
 
 ```text
-init -> annotate_breaks (trialResponse) -> select_trial_response
+init -> annotate_breaks -> select_trial_response
     -> regress -> bad_segments_1 -> bad_channels -> manual_channel
     -> apply_hfc -> apply_zca -> MNE preprocessing -> bad_ICs
     -> manual_ica -> MNE ICA apply -> bad_epochs
 ```
 
-For `trialResponse`, `annotate_breaks` saves `BAD_break` annotations before
-segment and channel scoring. The first bad-segment pass uses conservative
-settings before Maxwell filtering; the standard wrapper does not run stage 2.
+`annotate_breaks` saves `BAD_break` annotations to proc-init before segment
+and channel scoring, for every analysis whose config sets `find_breaks`. It
+exports `MNE_OPM_BREAKS_ALREADY_ANNOTATED=1` on success (and `bad_segments_1`,
+the fallback, exports `MNE_OPM_STAGE1_BREAKS_SAVED=1`); a config should turn
+its own `find_breaks` off when either is set so mne-bids-pipeline does not add
+a duplicate copy. The first bad-segment pass uses conservative settings before
+Maxwell filtering; the standard wrapper does not run stage 2.
 
 Each custom step is a module in `custom.preprocessing` with a `run(cfg)`
 function. They can be run individually via:

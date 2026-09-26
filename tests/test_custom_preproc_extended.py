@@ -140,14 +140,15 @@ class TestMain:
     @patch("custom.custom_preproc.parse_args")
     @patch("custom.custom_preproc.load_config")
     @patch("custom.custom_preproc.import_analysis_module")
-    def test_response_selector_loads_config_before_metadata_alignment(
-        self, mock_import, mock_config, mock_args, monkeypatch
+    @pytest.mark.parametrize("analysis", ["select_trial_response", "annotate_breaks"])
+    def test_pre_selection_steps_load_config_before_metadata_alignment(
+        self, mock_import, mock_config, mock_args, monkeypatch, analysis
     ):
         from custom.custom_preproc import main
 
         monkeypatch.delenv("MNE_OPM_SKIP_METADATA", raising=False)
         mock_args.return_value = SimpleNamespace(
-            analysis="select_trial_response", config="/tmp/config.py"
+            analysis=analysis, config="/tmp/config.py"
         )
         seen = []
         mock_config.side_effect = lambda path: (
