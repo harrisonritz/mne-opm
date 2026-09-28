@@ -81,6 +81,7 @@ from typing import Any, Dict, List, Tuple
 import mne
 import numpy as np
 import pandas as pd
+from mne.annotations import _annotations_starts_stops
 from scipy.stats import kurtosis as scipy_kurtosis
 
 from osl_ephys.preprocessing.osl_wrappers import gesd as osl_gesd
@@ -110,6 +111,7 @@ _DEFAULT_PSD_FMIN: float = 3.0
 _DEFAULT_PSD_FMAX: float = 90.0
 _DEFAULT_PSD_NFFT: int = 2048
 _DEFAULT_LOF_NEIGHBORS: int = 20
+_MIN_FILTER_SEGMENT_SAMPLES: int = 10
 
 # Fraction of outliers cap passed to GESD (channels are rarely >50% bad).
 _GESD_P_OUT: float = 0.5
@@ -118,6 +120,30 @@ _GESD_P_OUT: float = 0.5
 # procedure no longer writes candidates, but the path helper is retained so the
 # manual_channel step can look one up (and gracefully find none).
 _CANDIDATES_SUFFIX = "_badchannel-candidates.tsv"
+
+
+def _mask_short_filter_segments(raw: mne.io.BaseRaw) -> int:
+    """Exclude good spans too short for MNE's spectral notch filter.
+
+    Work only on the metric copy: BAD spans still prevent filtering across
+    artifacts, while tiny gaps between them are omitted from the metrics.
+    MNE's default DPSS notch uses eight tapers and cannot process fewer than
+    nine samples; ten also avoids its one-sample overlap step of zero.
+    """
+    starts, stops = _annotations_starts_stops(raw, ("edge", "bad"), invert=True)
+    short = [
+        (int(start), int(stop))
+        for start, stop in zip(starts, stops)
+        if 0 < stop - start < _MIN_FILTER_SEGMENT_SAMPLES
+    ]
+    if short:
+        sfreq = float(raw.info["sfreq"])
+        raw.annotations.append(
+            [raw.first_time + start / sfreq for start, _ in short],
+            [(stop - start) / sfreq for start, stop in short],
+            ["BAD_short_filter_segment"] * len(short),
+        )
+    return len(short)
 
 
 def candidates_sidecar_path(bids_path: mne_bids.BIDSPath) -> Path:
@@ -362,8 +388,19 @@ class BadChannelsAnalysis(BaseAnalysis):
 
         # Do not filter across BAD spans: ringing outside an annotation would
         # otherwise leak a large artifact into the channel scores.
+        filt = raw.copy()
+        n_short = _mask_short_filter_segments(filt)
+        if n_short:
+            self.log(f"  excluded {n_short} short unannotated segment(s) from channel metrics")
+        if not any(
+            stop - start >= _MIN_FILTER_SEGMENT_SAMPLES
+            for start, stop in zip(
+                *_annotations_starts_stops(filt, ("edge", "bad"), invert=True)
+            )
+        ):
+            raise ValueError("No unannotated segment is long enough for bad-channel filtering")
         filt = (
-            raw.copy()
+            filt
             .notch_filter(
                 np.arange(60, 241, 60),
                 method="spectrum_fit",
