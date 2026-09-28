@@ -10,8 +10,12 @@ by row count**, the responses must first be reduced to exactly **one per trial**
 epoch corresponds 1:1 with the trial it belongs to.
 
 This step rewrites the ``proc-<custom_proc>`` derivative so that only the first
-response within each trial window ``[trial_onset, next_trial_onset)`` survives.
-Extra presses and orphan responses (before the first trial / outside any window)
+response within each trial window survives.  The window is
+``[trial_onset, next_trial_onset)``, capped at ``trial_onset +
+cfg._response_max_latency`` when that is set: the task stops collecting a
+response at its deadline, so a later press (e.g. on a break screen after an
+unanswered trial) must not be paired with the trial.  Extra presses and orphan
+responses (before the first trial / after the deadline / outside any window)
 are removed from both ``raw.annotations`` **and** the derivative ``events.tsv``,
 keeping the two consistent so the event-count guards in
 :func:`custom.preprocessing._io.write_raw_bids_custom_step` pass.
@@ -104,6 +108,8 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
             getattr(cfg, "_response_conditions", _DEFAULT_RESPONSE_CONDITIONS)
             or _DEFAULT_RESPONSE_CONDITIONS
         )
+        # Response deadline (s after trial onset); None = next trial onset only.
+        self.max_latency = getattr(cfg, "_response_max_latency", None)
 
     # ------------------------------------------------------------------
     # BaseAnalysis interface
@@ -162,6 +168,7 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
                 raw,
                 trial_conditions=self.trial_conditions,
                 response_conditions=self.response_conditions,
+                max_latency=self.max_latency,
             )
 
             n_trials = len(trial_has_response)
@@ -175,6 +182,19 @@ class SelectTrialResponseAnalysis(BaseAnalysis):
                 f"kept {n_kept} first responses, dropped {n_dropped} "
                 f"(extra presses + orphans)"
             )
+            if self.max_latency is not None:
+                # Trials answered only after the deadline: without the cap
+                # their late press would have been kept as the response.
+                uncapped_mask, _, _, _ = first_response_per_trial(
+                    raw,
+                    trial_conditions=self.trial_conditions,
+                    response_conditions=self.response_conditions,
+                )
+                n_late = int(uncapped_mask.sum()) - n_responded
+                self.log(
+                    f"task={task}: {n_late} trial(s) whose only response came "
+                    f"after the {self.max_latency} s deadline (treated as no response)"
+                )
 
             if drop_ann_idx:
                 raw = self._drop_annotations(raw, drop_ann_idx)

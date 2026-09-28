@@ -4,8 +4,9 @@
 Covers the two shared helpers in :mod:`custom.preprocessing._io`:
 
 * :func:`first_response_per_trial` — pairs each trial annotation with the first
-  response in its window ``[trial_onset, next_trial_onset)``, flagging extra
-  presses and orphan responses for removal.
+  response in its window ``[trial_onset, next_trial_onset)`` (optionally capped
+  at a response deadline), flagging extra presses and orphan responses for
+  removal.
 * :func:`drop_response_rows_from_events_tsv` — trims a BIDS events.tsv to the
   kept response onsets, leaving non-response rows untouched.
 
@@ -273,6 +274,59 @@ class TestFirstResponsePerTrial:
         assert len(keep_onsets) == 0
 
 
+def _late_press_raw():
+    """Trial b is unanswered until 5.2 s (past a 5 s deadline); trial d is
+    unanswered and followed by a break-screen press 150 s later."""
+    return _raw_from_events(
+        [
+            (1.0, "trial/a"),
+            (1.5, "response/left"),
+            (3.0, "trial/b"),
+            (8.2, "response/right"),  # 5.2 s after trial b
+            (10.0, "trial/c"),
+            (10.3, "response/left"),
+            (12.0, "trial/d"),
+            (162.0, "response/right"),  # break screen
+            (200.0, "trial/e"),
+            (200.4, "response/right"),
+        ]
+    )
+
+
+class TestResponseDeadline:
+    """``max_latency`` turns presses after the task's deadline into orphans."""
+
+    def test_uncapped_window_pairs_late_presses(self):
+        mask, _, _, _ = first_response_per_trial(_late_press_raw())
+        assert mask.tolist() == [True, True, True, True, True]
+
+    def test_late_and_break_screen_presses_are_orphans(self):
+        raw = _late_press_raw()
+        mask, keep, drop, keep_onsets = first_response_per_trial(raw, max_latency=5.05)
+        assert mask.tolist() == [True, False, True, False, True]
+        np.testing.assert_allclose(keep_onsets, [1.5, 10.3, 200.4])
+        np.testing.assert_allclose(_onsets_at(raw, drop), [8.2, 162.0])
+
+    def test_press_just_inside_the_deadline_is_kept(self):
+        raw = _raw_from_events(
+            [(1.0, "trial/a"), (6.0, "response/left"), (9.0, "trial/b")]
+        )
+        mask, _, _, _ = first_response_per_trial(raw, max_latency=5.05)
+        assert mask.tolist() == [True, False]
+
+    def test_keep_first_agrees_with_capped_pairing(self):
+        raw = _late_press_raw()
+        sides, latencies = trial_response_side_keep_first(
+            raw, max_latency=5.05, return_latencies=True
+        )
+        mask, _, _, _ = first_response_per_trial(raw, max_latency=5.05)
+        assert sides == ["left", None, "left", None, "right"]
+        assert [s is not None for s in sides] == mask.tolist()
+        np.testing.assert_allclose(
+            latencies, [0.5, np.nan, 0.3, np.nan, 0.4], atol=1e-2
+        )
+
+
 # ---------------------------------------------------------------------------
 # drop_response_rows_from_events_tsv
 # ---------------------------------------------------------------------------
@@ -502,6 +556,25 @@ class TestSelectTrialResponseStep:
         mask, _, _, _ = first_response_per_trial(raw_after)
         assert int(mask.sum()) == n_resp_after == 4
 
+    def test_response_deadline_drops_late_responses(self, tmp_path):
+        raw = self._make_raw()
+        cfg = self._cfg(tmp_path)
+        cfg._response_max_latency = 0.35  # trials 1-2 answer at 0.4 s
+        self._seed_proc_init(raw, cfg)
+
+        select_run(cfg)
+
+        deriv_fif = list((tmp_path / "deriv").glob("sub-001/**/*proc-init_raw.fif"))[0]
+        raw_after = mne.io.read_raw_fif(deriv_fif, verbose="ERROR")
+        resp_onsets = sorted(
+            float(o)
+            for o, d in zip(
+                raw_after.annotations.onset, raw_after.annotations.description
+            )
+            if d.startswith("response")
+        )
+        np.testing.assert_allclose(resp_onsets, [7.2, 9.3])
+
     def test_disabled_is_noop(self, tmp_path):
         raw = self._make_raw()
         cfg = self._cfg(tmp_path)
@@ -624,15 +697,15 @@ class TestResponseAlignmentCheck:
 
     def test_passes_when_metadata_matches(self):
         meta = pd.DataFrame({"resp": ["left", "right", None, "left"]})
-        assert self._check(meta) == 4
+        assert self._check(meta).n_checked == 4
 
     def test_normalizes_case_whitespace_and_no_response_markers(self):
         meta = pd.DataFrame({"resp": ["Left ", "RIGHT", "n/a", "left"]})
-        assert self._check(meta) == 4
+        assert self._check(meta).n_checked == 4
 
     def test_accepts_behavioral_button_codes(self):
         meta = pd.DataFrame({"resp": ["z", "m", None, "z"]})
-        assert self._check(meta) == 4
+        assert self._check(meta).n_checked == 4
 
     def test_raises_on_side_mismatch(self):
         # Trial b recorded as 'left' but the trigger says 'right'.
@@ -654,4 +727,113 @@ class TestResponseAlignmentCheck:
     def test_raises_when_column_absent(self):
         meta = pd.DataFrame({"other": ["left", "right", None, "left"]})
         with pytest.raises(ValueError, match="not found in metadata columns"):
+            self._check(meta)
+
+
+class TestResponseAlignmentClassification:
+    """With a reaction-time column, anticipatory and held-button trials are
+    recognised; every other disagreement still halts."""
+
+    def _raw(self):
+        return _raw_from_events(
+            [
+                (1.0, "trial/a"),
+                (1.5, "response/left"),
+                (2.99, "response/right"),  # just before trial b's trigger
+                (3.0, "trial/b"),
+                (5.0, "trial/c"),
+                (5.4, "response/left"),
+                (7.0, "trial/d"),
+                (7.3, "response/right"),
+            ]
+        )
+
+    def _check(self, meta, **kwargs):
+        kwargs.setdefault("rt_column", "rt")
+        kwargs.setdefault("max_invalid_fraction", 0.5)
+        return assert_response_alignment(
+            self._raw(),
+            meta,
+            "resp",
+            response_left="z",
+            response_right="m",
+            context="test",
+            **kwargs,
+        )
+
+    def test_anticipatory_press_is_skipped(self):
+        # Behavior logged trial b's press at rt 4 ms; its trigger fell in trial a.
+        meta = pd.DataFrame(
+            {"resp": ["z", "m", "z", "m"], "rt": [0.514, 0.004, 0.414, 0.314]}
+        )
+        result = self._check(meta)
+        assert (result.n_checked, result.n_skipped, result.n_invalid) == (3, 1, 0)
+        assert result.valid.all()
+
+    def test_anticipatory_press_raises_without_rt_column(self):
+        meta = pd.DataFrame(
+            {"resp": ["z", "m", "z", "m"], "rt": [0.514, 0.004, 0.414, 0.314]}
+        )
+        with pytest.raises(RuntimeError, match="not aligned"):
+            self._check(meta, rt_column=None)
+
+    def test_slow_behavioral_response_on_unanswered_trial_raises(self):
+        # No trigger response, and the behavioral rt is not anticipatory.
+        meta = pd.DataFrame(
+            {"resp": ["z", "m", "z", "m"], "rt": [0.514, 0.8, 0.414, 0.314]}
+        )
+        with pytest.raises(RuntimeError, match="row 1"):
+            self._check(meta)
+
+    def test_held_button_trial_is_invalid(self):
+        # Trial c: left press trigger at 0.4 s, but the behavior logged 'm'
+        # (the left release while right was held) 0.2 s later.
+        meta = pd.DataFrame(
+            {"resp": ["z", None, "m", "m"], "rt": [0.514, np.nan, 0.614, 0.314]}
+        )
+        result = self._check(meta)
+        assert result.valid.tolist() == [True, True, False, True]
+        assert (result.n_checked, result.n_skipped, result.n_invalid) == (4, 0, 1)
+
+    def test_other_side_at_trigger_time_raises(self):
+        # Sides differ but the behavioral rt matches the trigger press: a
+        # genuine disagreement, not a held button.
+        meta = pd.DataFrame(
+            {"resp": ["z", None, "m", "m"], "rt": [0.514, np.nan, 0.414, 0.314]}
+        )
+        with pytest.raises(RuntimeError, match="row 2"):
+            self._check(meta)
+
+    def test_too_many_held_button_trials_raise(self):
+        meta = pd.DataFrame(
+            {"resp": ["z", None, "m", "m"], "rt": [0.514, np.nan, 0.614, 0.314]}
+        )
+        with pytest.raises(RuntimeError, match="suggests misalignment"):
+            self._check(meta, max_invalid_fraction=0.1)
+
+    def test_row_shift_still_raises(self):
+        rng = np.random.default_rng(0)
+        n = 40
+        sides = rng.choice(["left", "right"], n)
+        lats = rng.uniform(0.3, 1.5, n)
+        events = []
+        for i in range(n):
+            events += [(2.0 * i + 1.0, "trial/a"), (2.0 * i + 1.0 + lats[i], f"response/{sides[i]}")]
+        raw = _raw_from_events(events)
+        meta = pd.DataFrame(
+            {"resp": np.where(sides == "left", "z", "m"), "rt": lats + 0.014}
+        )
+        result = assert_response_alignment(
+            raw, meta, "resp", response_left="z", response_right="m", rt_column="rt"
+        )
+        assert result.n_checked == n and result.valid.all()
+        shifted = meta.shift(1).bfill()
+        with pytest.raises(RuntimeError):
+            assert_response_alignment(
+                raw, shifted, "resp", response_left="z", response_right="m", rt_column="rt"
+            )
+
+    def test_raises_when_rt_column_absent(self):
+        meta = pd.DataFrame({"resp": ["z", "m", "z", "m"]})
+        with pytest.raises(ValueError, match="'rt' not found"):
             self._check(meta)

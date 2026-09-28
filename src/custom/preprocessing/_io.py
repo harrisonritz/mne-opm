@@ -50,7 +50,7 @@ import shutil
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import mne
 import mne_bids
@@ -95,14 +95,26 @@ def count_condition_events_in_raw(raw, conditions):
     matched_names : list of str
         Annotation description names that matched ``conditions``.
     """
+    events, matched_names = _condition_events_in_raw(raw, conditions)
+    return len(events), matched_names
+
+
+def _condition_events_in_raw(raw, conditions):
+    """Events array and matched names for :func:`count_condition_events_in_raw`.
+
+    Shared by the count and onset helpers so both select exactly the events
+    ``mne-bids-pipeline`` will epoch.  Returns an empty ``(0, 3)`` events array
+    when nothing matches.
+    """
+    empty = np.zeros((0, 3), dtype=int)
     if len(raw.annotations) == 0:
-        return 0, []
+        return empty, []
 
     try:
         _, event_id = mne.events_from_annotations(raw=raw, verbose="ERROR")
     except ValueError:
         # All annotations filtered out (e.g. only BAD_*).
-        return 0, []
+        return empty, []
 
     try:
         matched_names = mne.event.match_event_names(
@@ -111,10 +123,10 @@ def count_condition_events_in_raw(raw, conditions):
             on_missing="ignore",
         )
     except KeyError:
-        return 0, []
+        return empty, []
 
     if not matched_names:
-        return 0, []
+        return empty, []
 
     event_id_filtered = {
         name: event_id[name] for name in matched_names if name in event_id
@@ -122,7 +134,32 @@ def count_condition_events_in_raw(raw, conditions):
     events, _ = mne.events_from_annotations(
         raw, event_id=event_id_filtered, verbose="ERROR"
     )
-    return len(events), matched_names
+    return events, matched_names
+
+
+def trial_onsets_in_raw(raw, conditions):
+    """Onsets (seconds, ascending) of the events matched by ``conditions``.
+
+    Selects the same events as :func:`count_condition_events_in_raw`, so
+    ``len(trial_onsets_in_raw(raw, c)) == count_condition_events_in_raw(raw, c)[0]``.
+    Onsets are relative to the first sample; only their differences are used
+    (see :func:`reconcile_trial_metadata`).
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Raw object whose ``annotations`` are inspected.
+    conditions : iterable of str
+        Condition names matched hierarchically against annotation descriptions.
+
+    Returns
+    -------
+    onsets : numpy.ndarray of float
+        Sorted event onsets in seconds.
+    """
+    events, _ = _condition_events_in_raw(raw, conditions)
+    samples = np.sort(events[:, 0] - raw.first_samp)
+    return samples.astype(float) / float(raw.info["sfreq"])
 
 
 def count_condition_events_in_tsv(events_tsv_path, conditions):
@@ -147,21 +184,32 @@ def count_condition_events_in_tsv(events_tsv_path, conditions):
     matched_names : list of str
         Description names that matched ``conditions``.
     """
+    rows, matched_names = _condition_rows_in_tsv(events_tsv_path, conditions)
+    return len(rows), matched_names
+
+
+def _condition_rows_in_tsv(events_tsv_path, conditions):
+    """Matched rows and names for :func:`count_condition_events_in_tsv`.
+
+    Shared by the count and onset helpers.  Returns an empty DataFrame when the
+    file is missing, lacks ``trial_type``, or nothing matches.
+    """
     events_path = Path(events_tsv_path)
     if not events_path.exists():
-        return 0, []
+        return pd.DataFrame(), []
 
     events_df = pd.read_csv(events_path, sep="\t")
     if "trial_type" not in events_df.columns:
-        return 0, []
+        return pd.DataFrame(), []
 
     # Mirror mne_bids drop of n/a trial_type rows
     descriptions = events_df["trial_type"].astype(str)
+    events_df = events_df[descriptions != "n/a"]
     descriptions = descriptions[descriptions != "n/a"]
     unique_names = sorted(set(descriptions))
 
     if not unique_names:
-        return 0, []
+        return pd.DataFrame(), []
 
     try:
         matched_names = mne.event.match_event_names(
@@ -170,56 +218,209 @@ def count_condition_events_in_tsv(events_tsv_path, conditions):
             on_missing="ignore",
         )
     except KeyError:
-        return 0, []
+        return pd.DataFrame(), []
 
     if not matched_names:
-        return 0, []
+        return pd.DataFrame(), []
 
-    n_events = int(descriptions.isin(matched_names).sum())
-    return n_events, matched_names
+    return events_df[descriptions.isin(matched_names)], matched_names
 
 
-def reconcile_trial_metadata(meta_dfs, n_trial_events, *, policy="error"):
-    """Reconcile behavioral rows with trial triggers before a positional join.
+def trial_onsets_in_tsv(events_tsv_path, conditions):
+    """Onsets (seconds, ascending) of the ``events.tsv`` rows matched by ``conditions``.
 
-    ``trim_restart`` preserves the historical small-surplus trim for known
-    task restarts. It is explicitly opt-in because counts alone cannot locate
-    a missing trigger within a recording. The caller must subsequently check
-    response sides against the trigger stream.
+    The events.tsv counterpart of :func:`trial_onsets_in_raw`, selecting the
+    same rows as :func:`count_condition_events_in_tsv`.
 
-    Returns the reconciled DataFrame and a description of any trim performed.
+    Parameters
+    ----------
+    events_tsv_path : str or Path
+        Path to a BIDS ``*_events.tsv`` file.
+    conditions : iterable of str
+        Condition names to match.
+
+    Returns
+    -------
+    onsets : numpy.ndarray of float
+        Sorted event onsets in seconds (empty if nothing matches).
     """
-    if policy not in {"error", "trim_restart"}:
+    rows, _ = _condition_rows_in_tsv(events_tsv_path, conditions)
+    if rows.empty:
+        return np.zeros(0, dtype=float)
+    return np.sort(rows["onset"].to_numpy(dtype=float))
+
+
+class TrialAlignment(NamedTuple):
+    """Outcome of :func:`reconcile_trial_metadata`.
+
+    Attributes
+    ----------
+    dropped_rows : tuple of int
+        Indices (into the concatenated behavioral rows) of the rows removed
+        because they have no trial trigger; empty when the counts matched.
+    n_isi_agree : int
+        Number of compared inter-trial intervals that agree within tolerance.
+    n_isi : int
+        Number of inter-trial intervals compared (0 if fewer than two trials).
+    """
+
+    dropped_rows: tuple
+    n_isi_agree: int
+    n_isi: int
+
+    @property
+    def isi_agreement(self):
+        """Fraction of compared ISIs that agree (``nan`` when none compared)."""
+        return self.n_isi_agree / self.n_isi if self.n_isi else float("nan")
+
+
+def reconcile_trial_metadata(
+    meta_dfs,
+    trial_onsets,
+    *,
+    policy="error",
+    onset_column="stim_start_time",
+    isi_tol=0.05,
+    min_isi_agreement=0.95,
+    max_excess=20,
+):
+    """Put behavioral rows in 1:1 correspondence with the trial triggers.
+
+    ``mne-bids-pipeline`` joins metadata to epochs by position, so every
+    behavioral row must belong to the trial trigger at the same position.  The
+    trigger onsets and the behavioral stimulus-onset times are recorded on
+    different clocks, but their *differences* — the inter-trial intervals
+    (ISIs) — must agree trial by trial.  That makes the ISIs a
+    timing-based alignment check that is independent of the responses.
+
+    When the behavioral log has ``excess`` more rows than there are triggers
+    (e.g. the MEG recording started after the task, or a task restart), the
+    ``align`` policy drops the contiguous block of ``excess`` rows whose removal
+    makes the most ISIs agree.  Every candidate block position is scored in
+    O(n): triggers before the block pair with rows at offset 0, triggers after
+    it with rows at offset ``excess``, and the one ISI spanning the block is not
+    compared.  Ties are resolved in favour of the start or end of the log
+    (which leave no spanning ISI); any other tie is ambiguous and raises.
+
+    The ISI agreement is verified in every case, including when the counts
+    already match, so a missing *and* an extra trigger cannot slip through.
+
+    Parameters
+    ----------
+    meta_dfs : list of pandas.DataFrame
+        Behavioral rows, one DataFrame per log file, in recording order.
+    trial_onsets : array-like of float
+        Onsets (seconds) of the trial events the pipeline will epoch, as from
+        :func:`trial_onsets_in_raw` / :func:`trial_onsets_in_tsv`.
+    policy : {"error", "align"}
+        ``"error"`` refuses any count mismatch; ``"align"`` drops the
+        best-aligned block of surplus rows.
+    onset_column : str
+        Behavioral column holding each trial's stimulus-onset time (seconds).
+    isi_tol : float
+        Maximum |trigger ISI - behavioral ISI| (seconds) for an ISI to agree.
+    min_isi_agreement : float
+        Minimum fraction of compared ISIs that must agree.
+    max_excess : int
+        Largest number of surplus rows the ``align`` policy will drop.
+
+    Returns
+    -------
+    metadata : pandas.DataFrame
+        The reconciled rows (index reset), one per trial onset.
+    alignment : TrialAlignment
+        Which rows were dropped and the ISI agreement.
+
+    Raises
+    ------
+    ValueError
+        On an unknown policy, no metadata, or a missing ``onset_column``.
+    RuntimeError
+        If there are fewer rows than triggers, the surplus is not allowed by
+        ``policy`` / ``max_excess``, the dropped block is ambiguous, or the ISI
+        agreement is below ``min_isi_agreement``.
+    """
+    if policy not in {"error", "align"}:
         raise ValueError(f"Unknown metadata mismatch policy: {policy!r}")
     if not meta_dfs:
         raise ValueError("No behavioral metadata files were provided")
 
     metadata = pd.concat(meta_dfs, ignore_index=True)
-    excess = len(metadata) - n_trial_events
-    if excess == 0:
-        return metadata, None
+    if onset_column not in metadata.columns:
+        raise ValueError(
+            f"Behavioral onset column {onset_column!r} not found; it is needed to "
+            "verify the trial alignment from inter-trial intervals."
+        )
+
+    t = np.sort(np.asarray(trial_onsets, dtype=float))
+    b = metadata[onset_column].to_numpy(dtype=float)
+    n = len(t)
+    excess = len(b) - n
     if excess < 0:
         raise RuntimeError(
             f"Metadata has {-excess} fewer rows than trial events "
-            f"({len(metadata)} vs {n_trial_events}); refusing a positional join."
+            f"({len(b)} vs {n}); refusing a positional join."
         )
-    if policy == "error" or excess > 20:
+    if excess > 0 and (policy == "error" or excess > max_excess):
         raise RuntimeError(
             f"Metadata has {excess} more rows than trial events "
-            f"({len(metadata)} vs {n_trial_events}); refusing an unverified "
-            "positional join. For a known restart with 1-20 extra rows, "
-            "set TSX_METADATA_MISMATCH_POLICY=trim_restart."
+            f"({len(b)} vs {n}); refusing a positional join. The 'align' "
+            f"policy drops up to {max_excess} surplus rows chosen by "
+            "inter-trial-interval matching (TSX_METADATA_MISMATCH_POLICY=align)."
         )
+    if n < 2:
+        if excess:
+            raise RuntimeError(
+                f"Cannot place {excess} surplus metadata row(s) with fewer than "
+                "two trial events: there are no inter-trial intervals to match."
+            )
+        return metadata, TrialAlignment((), 0, 0)
 
-    if len(meta_dfs) > 1 and excess <= len(meta_dfs[0]):
-        trimmed = [meta_dfs[0].iloc[: len(meta_dfs[0]) - excess], *meta_dfs[1:]]
-        metadata = pd.concat(trimmed, ignore_index=True)
-        location = "end of first metadata file (restart boundary)"
+    # agree_k[j]: trigger ISI j (trial j -> j+1) matches behavioral rows j+k -> j+k+1.
+    dt = np.diff(t)
+    agree_0 = np.abs(dt - np.diff(b[:n])) < isi_tol
+    agree_k = np.abs(dt - np.diff(b[excess:])) < isi_tol
+
+    if excess == 0:
+        # No block dropped: every trigger pairs with the row at offset 0.
+        dropped = ()
+        n_agree, n_isi = int(agree_0.sum()), n - 1
     else:
-        metadata = metadata.iloc[:n_trial_events].reset_index(drop=True)
-        location = "end of metadata"
-    assert len(metadata) == n_trial_events
-    return metadata, location
+        # Dropping rows [p, p + excess) pairs triggers < p with offset 0 and
+        # triggers >= p with offset ``excess``; ISI p-1 spans the block.
+        # prefix_0[i] = sum(agree_0[:i]) and suffix_k[i] = sum(agree_k[i:]),
+        # for i = 0..n (agree_* have n - 1 entries).
+        prefix_0 = np.r_[0, np.cumsum(agree_0)]
+        suffix_k = np.r_[np.cumsum(agree_k[::-1])[::-1], 0, 0]
+        positions = np.arange(n + 1)
+        scores = prefix_0[np.maximum(positions - 1, 0)] + suffix_k[positions]
+        best = np.flatnonzero(scores == scores.max())
+        edges = [q for q in best if q in (0, n)]
+        if len(edges) == 1:
+            p = int(edges[0])
+        elif len(best) == 1:
+            p = int(best[0])
+        else:
+            raise RuntimeError(
+                f"Cannot locate the {excess} surplus metadata row(s): dropping them "
+                f"at trial positions {best[:10].tolist()} aligns the inter-trial "
+                "intervals equally well."
+            )
+        dropped = tuple(range(p, p + excess))
+        n_agree = int(scores[p])
+        n_isi = n - 1 - (1 if 0 < p < n else 0)
+        metadata = metadata.drop(index=list(dropped)).reset_index(drop=True)
+
+    alignment = TrialAlignment(dropped, n_agree, n_isi)
+    if alignment.isi_agreement < min_isi_agreement:
+        raise RuntimeError(
+            f"Trial triggers and behavioral rows are not aligned: only "
+            f"{n_agree}/{n_isi} inter-trial intervals agree within "
+            f"{isi_tol * 1e3:.0f} ms (need {min_isi_agreement:.0%}). "
+            "Refusing a positional join."
+        )
+    assert len(metadata) == n
+    return metadata, alignment
 
 
 def first_response_per_trial(
@@ -227,15 +428,22 @@ def first_response_per_trial(
     *,
     trial_conditions=("trial",),
     response_conditions=("response/left", "response/right"),
+    max_latency=None,
 ):
     """Pair each trial annotation with the first response that follows it.
 
     For every trial annotation (taken in chronological order), the first
-    response annotation whose onset falls in ``[trial_onset, next_trial_onset)``
-    is selected.  Responses that are not the first within a trial window (e.g.
+    response annotation whose onset falls in the trial window
+    ``[trial_onset, min(next_trial_onset, trial_onset + max_latency))`` is
+    selected.  Responses that are not the first within a trial window (e.g.
     double presses) and responses that fall outside every trial window
-    ("orphans" — before the first trial, or with no containing window) are
-    flagged for removal.
+    ("orphans" — before the first trial, after the response deadline, or with
+    no containing window) are flagged for removal.
+
+    ``max_latency`` should match the task's response deadline: without it a
+    press made after the deadline of an unanswered trial (which the task does
+    not record as a response), or on a break screen long after the trial, would
+    be paired with that trial.
 
     Trial and response annotations are matched hierarchically (so ``'trial'``
     matches ``'trial/read_read'`` and ``'response/left'`` matches exactly),
@@ -252,6 +460,9 @@ def first_response_per_trial(
         Condition names identifying trial-onset annotations.
     response_conditions : iterable of str
         Condition names identifying response annotations.
+    max_latency : float or None
+        Response deadline in seconds after trial onset (exclusive).  ``None``
+        bounds each window by the next trial onset only.
 
     Returns
     -------
@@ -313,10 +524,13 @@ def first_response_per_trial(
     trial_has_response = np.zeros(n_trials, dtype=bool)
     keep_ann_idx: list[int] = []
 
-    # Upper bound of each trial window is the next trial onset (inf for the last).
+    # Upper bound of each trial window is the next trial onset (inf for the
+    # last), capped at the response deadline.
     next_onsets = np.full(n_trials, np.inf, dtype=float)
     if n_trials > 1:
         next_onsets[:-1] = trial_onsets[1:]
+    if max_latency is not None:
+        next_onsets = np.minimum(next_onsets, trial_onsets + float(max_latency))
 
     used = np.zeros(len(response_glob), dtype=bool)
     for j in range(n_trials):
@@ -447,14 +661,19 @@ def trial_response_side_keep_first(
     *,
     trial_conditions=("trial",),
     response_conditions=("response/left", "response/right"),
+    max_latency=None,
+    return_latencies=False,
 ):
     """Per-trial first-response **side** via :func:`mne.epochs.make_metadata`.
 
     Epochs on each trial annotation (the "row event") and records the *side*
     (e.g. ``'left'`` / ``'right'``) of the **first** response that follows it,
     using MNE's hierarchical-event-descriptor ``keep_first`` aggregation.  The
-    per-trial window is ``[trial_onset, next_trial_onset)`` — exactly the window
-    used by :func:`first_response_per_trial`.
+    per-trial window is ``[trial_onset, min(next_trial_onset, trial_onset +
+    max_latency))`` — exactly the window used by :func:`first_response_per_trial`.
+    ``make_metadata`` bounds the window by the next trial; a first response at
+    or beyond ``max_latency`` is then discarded (no earlier response exists, so
+    the trial has none).
 
     This deliberately uses a different code path than
     :func:`first_response_per_trial` so the two can be cross-checked against one
@@ -483,6 +702,11 @@ def trial_response_side_keep_first(
         hierarchically).  These must share a single top-level group (the part
         before the first ``'/'``), e.g. ``'response'`` for
         ``('response/left', 'response/right')``.
+    max_latency : float or None
+        Response deadline in seconds after trial onset (exclusive).  ``None``
+        bounds each window by the next trial onset only.
+    return_latencies : bool
+        Also return each first response's latency after its trial onset.
 
     Returns
     -------
@@ -490,10 +714,19 @@ def trial_response_side_keep_first(
         One entry per trial annotation, in chronological order; the response
         side (the part after the group prefix, lower-cased, e.g. ``'left'`` /
         ``'right'``) or ``None`` when the trial had no response in its window.
+    latencies : numpy.ndarray of float
+        Only if ``return_latencies``: the first response's latency (seconds)
+        per trial, ``nan`` where ``sides`` is ``None``.
     """
+
+    def _out(sides, latencies):
+        if return_latencies:
+            return sides, np.asarray(latencies, dtype=float)
+        return sides
+
     ann = raw.annotations
     if len(ann) == 0:
-        return []
+        return _out([], [])
 
     unique_names = sorted(set(ann.description))
 
@@ -542,11 +775,11 @@ def trial_response_side_keep_first(
 
     n_trials = sum(1 for _, _, code in rows if code == 1)
     if n_trials == 0:
-        return []
+        return _out([], [])
 
     # No responses anywhere: every trial is unanswered.
     if not response_names:
-        return [None] * n_trials
+        return _out([None] * n_trials, [np.nan] * n_trials)
 
     events = np.asarray(sorted(rows), dtype=int)
 
@@ -560,14 +793,46 @@ def trial_response_side_keep_first(
         keep_first=[group],
     )
 
+    # ``make_metadata`` names the group's first-event latency column after the
+    # group itself, and the first event's name ``first_<group>``.
     first_col = f"first_{group}"
+    latencies = metadata[group].to_numpy(dtype=float, copy=True)
     sides = []
-    for value in metadata[first_col].tolist():
-        if value is None or (isinstance(value, float) and np.isnan(value)):
+    for i, value in enumerate(metadata[first_col].tolist()):
+        missing = value is None or (isinstance(value, float) and np.isnan(value))
+        if not missing and max_latency is not None and latencies[i] >= max_latency:
+            missing = True
+        if missing:
             sides.append(None)
+            latencies[i] = np.nan
         else:
             sides.append(str(value).strip().lower())
-    return sides
+    return _out(sides, latencies)
+
+
+class ResponseAlignment(NamedTuple):
+    """Outcome of :func:`assert_response_alignment`.
+
+    Attributes
+    ----------
+    n_checked : int
+        Trials whose trigger and behavioral responses were compared.
+    n_skipped : int
+        Anticipatory trials excluded from the comparison (see
+        :func:`assert_response_alignment`).
+    valid : numpy.ndarray of bool
+        One entry per trial; ``False`` where the behavioral response is invalid
+        because a held button made the task log a button release.
+    """
+
+    n_checked: int
+    n_skipped: int
+    valid: np.ndarray
+
+    @property
+    def n_invalid(self):
+        """Number of trials whose behavioral response is invalid."""
+        return int((~self.valid).sum())
 
 
 def assert_response_alignment(
@@ -579,6 +844,10 @@ def assert_response_alignment(
     response_conditions=("response/left", "response/right"),
     response_left=(),
     response_right=(),
+    max_latency=None,
+    rt_column=None,
+    trigger_lag=0.03,
+    max_invalid_fraction=0.01,
     context="",
     max_preview=10,
 ):
@@ -591,6 +860,26 @@ def assert_response_alignment(
     trial/response triggers and the behavioral log are misaligned, which would
     silently corrupt the positional trial<->epoch metadata join performed by
     mne-bids-pipeline, so a :class:`RuntimeError` is raised to halt the run.
+
+    With ``rt_column`` given, two trial-level disagreements that do *not*
+    indicate misalignment are recognised from the behavioral reaction time
+    ``rt`` and the trigger latency ``lat`` of the first response.  Response
+    triggers lead the behavioral clock by a small hardware lag (5-23 ms in the
+    TSX data), bounded by ``trigger_lag``:
+
+    * **anticipatory** — the trigger stream has no response but the behavior
+      does, with ``rt < trigger_lag``.  The press landed just *before* the
+      trial trigger, so the trigger pairing gave it to the previous trial.  The
+      trial is skipped (not compared) and counted in ``n_skipped``.
+    * **held button** — both record a response but on different sides, and
+      ``rt - lat > trigger_lag``: the behavior logged a *later* button event
+      than the press.  With one button held down, a task that only accepts
+      single-button states ignores the other button's press and logs its
+      release as a press of the held button.  The behavioral response is
+      invalid; the trial is marked ``False`` in ``valid``.
+
+    A row shift makes about half of all sides disagree, so held-button trials
+    above ``max_invalid_fraction`` of the trials raise instead.
 
     ``meta_df`` must be the **full per-trial** metadata (one row per trial,
     including unanswered trials), *not* the response-aligned subset — the
@@ -614,6 +903,19 @@ def assert_response_alignment(
         Metadata token(s) denoting a left / right response (e.g. ``'z'`` /
         ``'r'``).  Used to map recorded values onto ``'left'`` / ``'right'``
         before comparison.  A scalar string is treated as a single token.
+    max_latency : float or None
+        Response deadline (seconds), forwarded to
+        :func:`trial_response_side_keep_first`; must match the one used to
+        select the responses.
+    rt_column : str or None
+        Column in ``meta_df`` holding the behavioral reaction time (seconds).
+        ``None`` disables the anticipatory / held-button classification, so
+        every disagreement raises.
+    trigger_lag : float
+        Upper bound (seconds) on how far response triggers lead the
+        behavioral reaction time.
+    max_invalid_fraction : float
+        Largest fraction of trials that may be classified as held-button.
     context : str
         Optional label prepended to log / error messages.
     max_preview : int
@@ -621,24 +923,26 @@ def assert_response_alignment(
 
     Returns
     -------
-    n_trials : int
-        Number of trials checked.
+    alignment : ResponseAlignment
+        Counts of compared / skipped trials and the per-trial validity mask.
 
     Raises
     ------
     ValueError
-        If ``column`` is absent from ``meta_df``.
+        If ``column`` or ``rt_column`` is absent from ``meta_df``.
     RuntimeError
-        If the trial count disagrees with the metadata row count, or any
-        trial's first-response side does not match the metadata column.
+        If the trial count disagrees with the metadata row count, any trial's
+        first-response side does not match the metadata column (and is not
+        explained as above), or too many trials are held-button.
     """
     prefix = f"[{context}] " if context else ""
 
-    if column not in meta_df.columns:
-        raise ValueError(
-            f"{prefix}response-metadata column {column!r} not found in metadata "
-            f"columns: {list(meta_df.columns)}"
-        )
+    for name in (column, rt_column):
+        if name is not None and name not in meta_df.columns:
+            raise ValueError(
+                f"{prefix}response-metadata column {name!r} not found in metadata "
+                f"columns: {list(meta_df.columns)}"
+            )
 
     def _tokens(value):
         items = [value] if isinstance(value, str) else list(value)
@@ -661,10 +965,12 @@ def assert_response_alignment(
             return "right"
         return text
 
-    sides = trial_response_side_keep_first(
+    sides, latencies = trial_response_side_keep_first(
         raw,
         trial_conditions=trial_conditions,
         response_conditions=response_conditions,
+        max_latency=max_latency,
+        return_latencies=True,
     )
     recorded = list(meta_df[column])
 
@@ -675,11 +981,29 @@ def assert_response_alignment(
             f"{column!r}. Trials and responses are not aligned."
         )
 
-    mismatches = [
-        (i, trigger, rec)
-        for i, (trigger, rec) in enumerate(zip(sides, recorded))
-        if _norm(trigger) != _norm(rec)
-    ]
+    if rt_column is None:
+        rts = np.full(len(sides), np.nan)
+    else:
+        rts = pd.to_numeric(meta_df[rt_column], errors="coerce").to_numpy(dtype=float)
+
+    valid = np.ones(len(sides), dtype=bool)
+    n_skipped = 0
+    mismatches = []
+    for i, (trigger, rec) in enumerate(zip(sides, recorded)):
+        trig_side, rec_side = _norm(trigger), _norm(rec)
+        if trig_side == rec_side:
+            continue
+        if trig_side is None and rec_side is not None and rts[i] < trigger_lag:
+            n_skipped += 1  # anticipatory: press preceded the trial trigger
+        elif (
+            trig_side is not None
+            and rec_side is not None
+            and rts[i] - latencies[i] > trigger_lag
+        ):
+            valid[i] = False  # held button: behavior logged a later release
+        else:
+            mismatches.append((i, trigger, rec))
+
     if mismatches:
         preview = ", ".join(
             f"row {i}: keep_first={trigger!r} vs metadata={rec!r}"
@@ -692,7 +1016,18 @@ def assert_response_alignment(
             f"First mismatches: {preview}"
         )
 
-    return len(sides)
+    n_invalid = int((~valid).sum())
+    if n_invalid > max_invalid_fraction * len(sides):
+        rows = np.flatnonzero(~valid)[:max_preview].tolist()
+        raise RuntimeError(
+            f"{prefix}{n_invalid}/{len(sides)} trial(s) where the behavioral "
+            f"response in {column!r} is a later, different button event than the "
+            f"first response trigger — more than {max_invalid_fraction:.1%} of "
+            f"trials, which suggests misalignment rather than held buttons. "
+            f"First rows: {rows}"
+        )
+
+    return ResponseAlignment(len(sides) - n_skipped, n_skipped, valid)
 
 
 def drop_response_rows_from_events_tsv(
