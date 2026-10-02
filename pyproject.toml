@@ -70,7 +70,10 @@ docs = [
 
 [tool.uv]
 override-dependencies = [
-    "mne @ git+https://github.com/harrisonritz/mne-python.git@mne-opm"
+    "mne @ git+https://github.com/harrisonritz/mne-python.git@mne-opm",
+    # The forks have no git tags, so they report a 0.1.0.dev version that cannot satisfy
+    # mne-bids-pipeline's "mne-bids[full] >= 0.16"; the extra is kept for its dependencies.
+    "mne-bids[full] @ git+https://github.com/harrisonritz/mne-bids.git@mne-opm",
 ]
 
 [tool.coverage.run]
