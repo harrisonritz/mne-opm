@@ -36,7 +36,8 @@ dependencies = [
     "openmeeg>=2.5.16",
     "osl-ephys",
     "pyopengl>=3.1.10",
-    "pyqt5>=5.15; sys_platform != 'win32'",
+    # Qt binding: same default and exclusions as mne[full] in mne-python.
+    "pyside6 != 6.7.0, != 6.8.0, != 6.8.0.1, != 6.9.1",
     "pyvista>=0.46.4",
     "trame>=3.12.0",
     "vtk>=9.5.2",
