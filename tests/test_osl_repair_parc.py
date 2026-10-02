@@ -240,6 +240,9 @@ class TestFailures:
         path = outdir / "sub-000" / "sub-000_epo.fif"
         sensor = read(path)
         sensor.events[0, 2] = 999
+        # MNE rejects epochs whose events carry a code missing from event_id
+        # (even when saving), so register the new code as well.
+        sensor.event_id = {**sensor.event_id, "mismatch": 999}
         sensor.save(path, overwrite=True, verbose="ERROR")
 
         assert repair_parc.run(cfg) is False
