@@ -976,7 +976,10 @@ def _write_empty_room(
         root=cfg.bids_dir,
     )
 
-    mne_bids.write_raw_bids(
+    # Return the fully-specified path (with datatype, suffix and extension) that
+    # write_raw_bids reports: it is later passed as ``empty_room=``, which recent
+    # mne-bids needs to locate the file rather than guess from the basename.
+    return mne_bids.write_raw_bids(
         raw_er,
         bids_path,
         allow_preload=True,
@@ -984,7 +987,6 @@ def _write_empty_room(
         events=None,
         format="FIF",
     )
-    return bids_path
 
 
 def _write_anatomical(
@@ -1131,7 +1133,10 @@ def bids_conversion(cfg: SimpleNamespace) -> None:
     if emptyroom_bids_path is not None:
         write_kwargs["empty_room"] = emptyroom_bids_path
 
-    mne_bids.write_raw_bids(**write_kwargs)
+    # write_raw_bids returns the fully-specified path of the data file it wrote; the
+    # input ``bids_path`` has no datatype/suffix/extension, which recent mne-bids
+    # no longer guesses when several files (data + sidecars) share its basename.
+    written_path = mne_bids.write_raw_bids(**write_kwargs)
 
     # --- Verify the write preserved condition-event counts -------------------
     # The pre-flight check in TSX_OPM's config-trial.py reads events.tsv at
@@ -1145,7 +1150,7 @@ def bids_conversion(cfg: SimpleNamespace) -> None:
 
     conditions = getattr(cfg, "verify_conditions", ("trial",))
     verify_event_count_after_write(
-        raw, bids_path, conditions=conditions, context="format_bids"
+        raw, written_path, conditions=conditions, context="format_bids"
     )
 
     # --- Anatomical images ---
