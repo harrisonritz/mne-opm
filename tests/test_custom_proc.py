@@ -14,6 +14,7 @@ the legacy contract of reading from / writing to ``bids_root``.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -289,6 +290,17 @@ class TestWriteRawBidsCustomStep:
         assert output_bp.fpath.exists()
         # The proc-init filename should be used
         assert "proc-init" in str(output_bp.fpath)
+
+        # Maxwell filtering reads the reference derivative via MNE-BIDS.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            restored = mne_bids.read_raw_bids(output_bp, verbose="ERROR")
+        assert restored.n_times == raw_meg.n_times
+        assert not any(
+            "meg.json associated" in str(w.message)
+            or "participants.tsv file not found" in str(w.message)
+            for w in caught
+        )
 
     def test_does_not_modify_bids_root_when_redirected(self, tmp_path, raw_meg):
         """A redirected write must NOT touch the BIDS data file."""

@@ -58,10 +58,10 @@ from typing import Any, Dict
 import mne
 import mne_bids
 import mne_qt_browser
-from mne_bids import BIDSPath, find_matching_paths
+from mne_bids import find_matching_paths
 
 from ._base import BaseAnalysis
-from ._io import save_ica_bids
+from ._io import get_ica_bids_path, save_ica_bids
 
 # mne.viz.set_browser_backend("qt")
 
@@ -158,18 +158,7 @@ class ManualICAAnalysis(BaseAnalysis):
         raw = mne.io.read_raw_fif(bp_raw.fpath, preload=True)
         self.log("Loaded cleaned raw data")
 
-        # Load ICA solution (note: ICA files don't include run in filename)
-        bp_ica = BIDSPath(
-            root=self.cfg.deriv_root,
-            subject=subject,
-            session=session,
-            task=self.cfg.task,
-            datatype="meg",
-            suffix="ica",
-            processing="ica",
-            extension=".fif",
-            check=False,  # Allow non-standard suffix 'ica'
-        )
+        bp_ica = get_ica_bids_path(self.cfg)
         ica = mne.preprocessing.read_ica(bp_ica.fpath)
         self.log(f"Loaded ICA solution with {ica.n_components_} components")
         self.log(f"Currently excluded ({len(ica.exclude)}): {ica.exclude}")

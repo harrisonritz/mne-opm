@@ -9,6 +9,7 @@ patched.
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,35 @@ from custom.coreg_diagnostics import (
     run_headpoint_distance_diagnostic,
     run_sensitivity_diagnostics,
 )
+
+
+# ---------------------------------------------------------------------------
+# Headless setup — importing diagnostics must not initialize graphics
+# ---------------------------------------------------------------------------
+
+
+def test_import_does_not_initialize_3d_backend():
+    import custom.coreg_diagnostics as diagnostics
+
+    with patch.object(diagnostics.mne.viz, "set_3d_backend") as backend:
+        importlib.reload(diagnostics)
+    backend.assert_not_called()
+
+
+def test_setup_3d_backend_enables_offscreen(monkeypatch):
+    import custom.coreg_diagnostics as diagnostics
+
+    monkeypatch.setattr(diagnostics.pyvista, "OFF_SCREEN", False)
+    with (
+        patch.object(diagnostics.mne.viz, "set_3d_backend") as backend,
+        patch.object(diagnostics.mne.viz, "set_3d_options", autospec=True) as options,
+    ):
+        diagnostics._setup_3d_backend()
+    assert diagnostics.pyvista.OFF_SCREEN is True
+    backend.assert_called_once_with("pyvistaqt")
+    options.assert_called_once_with(
+        depth_peeling=False, antialias=False, multi_samples=1
+    )
 
 
 # ---------------------------------------------------------------------------

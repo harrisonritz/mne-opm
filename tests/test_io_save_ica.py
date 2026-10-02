@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from custom.preprocessing._io import save_ica_bids
+from custom.preprocessing._io import get_ica_bids_path, save_ica_bids
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,21 @@ def ica_setup(tmp_path, meg_info, rng):
 
 class TestSaveIcaBids:
     """Test that save_ica_bids updates TSV and saves ICA object."""
+
+    def test_shared_ica_updates_pipeline_artifacts(self, ica_setup):
+        """Save exclusions where the downstream pipeline reads them."""
+        ica, cfg, legacy_tsv, deriv = ica_setup
+        shared_tsv = deriv / "sub-001_ses-01_proc-ica_components.tsv"
+        legacy_tsv.rename(shared_tsv)
+        save_ica_bids(ica, cfg)
+
+        path = get_ica_bids_path(cfg)
+        assert path.task is None
+        loaded = mne.preprocessing.read_ica(path.fpath)
+        assert loaded.exclude == [0, 2]
+        df = pd.read_csv(shared_tsv, sep="\t")
+        assert df.loc[df.status == "bad", "component"].tolist() == [0, 2]
+        assert not legacy_tsv.exists()
 
     def test_updates_tsv_status(self, ica_setup):
         """Excluded components should be marked 'bad' in TSV."""

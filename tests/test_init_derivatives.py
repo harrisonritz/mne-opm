@@ -8,8 +8,8 @@ across re-runs:
    (notably the ``*_trans.fif`` coregistration).
 2. ``assert_not_raw_bids_write`` refuses writes into the raw BIDS data
    directory but allows writes into the derivatives tree.
-3. ``_seed_sidecars`` names the data JSON sidecar to match the output FIF
-   suffix (``_raw.json`` in derivative mode, not a stray ``_meg.json``).
+3. ``_seed_sidecars`` provides datatype JSON and participants metadata that
+   MNE-BIDS searches for when reading custom derivatives.
 """
 
 from __future__ import annotations
@@ -196,9 +196,10 @@ class TestAssertNotRawBidsWrite:
 
 
 class TestSeedSidecarsJsonSuffix:
-    """The data JSON sidecar must follow the output FIF suffix."""
+    """The data JSON sidecar must follow MNE-BIDS datatype lookup."""
 
-    def test_meg_json_becomes_raw_json_in_derivative_mode(self, tmp_path):
+    @pytest.mark.parametrize("source_kind", ["meg", "legacy_raw", "inherited"])
+    def test_derivative_metadata_is_discoverable(self, tmp_path, source_kind):
         cfg = _make_cfg(tmp_path)
 
         source_bp = BIDSPath(
@@ -219,12 +220,20 @@ class TestSeedSidecarsJsonSuffix:
             check=False,
         )
 
-        # Create the source meg.json (and a channels.tsv) to be seeded.
         src_json = (
             source_bp.copy().update(suffix="meg", extension=".json", check=False).fpath
         )
+        if source_kind == "legacy_raw":
+            source_bp.update(suffix="raw", processing="init", check=False)
+            src_json = source_bp.copy().update(extension=".json").fpath
+        elif source_kind == "inherited":
+            src_json = Path(source_bp.root) / "task-TSX_meg.json"
         src_json.parent.mkdir(parents=True, exist_ok=True)
-        src_json.write_text("{}")
+        src_json.write_text('{"PowerLineFrequency": 60}')
+        participants = Path(source_bp.root) / "participants.tsv"
+        participants.write_text("participant_id\tsex\nsub-011\tM\n")
+        participants_json = participants.with_suffix(".json")
+        participants_json.write_text('{"sex": {"Description": "Sex"}}')
 
         _seed_sidecars(source_bp, output_bp)
 
@@ -235,5 +244,21 @@ class TestSeedSidecarsJsonSuffix:
             output_bp.copy().update(suffix="meg", extension=".json", check=False).fpath
         )
 
-        assert raw_json.exists(), "derivative JSON should be named *_raw.json"
-        assert not meg_json.exists(), "no stray *_meg.json should be created"
+        assert not raw_json.exists()
+        assert meg_json.read_text() == src_json.read_text()
+        split_bp = output_bp.copy().update(split="01", check=False)
+        assert Path(
+            split_bp.find_matching_sidecar(extension=".json", suffix="meg")
+        ) == meg_json
+        for name in ("participants.tsv", "participants.json"):
+            assert (Path(output_bp.root) / name).read_bytes() == (
+                Path(source_bp.root) / name
+            ).read_bytes()
+
+        # Repeated writes preserve metadata already present at the destination.
+        meg_json.write_text('{"PowerLineFrequency": 50}')
+        dest_participants = Path(output_bp.root) / "participants.tsv"
+        dest_participants.write_text("participant_id\tsex\nsub-011\tF\n")
+        _seed_sidecars(source_bp, output_bp)
+        assert meg_json.read_text() == '{"PowerLineFrequency": 50}'
+        assert dest_participants.read_text().endswith("sub-011\tF\n")

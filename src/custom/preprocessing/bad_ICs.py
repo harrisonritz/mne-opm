@@ -93,7 +93,7 @@ import mne_bids
 from mne_bids import BIDSPath, find_matching_paths
 
 from ._base import BaseAnalysis
-from ._io import save_ica_bids
+from ._io import get_ica_bids_path, save_ica_bids
 from .pca_gesd import (
     MetricSpec,
     PCAGesdResult,
@@ -202,18 +202,7 @@ class BadICAnalysis(BaseAnalysis):
         raw = mne.io.read_raw_fif(bp_raw.fpath, preload=True)
         self.log("Loaded cleaned raw data")
 
-        # Load ICA solution (note: ICA files don't include run in filename)
-        bp_ica = BIDSPath(
-            root=self.cfg.deriv_root,
-            subject=subject,
-            session=session,
-            task=self.cfg.task,
-            datatype="meg",
-            suffix="ica",
-            processing="ica",
-            extension=".fif",
-            check=False,  # Allow non-standard suffix 'ica'
-        )
+        bp_ica = get_ica_bids_path(self.cfg)
         ica = mne.preprocessing.read_ica(bp_ica.fpath)
         self.log(f"Loaded ICA solution with {ica.n_components_} components")
 
@@ -1127,27 +1116,8 @@ class BadICAnalysis(BaseAnalysis):
         n_comps = ica.n_components_
 
         # --- Read existing pipeline TSV for ICALabel attributions only ---
-        subject = (
-            self.cfg.subjects[0]
-            if isinstance(self.cfg.subjects, list)
-            else self.cfg.subjects
-        )
-        session = (
-            self.cfg.sessions[0]
-            if isinstance(self.cfg.sessions, list)
-            else self.cfg.sessions
-        )
-
-        tsv_path = BIDSPath(
-            root=self.cfg.deriv_root,
-            subject=subject,
-            session=session,
-            task=self.cfg.task,
-            datatype="meg",
-            suffix="components",
-            processing="ica",
-            extension=".tsv",
-            check=False,
+        tsv_path = get_ica_bids_path(self.cfg).copy().update(
+            suffix="components", extension=".tsv"
         )
 
         pipeline_icalabel = ["n/a"] * n_comps

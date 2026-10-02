@@ -41,9 +41,6 @@ import numpy as np
 from mne_bids import BIDSPath, get_head_mri_trans
 
 matplotlib.use("Agg")
-pyvista.OFF_SCREEN = True
-pyvista.start_xvfb()  # start virtual framebuffer for headless/cluster use
-mne.viz.set_3d_backend("pyvista")
 
 
 # Add mne-bids-pipeline to path for importing utilities
@@ -89,37 +86,29 @@ _DEFAULT_VIEWS: List[str] = [
 def _setup_3d_backend() -> None:
     """Configure MNE's 3D backend for off-screen rendering.
 
-    Prefers the pure ``pyvista`` backend for headless/cluster use because
-    ``pyvistaqt`` requires a live Qt event loop and attempts to open X windows
-    even when ``QT_QPA_PLATFORM=offscreen`` is set, causing BadWindow X errors.
-    Falls back to ``pyvistaqt`` only when ``pyvista`` is unavailable.
-
-    Order matters: ``set_3d_backend`` must be called first, then
-    ``set_3d_options``.  ``mne.viz.plot_alignment`` reads ``MNE_3D_OPTION_OFFSCREEN``
-    (written by ``set_3d_options``) to decide whether to create an on-screen X
-    window.  If ``set_3d_options`` is called before the backend is set,
-    ``set_3d_backend`` resets those options and ``plot_alignment`` falls back to
-    creating a real X window, which triggers a BadWindow error on headless nodes.
-    ``stc.plot`` (used in plot_beamformer) is unaffected because Brain always
-    passes ``off_screen=True`` directly from ``pyvista.OFF_SCREEN``.
+    VTK >= 9.5 supports native headless rendering; PyVista's old
+    ``start_xvfb`` helper has been removed.  Set the off-screen flag before
+    creating figures and defer backend initialization until the script runs.
+    MNE's legacy ``pyvista`` name is an alias for ``pyvistaqt``, which supports
+    PySide6; it is not a separate Qt-free backend.
     """
-    for backend in ("pyvista", "pyvistaqt"):
-        try:
-            mne.viz.set_3d_backend(backend)
-            print(f"[_setup_3d_backend] Using 3D backend: {backend}")
-            break
-        except Exception as e:
-            print(f"[_setup_3d_backend] Backend {backend!r} unavailable: {e}")
-    else:
+    pyvista.OFF_SCREEN = True
+    try:
+        mne.viz.set_3d_backend("pyvistaqt")
+        print("[_setup_3d_backend] Using 3D backend: pyvistaqt")
+    except Exception as e:
         print(
-            "[_setup_3d_backend] WARNING: no usable 3D backend; 3D figures will fail."
+            f"[_setup_3d_backend] WARNING: pyvistaqt unavailable: {e}; "
+            "3D figures will fail."
         )
         return
 
     try:
-        # antialias=False: multisampling requires GPU features absent in software
-        # rendering and can cause VTK to fall back to X11 paths.
-        mne.viz.set_3d_options(offscreen=True, depth_peeling=False, antialias=False)
+        # Disable antialiasing and multisampling for software rendering.
+        # Off-screen rendering is controlled by pyvista.OFF_SCREEN above.
+        mne.viz.set_3d_options(
+            depth_peeling=False, antialias=False, multi_samples=1
+        )
     except Exception as e:  # pragma: no cover - defensive
         print(f"[_setup_3d_backend] Could not set 3D options: {e}")
 
@@ -1040,7 +1029,7 @@ def main() -> None:
         )
         return
 
-    # _setup_3d_backend()
+    _setup_3d_backend()
 
     data = load_diagnostic_data(cfg)
     paths = _diag_paths(cfg)

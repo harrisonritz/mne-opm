@@ -45,8 +45,10 @@ Author: Harrison Ritz, 2025
 from __future__ import annotations
 
 import json
+import os
 import random
 import shutil
+import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -1718,24 +1720,35 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
     Each sidecar is only copied if it exists at the source and does not yet
     exist at the destination, making this safe to call on every save.
 
-    The data JSON sidecar follows the *data* suffix at each end: the source
-    raw recording is named ``_meg.json``, but a derivative whose FIF carries
-    the ``raw`` suffix (``proc-<label>_raw.fif``) must have a matching
-    ``proc-<label>_raw.json`` rather than a stray ``_meg.json``.  The
-    destination suffix is therefore taken from ``output_bp`` so the JSON and
-    the FIF it describes always agree.
+    MNE-BIDS searches for the datatype JSON (e.g. ``_meg.json``), including
+    when reading a derivative named ``proc-<label>_raw.fif``. Older custom
+    derivatives used ``_raw.json``; accept those as a source for migration.
+    Copy root-level participants metadata too, so reference-run reads can
+    restore subject information without warnings.
 
     The split entity is stripped from both sides so the lookup is correct
     regardless of whether source_bp refers to a split file.
     """
-    # Data suffix of the output FIF: "raw" in derivative mode, "meg" in legacy
-    # mode.  The data JSON must use the same suffix as the FIF it describes.
-    data_suffix = output_bp.suffix or "meg"
+    def copy_if_missing(src: Path, dst: Path) -> None:
+        if src == dst or not src.exists() or dst.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        # Publish a complete file without overwriting a concurrent job's copy.
+        with tempfile.TemporaryDirectory(dir=dst.parent) as tmp_dir:
+            staged = Path(tmp_dir) / dst.name
+            shutil.copy2(src, staged)
+            try:
+                os.link(staged, dst)
+            except FileExistsError:
+                pass
+
+    source_datatype = source_bp.datatype or "meg"
+    data_suffix = output_bp.datatype or source_datatype
 
     # (source suffix, destination suffix, extension)
     sidecars = [
         ("channels", "channels", ".tsv"),
-        ("meg", data_suffix, ".json"),
+        (source_datatype, data_suffix, ".json"),
         ("events", "events", ".tsv"),
         ("events", "events", ".json"),
     ]
@@ -1750,10 +1763,21 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
             .update(suffix=dst_suffix, extension=ext, split=None, check=False)
             .fpath
         )
-        if src == dst or not src.exists() or dst.exists():
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        if ext == ".json" and src_suffix == source_datatype and not src.exists():
+            inherited = source_bp.find_matching_sidecar(
+                suffix=source_datatype, extension=".json", on_error="ignore"
+            )
+            src = (
+                Path(inherited)
+                if inherited is not None
+                else source_bp.copy().update(
+                    suffix="raw", extension=".json", split=None, check=False
+                ).fpath
+            )
+        copy_if_missing(src, dst)
+
+    for name in ("participants.tsv", "participants.json"):
+        copy_if_missing(Path(source_bp.root) / name, Path(output_bp.root) / name)
 
 
 def _seed_events_files(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
@@ -1919,6 +1943,39 @@ def write_raw_bids_custom_step(
     return output_bp
 
 
+def get_ica_bids_path(cfg: SimpleNamespace) -> BIDSPath:
+    """Resolve the pipeline's shared ICA path, with legacy task-file support.
+
+    Current mne-bids-pipeline fits ICA across tasks and omits task and run
+    entities. Prefer that solution when present. Older task-specific fits
+    remain usable; an existing components TSV also identifies their layout
+    when saving an ICA object for the first time.
+    """
+    subject = cfg.subjects[0] if isinstance(cfg.subjects, list) else cfg.subjects
+    session = cfg.sessions[0] if isinstance(cfg.sessions, list) else cfg.sessions
+    shared = BIDSPath(
+        root=cfg.deriv_root,
+        subject=subject,
+        session=session,
+        acquisition=getattr(cfg, "acq", None),
+        recording=getattr(cfg, "rec", None),
+        space=getattr(cfg, "space", None),
+        datatype=getattr(cfg, "datatype", "meg"),
+        suffix="ica",
+        processing="ica",
+        extension=".fif",
+        check=False,
+    )
+    legacy = shared.copy().update(task=cfg.task)
+    for path in (shared, legacy):
+        if path.fpath.exists():
+            return path
+    for path in (shared, legacy):
+        if path.copy().update(suffix="components", extension=".tsv").fpath.exists():
+            return path
+    return shared
+
+
 def save_ica_bids(
     ica: mne.preprocessing.ICA,
     cfg: SimpleNamespace,
@@ -1950,35 +2007,8 @@ def save_ica_bids(
     >>> ica.exclude = [0, 3, 5]
     >>> save_ica_bids(ica, cfg)
     """
-    # Get subject/session
-    subject = cfg.subjects[0] if isinstance(cfg.subjects, list) else cfg.subjects
-    session = cfg.sessions[0] if isinstance(cfg.sessions, list) else cfg.sessions
-
-    # Build ICA path
-    ica_path = BIDSPath(
-        root=cfg.deriv_root,
-        subject=subject,
-        session=session,
-        task=cfg.task,
-        datatype="meg",
-        suffix="ica",
-        processing="ica",
-        extension=".fif",
-        check=False,  # Allow non-standard suffix 'ica'
-    )
-
-    # Build components TSV path
-    tsv_path = BIDSPath(
-        root=cfg.deriv_root,
-        subject=subject,
-        session=session,
-        task=cfg.task,
-        datatype="meg",
-        suffix="components",
-        processing="ica",
-        extension=".tsv",
-        check=False,  # Allow non-standard suffix 'components'
-    )
+    ica_path = get_ica_bids_path(cfg)
+    tsv_path = ica_path.copy().update(suffix="components", extension=".tsv")
 
     # Update components TSV
     if components_df is not None:
