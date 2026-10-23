@@ -7,12 +7,14 @@ core computation methods with synthetic data.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import mne
 import numpy as np
 import pytest
 
+from custom.preprocessing._io import get_ica_bids_path
 from custom.preprocessing.bad_segments import BadSegmentsAnalysis
 from custom.preprocessing.bad_channels import BadChannelsAnalysis
 from custom.preprocessing.bad_epochs import BadEpochsAnalysis
@@ -22,6 +24,7 @@ from custom.preprocessing.zca_filter import ZCAFilterAnalysis
 from custom.preprocessing.bad_ICs import BadICAnalysis
 from custom.preprocessing.manual_ica import ManualICAAnalysis
 from custom.preprocessing.coreg import CoregAnalysis
+from custom.preprocessing.ica_convergence import ICAConvergenceAnalysis
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +47,7 @@ class TestAnalysisClassConstants:
             (BadICAnalysis, "autoica", "auto_ica"),
             (ManualICAAnalysis, "manualica", "manual_ica"),
             (CoregAnalysis, "coreg", "coreg"),
+            (ICAConvergenceAnalysis, "icaconvergence", "ica_convergence"),
         ],
     )
     def test_keys_and_names(self, cls, expected_key, expected_name):
@@ -249,3 +253,52 @@ class TestZCAHelpers:
         cfg = SimpleNamespace(subjects=["002"], sessions=[])
         analysis = ZCAFilterAnalysis(cfg)
         assert analysis._get_fs_subject() == "sub-002"
+
+
+# ---------------------------------------------------------------------------
+# ICA convergence check
+# ---------------------------------------------------------------------------
+
+
+class TestICAConvergence:
+    @pytest.fixture()
+    def setup(self, tmp_path, meg_info, rng):
+        # mixed Laplace sources, so that ICA can converge
+        n_ch = len(meg_info["ch_names"])
+        data = rng.randn(n_ch, n_ch) @ rng.laplace(size=(n_ch, 3000))
+        raw_meg = mne.io.RawArray(data * 1e-13, meg_info, verbose=False)
+        cfg = SimpleNamespace(
+            deriv_root=tmp_path, subjects=["001"], sessions=["01"], task="TSX",
+            spatial_filter="ica",
+        )
+        bp = get_ica_bids_path(cfg)
+        bp.directory.mkdir(parents=True)
+
+        def fit(max_iter):
+            ica = mne.preprocessing.ICA(5, max_iter=max_iter, random_state=0)
+            with pytest.warns(UserWarning) if max_iter < 50 else nullcontext():
+                ica.fit(raw_meg, verbose=False)
+            ica.save(bp.fpath, overwrite=True, verbose=False)
+
+        return cfg, bp, fit
+
+    def test_enabled_only_for_ica(self):
+        assert ICAConvergenceAnalysis(SimpleNamespace(spatial_filter="ica")).is_enabled()
+        assert not ICAConvergenceAnalysis(SimpleNamespace(spatial_filter="ssp")).is_enabled()
+
+    def test_warns_and_plots_when_not_converged(self, setup):
+        cfg, bp, fit = setup
+        fit(max_iter=2)
+        with pytest.warns(RuntimeWarning, match="did not converge after 2 of 2"):
+            ICAConvergenceAnalysis(cfg).execute()
+        assert (bp.directory / "ICA" / f"{bp.fpath.stem}_convergence.png").exists()
+        cfg._ica_fail_on_nonconvergence = True
+        with pytest.raises(RuntimeError, match="did not converge"):
+            ICAConvergenceAnalysis(cfg).execute()
+
+    def test_converged_is_silent(self, setup, recwarn):
+        cfg, bp, fit = setup
+        fit(max_iter=1000)
+        ICAConvergenceAnalysis(cfg).execute()
+        assert not [w for w in recwarn if "did not converge" in str(w.message)]
+        assert (bp.directory / "ICA" / f"{bp.fpath.stem}_convergence.png").exists()

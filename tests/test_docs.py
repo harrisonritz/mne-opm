@@ -52,6 +52,7 @@ class TestDocstringCoverage:
             "bad_epochs",
             "auto_ica",
             "manual_ica",
+            "ica_convergence",
             "coreg",
         ]
         for mod_name in module_names:

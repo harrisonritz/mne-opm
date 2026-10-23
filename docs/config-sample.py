@@ -397,6 +397,7 @@ ica_algorithm = "picard-extended_infomax"
 ica_l_freq = np.max([l_freq, 1.0])
 
 ica_max_iterations = 1024  # maximum ICA fitting iterations
+_ica_fail_on_nonconvergence = False  # ica_convergence step: error instead of warning
 ica_n_components = 64  # number of components (<= data rank)
 ica_decim = epochs_decim  # decimation during ICA fitting
 ica_reject = dict(mag=5e-12)  # peak-to-peak threshold for ICA-fit data

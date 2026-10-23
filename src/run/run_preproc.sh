@@ -168,6 +168,15 @@ rank_check filt sss hfc zca
 
 STEP_START=$SECONDS
 echo ""
+echo "======================= CUSTOM: ICA convergence check =============================================="
+echo ""
+python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=ica_convergence --config=$CONFIG_PATH
+_print_timing "CUSTOM: ICA convergence check" $STEP_START
+
+
+
+STEP_START=$SECONDS
+echo ""
 echo "======================= CUSTOM: Automatic ICA rejection =============================================="
 echo ""
 python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_ICs --config=$CONFIG_PATH

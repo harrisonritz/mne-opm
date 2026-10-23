@@ -18,6 +18,7 @@ Provided analyses (CLI --analysis):
     select_trial_response -> Keep only the first response following each trial
                       (response-locked analyses; gated by _select_trial_response)
     bad_epochs     -> Drop bad epochs post-epoching
+    ica_convergence -> Check and plot whether the pipeline ICA fit converged
     bad_ICs       -> Automatic ICA component labeling
     manual_ica     -> Interactive ICA component review
 
@@ -85,6 +86,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "badepochs": "bad_epochs",
     "badICs": "bad_ICs",
     "manualica": "manual_ica",
+    "icaconvergence": "ica_convergence",
     "coreg": "coreg",
 }
 
@@ -105,6 +107,7 @@ ANALYSIS_CHOICES: list[str] = [
     "apply_zca",  # Alias for zca_filter
     "select_trial_response",
     "manual_ica",
+    "ica_convergence",
     "coreg",
 ]
 

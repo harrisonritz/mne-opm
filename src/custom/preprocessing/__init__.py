@@ -23,6 +23,8 @@ auto_ica
     Automatic ICA component labeling based on reference sensors.
 manual_ica
     Interactive ICA component review and selection.
+ica_convergence
+    Check and plot whether the pipeline ICA fit converged.
 
 Shared Utilities
 ----------------
@@ -50,6 +52,7 @@ from . import (
     select_trial_response,
     bad_epochs,
     manual_ica,
+    ica_convergence,
     coreg,
 )
 
@@ -85,6 +88,7 @@ __all__ = [
     "bad_epochs",
     "bad_ICs",
     "manual_ica",
+    "ica_convergence",
     "coreg",
     # Shared utilities
     "BaseAnalysis",

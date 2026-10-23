@@ -10,7 +10,7 @@ The `run_preproc.sh` script runs these steps in sequence:
 ```text
 init -> annotate_breaks -> select_trial_response
     -> bad_segments_1 -> bad_channels -> manual_channel
-    -> apply_hfc -> apply_zca -> MNE preprocessing -> bad_ICs
+    -> apply_hfc -> apply_zca -> MNE preprocessing -> ica_convergence -> bad_ICs
     -> manual_ica -> MNE ICA apply -> bad_epochs
 ```
 
@@ -105,6 +105,15 @@ standard preprocessing (filtering, resampling, etc.):
 ```bash
 mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 ```
+
+## ICA convergence check (`ica_convergence`)
+
+Runs whenever `spatial_filter = "ica"`. Reads the ICA solution fitted by
+mne-bids-pipeline, logs whether it converged and how many of the allowed
+iterations (`ica_max_iterations`) it used, and saves
+`ICA/<basename>_convergence.png` next to the other ICA figures. A fit that did
+not converge raises a warning, or an error with
+`_ica_fail_on_nonconvergence = True`.
 
 ## Automatic ICA (`bad_ICs`)
 

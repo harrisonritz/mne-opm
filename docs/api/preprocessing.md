@@ -62,6 +62,14 @@ accepts a `SimpleNamespace` configuration object.
    :no-index:
 ```
 
+### ica_convergence
+
+```{eval-rst}
+.. automodule:: custom.preprocessing.ica_convergence
+   :members:
+   :no-index:
+```
+
 ### manual_ica
 
 ```{eval-rst}
