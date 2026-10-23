@@ -97,7 +97,7 @@ The main preprocessing stage. Runs the following steps in order:
 4. **apply_zca** -- zero-phase component analysis spatial filter
 5. **bad_segments** -- detect and annotate bad data segments
 6. **MNE preprocessing** -- filtering, resampling via mne-bids-pipeline
-7. **auto_ica** -- automatic ICA component labeling
+7. **bad_ICs** -- automatic ICA component labeling
 8. **manual_ica** -- interactive ICA component review
 9. **MNE ICA application** -- apply ICA, SSP, peak-to-peak rejection
 10. **bad_epochs** -- GESD-based bad epoch detection
@@ -158,7 +158,7 @@ python src/custom/custom_preproc.py \
 
 Available steps: `bad_segments`, `bad_channels`,
 `manual_channel`, `apply_hfc`, `zca_filter`, `apply_zca`, `bad_epochs`,
-`auto_ica`, `manual_ica`, `coreg`.
+`bad_ICs`, `manual_ica`, `coreg`.
 
 ## Data layout
 

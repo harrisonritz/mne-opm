@@ -76,11 +76,11 @@ mne-opm adds several flags (prefixed with `_`) to control custom steps:
 | `_do_HFC`           | `bool` | `False` | Apply homogeneous field correction        |
 | `_do_ZCA`           | `bool` | `False` | Apply ZCA spatial filter                  |
 | `_manual_channels`  | `bool` | `False` | Enable interactive bad channel GUI        |
-| `_auto_ica`         | `bool` | `False` | Enable automatic ICA labeling             |
+| `_bad_ICs`          | `bool` | `False` | Enable automatic ICA labeling             |
 | `_manual_ica`       | `bool` | `False` | Enable interactive ICA review             |
 
 :::{note}
-ICA-related flags (`_auto_ica`, `_manual_ica`) also require
+ICA-related flags (`_bad_ICs`, `_manual_ica`) also require
 `spatial_filter = "ica"` to be set.
 :::
 

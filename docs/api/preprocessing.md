@@ -54,10 +54,10 @@ accepts a `SimpleNamespace` configuration object.
    :no-index:
 ```
 
-### auto_ica
+### bad_ICs
 
 ```{eval-rst}
-.. automodule:: custom.preprocessing.auto_ica
+.. automodule:: custom.preprocessing.bad_ICs
    :members:
    :no-index:
 ```

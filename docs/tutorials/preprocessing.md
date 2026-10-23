@@ -181,7 +181,7 @@ python src/custom/custom_preproc.py --analysis=bad_channels --config=config.py
 python src/custom/custom_preproc.py --analysis=apply_hfc --config=config.py
 
 # Just auto ICA
-python src/custom/custom_preproc.py --analysis=auto_ica --config=config.py
+python src/custom/custom_preproc.py --analysis=bad_ICs --config=config.py
 ```
 
 This is useful for re-running a single step after adjusting config settings

@@ -44,7 +44,7 @@ class TestAnalysisClassConstants:
             (ManualChannelAnalysis, "manualchannel", "manual_channel"),
             (ApplyHFCAnalysis, "applyhfc", "apply_hfc"),
             (ZCAFilterAnalysis, "zcafilter", "zca_filter"),
-            (BadICAnalysis, "autoica", "auto_ica"),
+            (BadICAnalysis, "badICs", "bad_ICs"),
             (ManualICAAnalysis, "manualica", "manual_ica"),
             (CoregAnalysis, "coreg", "coreg"),
             (ICAConvergenceAnalysis, "icaconvergence", "ica_convergence"),
@@ -112,23 +112,23 @@ class TestFlagGatedEnabled:
 
 
 class TestICAEnabled:
-    """auto_ica and manual_ica require both flag AND spatial_filter='ica'."""
+    """bad_ICs and manual_ica require both flag AND spatial_filter='ica'."""
 
-    def test_auto_ica_both_set(self):
-        cfg = SimpleNamespace(_auto_ica=True, spatial_filter="ica")
-        assert AutoICAAnalysis(cfg).is_enabled() is True
+    def test_bad_ICs_both_set(self):
+        cfg = SimpleNamespace(_bad_ICs=True, spatial_filter="ica")
+        assert BadICAnalysis(cfg).is_enabled() is True
 
-    def test_auto_ica_flag_missing(self):
+    def test_bad_ICs_flag_missing(self):
         cfg = SimpleNamespace(spatial_filter="ica")
-        assert AutoICAAnalysis(cfg).is_enabled() is False
+        assert BadICAnalysis(cfg).is_enabled() is False
 
-    def test_auto_ica_spatial_filter_missing(self):
-        cfg = SimpleNamespace(_auto_ica=True)
-        assert AutoICAAnalysis(cfg).is_enabled() is False
+    def test_bad_ICs_spatial_filter_missing(self):
+        cfg = SimpleNamespace(_bad_ICs=True)
+        assert BadICAnalysis(cfg).is_enabled() is False
 
-    def test_auto_ica_spatial_filter_wrong(self):
-        cfg = SimpleNamespace(_auto_ica=True, spatial_filter="ssp")
-        assert AutoICAAnalysis(cfg).is_enabled() is False
+    def test_bad_ICs_spatial_filter_wrong(self):
+        cfg = SimpleNamespace(_bad_ICs=True, spatial_filter="ssp")
+        assert BadICAnalysis(cfg).is_enabled() is False
 
     def test_manual_ica_both_set(self):
         cfg = SimpleNamespace(_manual_ica=True, spatial_filter="ica")

@@ -38,14 +38,14 @@ from mne_bids_pipeline._config_import import (
 # Analyses not in this mapping are always enabled (no config flag required).
 ANALYSIS_CONFIG_FLAGS: dict[str, str] = {
     "manualchannel": "_manual_channels",
-    "autoica": "_auto_ica",
+    "badICs": "_bad_ICs",
     "manualica": "_manual_ica",
     "applyhfc": "_do_HFC",
     "zcafilter": "_do_ZCA",
 }
 
 # Analyses that require spatial_filter="ica" to be set
-ICA_ANALYSES: set[str] = {"autoica", "manualica"}
+ICA_ANALYSES: set[str] = {"badICs", "manualica"}
 
 
 def load_config(config_path: str) -> SimpleNamespace:

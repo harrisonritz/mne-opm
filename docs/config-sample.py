@@ -298,7 +298,7 @@ find_bad_channels_extra_kws = {"ignore_ref": True}
 # ================================================================
 
 _manual_channels = False  # pause to inspect bad channels interactively
-_auto_ica = True  # run automated ICA component classification
+_bad_ICs = True  # run automated ICA component classification
 _manual_ica = False  # pause for manual inspection / override of ICA labels
 
 # Skip a pipeline step if its derivatives folder already exists (resume runs).
@@ -413,7 +413,7 @@ ica_ecg_threshold = 0.10  # correlation threshold for cardiac components
 ica_eog_threshold = 3.0  # z-score threshold for ocular components
 
 # Disable mne-bids-pipeline's built-in EOG/ECG detection — ALL ICA component
-# selection is performed by the unified GESD in the custom auto_ica step, where
+# selection is performed by the unified GESD in the custom bad_ICs step, where
 # the EOG/ECG correlations are included as scores.
 ica_use_eog_detection = False
 ica_use_ecg_detection = False

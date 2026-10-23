@@ -51,7 +51,7 @@ class TestAnalysisRegistry:
             "applyhfc",
             "zcafilter",
             "badepochs",
-            "autoica",
+            "badICs",
             "manualica",
             "coreg",
         }

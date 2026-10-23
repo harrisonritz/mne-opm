@@ -50,7 +50,7 @@ class TestDocstringCoverage:
             "apply_hfc",
             "zca_filter",
             "bad_epochs",
-            "auto_ica",
+            "bad_ICs",
             "manual_ica",
             "ica_convergence",
             "coreg",

@@ -58,7 +58,7 @@ h_freq = 100.0
 _do_HFC = True
 _do_ZCA = False
 _manual_channels = True
-_auto_ica = True
+_bad_ICs = True
 _manual_ica = True
 spatial_filter = "ica"
 ```

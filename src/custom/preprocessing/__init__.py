@@ -19,7 +19,7 @@ apply_hfc
     Apply homogeneous field correction (HFC) projections.
 bad_epochs
     Drop bad epochs post-epoching using GESD.
-auto_ica
+bad_ICs
     Automatic ICA component labeling based on reference sensors.
 manual_ica
     Interactive ICA component review and selection.
