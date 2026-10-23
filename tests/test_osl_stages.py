@@ -566,6 +566,7 @@ class TestCli:
             repair_parc_stage,
         ):
             monkeypatch.setattr(module, "run", lambda c: True)
+        monkeypatch.setattr(group_stage, "plot_only", lambda c: True)
 
         for stage in self.run_osl.STAGE_CHOICES:
             assert self.run_osl.run_stage(stage, cfg) is True
