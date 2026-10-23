@@ -1644,6 +1644,7 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
     The split entity is stripped from both sides so the lookup is correct
     regardless of whether source_bp refers to a split file.
     """
+
     def copy_if_missing(src: Path, dst: Path) -> None:
         if src == dst or not src.exists() or dst.exists():
             return
@@ -1685,9 +1686,9 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
             src = (
                 Path(inherited)
                 if inherited is not None
-                else source_bp.copy().update(
-                    suffix="raw", extension=".json", split=None, check=False
-                ).fpath
+                else source_bp.copy()
+                .update(suffix="raw", extension=".json", split=None, check=False)
+                .fpath
             )
         copy_if_missing(src, dst)
 
@@ -1900,8 +1901,11 @@ def save_ica_bids(
 
     if components_df is None:
         df = pd.read_csv(tsv_path.fpath, sep="\t")
-        new_status = df["component"].astype(int).isin(ica.exclude).map(
-            {True: "bad", False: "good"}
+        new_status = (
+            df["component"]
+            .astype(int)
+            .isin(ica.exclude)
+            .map({True: "bad", False: "good"})
         )
         changed = df["status"] != new_status
         df["status"] = new_status

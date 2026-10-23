@@ -279,9 +279,7 @@ def _decimate(data, decim: Optional[int], is_epochs: bool, freq_range):
             f"{max(1, int(sfreq // (2 * freq_range[1])))}."
         )
 
-    logger.info(
-        "decimating by %d: %.1f -> %.1f Hz", decim, sfreq, new_sfreq
-    )
+    logger.info("decimating by %d: %.1f -> %.1f Hz", decim, sfreq, new_sfreq)
     if is_epochs:
         return data.decimate(decim)
     return data.resample(new_sfreq)
@@ -325,7 +323,7 @@ def _cgroup_memory_limit() -> Optional[int]:
         except OSError:
             continue
         # "max" on v2, and a sentinel near 2**63 on v1, both mean unlimited.
-        if value.isdigit() and 0 < int(value) < 2 ** 62:
+        if value.isdigit() and 0 < int(value) < 2**62:
             return int(value)
 
     return None
@@ -344,7 +342,7 @@ def _memory_budget() -> Optional[int]:
 
     per_node = os.environ.get("SLURM_MEM_PER_NODE", "").strip()
     if per_node.isdigit() and int(per_node) > 0:
-        limits.append(int(per_node) * 1024 ** 2)  # SLURM reports MB
+        limits.append(int(per_node) * 1024**2)  # SLURM reports MB
 
     return min(limits) if limits else None
 
@@ -375,10 +373,13 @@ def _check_source_memory(n_voxels: int, n_times: int, n_trials: int) -> None:
     array_bytes = n_voxels * n_times * n_trials * itemsize
     floor_bytes = 2 * array_bytes
 
-    gib = 1024 ** 3
+    gib = 1024**3
     logger.info(
         "source array: %d voxels x %d samples x %d trials = %.1f GiB (%s)",
-        n_voxels, n_times, n_trials, array_bytes / gib,
+        n_voxels,
+        n_times,
+        n_trials,
+        array_bytes / gib,
         np.dtype(_SOURCE_DTYPE).name,
     )
 
@@ -406,7 +407,9 @@ def _check_source_memory(n_voxels: int, n_times: int, n_trials: int) -> None:
         logger.warning(
             "source reconstruction will use at least %.1f GiB of this job's "
             "%.1f GiB. %s",
-            floor_bytes / gib, budget / gib, advice,
+            floor_bytes / gib,
+            budget / gib,
+            advice,
         )
 
 
@@ -468,9 +471,7 @@ def fs_coregister(
         files["info_fif"], overwrite=True
     )
 
-    dists = mne.dig_mri_distances(
-        info, trans_path, subject, subjects_dir=subjects_dir
-    )
+    dists = mne.dig_mri_distances(info, trans_path, subject, subjects_dir=subjects_dir)
     logger.info(
         "Distance between HSP and MRI (mean/min/max): %.2f mm / %.2f mm / %.2f mm",
         np.mean(dists * 1e3),
@@ -500,22 +501,24 @@ def fs_coregister(
     if reportdir is not None:
         src_report.add_to_data(
             f"{reportdir}/{subject}/data.pkl",
-            _drop_missing_plots({
-                "coregister": True,
-                "surface_extraction_method": "freesurfer",
-                "already_coregistered": True,
-                "use_headshape": True,
-                "use_nose": False,
-                "allow_smri_scaling": False,
-                "n_init_coreg": None,
-                # osl-ephys' report expects [nasion, lpa, rpa, rms] in cm; only
-                # the RMS is meaningful for a transform we did not fit here.
-                "fid_err": np.array(
-                    [np.nan, np.nan, np.nan, np.sqrt(np.mean(dists**2)) * 1e2]
-                ),
-                "coreg_plot": coreg_plot,
-                "trans_file": trans_path,
-            }),
+            _drop_missing_plots(
+                {
+                    "coregister": True,
+                    "surface_extraction_method": "freesurfer",
+                    "already_coregistered": True,
+                    "use_headshape": True,
+                    "use_nose": False,
+                    "allow_smri_scaling": False,
+                    "n_init_coreg": None,
+                    # osl-ephys' report expects [nasion, lpa, rpa, rms] in cm; only
+                    # the RMS is meaningful for a transform we did not fit here.
+                    "fid_err": np.array(
+                        [np.nan, np.nan, np.nan, np.sqrt(np.mean(dists**2)) * 1e2]
+                    ),
+                    "coreg_plot": coreg_plot,
+                    "trans_file": trans_path,
+                }
+            ),
         )
 
 
@@ -634,9 +637,7 @@ def fs_forward_model(
         mindist=mindist,
     )
     mne.write_forward_solution(files["fwd_model"], fwd, overwrite=True)
-    logger.info(
-        "forward solution has %d sources", fwd["src"][0]["nuse"]
-    )
+    logger.info("forward solution has %d sources", fwd["src"][0]["nuse"])
 
     if reportdir is not None:
         src_report.add_to_data(
@@ -854,9 +855,7 @@ def _resample_parcellation(
         distances, indices = kdtree.query(voxel_coords.T)
 
         within = distances < gridstep
-        parcellation_asmatrix[within, parcel_index] = parcellation_vals[
-            indices[within]
-        ]
+        parcellation_asmatrix[within, parcel_index] = parcellation_vals[indices[within]]
 
     return parcellation_asmatrix
 
@@ -1120,7 +1119,9 @@ def _resolve_rank(rank, data):
     )
 
     for name, value in candidates.items():
-        extra = f" (tol={_RANK_TOL}, tol_kind={_RANK_TOL_KIND!r})" if name == "data" else ""
+        extra = (
+            f" (tol={_RANK_TOL}, tol_kind={_RANK_TOL_KIND!r})" if name == "data" else ""
+        )
         logger.info("%s rank%s: %s", name, extra, value)
 
     keys = set().union(*(c.keys() for c in candidates.values()))
@@ -1195,9 +1196,7 @@ def _compute_data_cov(data, is_epochs: bool, cov_method: str, rank):
     logger.info("computing the data covariance (method=%s, rank=%s)", cov_method, rank)
     if is_epochs:
         return mne.compute_covariance(data, method=cov_method, rank=rank, verbose=False)
-    return mne.compute_raw_covariance(
-        data, method=cov_method, rank=rank, verbose=False
-    )
+    return mne.compute_raw_covariance(data, method=cov_method, rank=rank, verbose=False)
 
 
 def _apply_lcmv(data, filters, is_epochs: bool) -> np.ndarray:
@@ -1279,9 +1278,7 @@ def _apply_lcmv_to_mni(data, filters, is_epochs: bool, mapping) -> np.ndarray:
         if out is None:
             # Allocate once from the first estimate, so the time axis comes
             # from the beamformer rather than being assumed.
-            out = np.zeros(
-                (n_voxels, stc.data.shape[1], n_trials), dtype=_SOURCE_DTYPE
-            )
+            out = np.zeros((n_voxels, stc.data.shape[1], n_trials), dtype=_SOURCE_DTYPE)
         out[grid_index, :, trial] = stc.data[dipole_index]
 
     return out
@@ -1492,31 +1489,33 @@ def fs_beamform_and_parcellate(
     if reportdir is not None:
         src_report.add_to_data(
             f"{reportdir}/{subject}/data.pkl",
-            _drop_missing_plots({
-                "beamform_and_parcellate": True,
-                "beamform": True,
-                "parcellate": True,
-                "surface_extraction_method": "freesurfer",
-                "chantypes": chantypes,
-                "rank": rank,
-                "reg": reg,
-                "freq_range": freq_range,
-                "pick_ori": pick_ori,
-                "weight_norm": weight_norm,
-                "reduce_rank": reduce_rank,
-                "filters_cov_plot": filters_cov_plot,
-                "parcellation_file": parcellation_file,
-                "method": method,
-                "reference_brain": reference_brain,
-                "orthogonalisation": orthogonalisation,
-                "parc_fif_file": str(parc_fif_file),
-                "n_samples": parcel_data.shape[1],
-                "n_parcels": parcel_data.shape[0],
-                "n_epochs": parcel_data.shape[2] if parcel_data.ndim == 3 else None,
-                "parc_psd_plot": parc_psd_plot,
-                "parc_corr_plot": parc_corr_plot,
-                "parc_freqbands_plot": None,
-            }),
+            _drop_missing_plots(
+                {
+                    "beamform_and_parcellate": True,
+                    "beamform": True,
+                    "parcellate": True,
+                    "surface_extraction_method": "freesurfer",
+                    "chantypes": chantypes,
+                    "rank": rank,
+                    "reg": reg,
+                    "freq_range": freq_range,
+                    "pick_ori": pick_ori,
+                    "weight_norm": weight_norm,
+                    "reduce_rank": reduce_rank,
+                    "filters_cov_plot": filters_cov_plot,
+                    "parcellation_file": parcellation_file,
+                    "method": method,
+                    "reference_brain": reference_brain,
+                    "orthogonalisation": orthogonalisation,
+                    "parc_fif_file": str(parc_fif_file),
+                    "n_samples": parcel_data.shape[1],
+                    "n_parcels": parcel_data.shape[0],
+                    "n_epochs": parcel_data.shape[2] if parcel_data.ndim == 3 else None,
+                    "parc_psd_plot": parc_psd_plot,
+                    "parc_corr_plot": parc_corr_plot,
+                    "parc_freqbands_plot": None,
+                }
+            ),
         )
 
 

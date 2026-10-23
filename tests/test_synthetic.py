@@ -124,7 +124,10 @@ class TestHeadModel:
         assert np.all(ratio > 0.8) and np.all(ratio < 1.2)
 
     def test_is_deterministic(self):
-        a, b = build_head_model(seed=7, jitter=0.06), build_head_model(seed=7, jitter=0.06)
+        a, b = (
+            build_head_model(seed=7, jitter=0.06),
+            build_head_model(seed=7, jitter=0.06),
+        )
         np.testing.assert_array_equal(a.scalp_axes, b.scalp_axes)
 
 
@@ -164,7 +167,9 @@ class TestSensorArray:
         _, info, _ = built
         picks = mne.pick_types(info, meg=True)
         for start in range(0, len(picks), 3):
-            axes = np.array([info["chs"][p]["loc"][9:12] for p in picks[start : start + 3]])
+            axes = np.array(
+                [info["chs"][p]["loc"][9:12] for p in picks[start : start + 3]]
+            )
             np.testing.assert_allclose(axes @ axes.T, np.eye(3), atol=1e-9)
 
     def test_coil_type_is_opm(self, built):
@@ -177,7 +182,9 @@ class TestSensorArray:
 
     def test_sensors_sit_outside_the_scalp(self, built):
         head, info, helmet = built
-        radius = np.sum(((helmet["positions"] - head.center) / head.scalp_axes) ** 2, axis=1)
+        radius = np.sum(
+            ((helmet["positions"] - head.center) / head.scalp_axes) ** 2, axis=1
+        )
         assert np.all(radius > 1.0)
 
     def test_digitisation_has_fiducials_and_head_points(self, built):
@@ -295,9 +302,7 @@ class TestFreeSurferWriter:
         np.testing.assert_allclose(img.header.get_zooms()[:3], (1.0, 1.0, 1.0))
         # Scanner RAS and surface RAS must coincide, otherwise the landmarks
         # written into the BIDS T1w sidecar will not round-trip.
-        np.testing.assert_allclose(
-            img.affine, img.header.get_vox2ras_tkr(), atol=1e-6
-        )
+        np.testing.assert_allclose(img.affine, img.header.get_vox2ras_tkr(), atol=1e-6)
 
     def test_fiducials_round_trip(self, written):
         subjects_dir, head = written
@@ -350,10 +355,7 @@ class TestCommittedDataset:
 
     @pytest.fixture(scope="class")
     def raw(self):
-        path = (
-            BIDS_ROOT
-            / "sub-001/ses-01/meg/sub-001_ses-01_task-synth_run-01_meg.fif"
-        )
+        path = BIDS_ROOT / "sub-001/ses-01/meg/sub-001_ses-01_task-synth_run-01_meg.fif"
         return mne.io.read_raw_fif(path, preload=False, verbose="error")
 
     @pytest.mark.parametrize(
@@ -413,11 +415,11 @@ class TestCommittedDataset:
         )
 
         tsv = (
-            BIDS_ROOT
-            / "sub-001/ses-01/meg/sub-001_ses-01_task-synth_run-01_events.tsv"
+            BIDS_ROOT / "sub-001/ses-01/meg/sub-001_ses-01_task-synth_run-01_events.tsv"
         )
-        assert count_condition_events_in_tsv(tsv, ("trial",))[0] == (
-            count_condition_events_in_raw(raw, ("trial",))[0]
+        assert (
+            count_condition_events_in_tsv(tsv, ("trial",))[0]
+            == (count_condition_events_in_raw(raw, ("trial",))[0])
         )
 
     def test_planted_bad_channels_are_real_channels(self, raw, ground_truth):
@@ -427,10 +429,7 @@ class TestCommittedDataset:
 
     def test_planted_defects_are_detectable(self, ground_truth):
         """The bad channels really are outliers, not just labelled as such."""
-        path = (
-            BIDS_ROOT
-            / "sub-001/ses-01/meg/sub-001_ses-01_task-synth_run-01_meg.fif"
-        )
+        path = BIDS_ROOT / "sub-001/ses-01/meg/sub-001_ses-01_task-synth_run-01_meg.fif"
         raw = mne.io.read_raw_fif(path, preload=True, verbose="error")
         picks = mne.pick_types(raw.info, meg=True)
         names = [raw.ch_names[p] for p in picks]
@@ -499,9 +498,7 @@ class TestCommittedDataset:
         expected = mne.read_trans(
             SUBJECTS_DIR / FS_SUBJECT / "bem" / f"{FS_SUBJECT}-trans.fif"
         )
-        np.testing.assert_allclose(
-            recovered["trans"], expected["trans"], atol=1e-4
-        )
+        np.testing.assert_allclose(recovered["trans"], expected["trans"], atol=1e-4)
 
     def test_empty_room_is_associated_with_the_task_run(self):
         sidecar = json.loads(

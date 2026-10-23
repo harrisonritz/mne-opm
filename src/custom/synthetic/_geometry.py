@@ -55,10 +55,26 @@ def _icosphere_fallback(grade: int) -> tuple[np.ndarray, np.ndarray]:
     rr /= np.linalg.norm(rr, axis=1, keepdims=True)
     tris = np.array(
         [
-            [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
-            [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-            [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-            [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+            [0, 11, 5],
+            [0, 5, 1],
+            [0, 1, 7],
+            [0, 7, 10],
+            [0, 10, 11],
+            [1, 5, 9],
+            [5, 11, 4],
+            [11, 10, 2],
+            [10, 7, 6],
+            [7, 1, 8],
+            [3, 9, 4],
+            [3, 4, 2],
+            [3, 2, 6],
+            [3, 6, 8],
+            [3, 8, 9],
+            [4, 9, 5],
+            [2, 4, 11],
+            [6, 2, 10],
+            [8, 6, 7],
+            [9, 8, 1],
         ],
         dtype=np.int64,
     )
@@ -155,10 +171,14 @@ def folding_field(
         Signed radial displacement per vertex.
     """
     x, y, z = np.asarray(unit_rr).T
-    return amplitude * (
-        np.sin(n_lobes * x + phase) * np.cos(n_lobes * y)
-        + np.sin(n_lobes * z + 0.7 * phase) * np.cos(n_lobes * x)
-    ) / 2.0
+    return (
+        amplitude
+        * (
+            np.sin(n_lobes * x + phase) * np.cos(n_lobes * y)
+            + np.sin(n_lobes * z + 0.7 * phase) * np.cos(n_lobes * x)
+        )
+        / 2.0
+    )
 
 
 def tangent_basis(normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

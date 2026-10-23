@@ -380,29 +380,29 @@ class BadChannelsAnalysis(BaseAnalysis):
         filt = raw.copy()
         n_short = _mask_short_filter_segments(filt)
         if n_short:
-            self.log(f"  excluded {n_short} short unannotated segment(s) from channel metrics")
+            self.log(
+                f"  excluded {n_short} short unannotated segment(s) from channel metrics"
+            )
         if not any(
             stop - start >= _MIN_FILTER_SEGMENT_SAMPLES
             for start, stop in zip(
                 *_annotations_starts_stops(filt, ("edge", "bad"), invert=True)
             )
         ):
-            raise ValueError("No unannotated segment is long enough for bad-channel filtering")
-        filt = (
-            filt
-            .notch_filter(
-                np.arange(60, 241, 60),
-                method="spectrum_fit",
-                n_jobs=-1,
-                skip_by_annotation=("edge", "bad"),
+            raise ValueError(
+                "No unannotated segment is long enough for bad-channel filtering"
             )
-            .filter(
-                l_freq=getattr(self.cfg, "_bad_channel_lfreq", _DEFAULT_PSD_FMIN),
-                h_freq=getattr(self.cfg, "_bad_channel_hfreq", _DEFAULT_PSD_FMAX),
-                method="iir",
-                n_jobs=-1,
-                skip_by_annotation=("edge", "bad"),
-            )
+        filt = filt.notch_filter(
+            np.arange(60, 241, 60),
+            method="spectrum_fit",
+            n_jobs=-1,
+            skip_by_annotation=("edge", "bad"),
+        ).filter(
+            l_freq=getattr(self.cfg, "_bad_channel_lfreq", _DEFAULT_PSD_FMIN),
+            h_freq=getattr(self.cfg, "_bad_channel_hfreq", _DEFAULT_PSD_FMAX),
+            method="iir",
+            n_jobs=-1,
+            skip_by_annotation=("edge", "bad"),
         )
 
         data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")

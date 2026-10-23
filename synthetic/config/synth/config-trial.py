@@ -162,7 +162,9 @@ epochs_metadata_query = "responded == 1"
 if not _load_metadata:
     epochs_custom_metadata = None
 else:
-    _pattern = os.path.join(RAW_DIR, f"synth_{SUBJECT}", "metadata", f"sub-{SUBJECT}_*.csv")
+    _pattern = os.path.join(
+        RAW_DIR, f"synth_{SUBJECT}", "metadata", f"sub-{SUBJECT}_*.csv"
+    )
     _paths = sorted(glob(_pattern))
     assert _paths, (
         f"No behavioural metadata found.\n"
@@ -306,7 +308,6 @@ _bad_segments_params = {
         "segment_len_sec": 0.5,
     },
 }
-
 
 
 # ============================================================================

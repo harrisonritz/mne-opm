@@ -327,14 +327,14 @@ def _sign_flip_all(
     if n_workers > 1:
         results = _flip_with_dask(subjects, work, n_workers)
     else:
-        results = [
-            sign_flip.flip_subject(subject=s, **work) for s in subjects
-        ]
+        results = [sign_flip.flip_subject(subject=s, **work) for s in subjects]
 
     failed = [r for r in results if r["error"] is not None]
     for result in failed:
-        print(f"[osl:group] sign flipping FAILED for {result['subject']}: "
-              f"{result['error']}")
+        print(
+            f"[osl:group] sign flipping FAILED for {result['subject']}: "
+            f"{result['error']}"
+        )
 
     summary = {
         "template": template,
@@ -435,9 +435,7 @@ def _flip_with_dask(subjects: Sequence[str], work: dict, n_workers: int) -> list
     with Client(n_workers=n_workers, threads_per_worker=1, dashboard_address=None):
         from dask import compute, delayed
 
-        tasks = [
-            delayed(sign_flip.flip_subject)(subject=s, **work) for s in subjects
-        ]
+        tasks = [delayed(sign_flip.flip_subject)(subject=s, **work) for s in subjects]
         return list(compute(*tasks))
 
 
@@ -678,8 +676,7 @@ def _parcel_centroids_from_atlas(
         mask = weights > 0
         if not np.any(mask):
             raise ValueError(
-                f"parcel {parcel_index} has no non-zero voxels in "
-                f"{parcellation_file}."
+                f"parcel {parcel_index} has no non-zero voxels in {parcellation_file}."
             )
         xyz = apply_affine(atlas.affine, np.argwhere(mask))
         centroids[row] = np.average(xyz, axis=0, weights=weights[mask])
@@ -752,22 +749,22 @@ def _plot_peak_glass_brain(
     display = cast(
         Any,
         plotting.plot_markers(
-        values,
-        centroids,
-        node_size=node_size,
-        node_cmap="RdBu_r",
-        node_vmin=-vmax,
-        node_vmax=vmax,
-        alpha=0.85,
-        output_file=str(path),
-        display_mode="ortho",
-        title=(
-            f"{name.replace('__', '/')} at t={float(times[peak_index]):.3f} s "
-            f"(||activity||={peak_norm:.3g})"
-        ),
-        annotate=False,
-        black_bg=False,
-        colorbar=True,
+            values,
+            centroids,
+            node_size=node_size,
+            node_cmap="RdBu_r",
+            node_vmin=-vmax,
+            node_vmax=vmax,
+            alpha=0.85,
+            output_file=str(path),
+            display_mode="ortho",
+            title=(
+                f"{name.replace('__', '/')} at t={float(times[peak_index]):.3f} s "
+                f"(||activity||={peak_norm:.3g})"
+            ),
+            annotate=False,
+            black_bg=False,
+            colorbar=True,
         ),
     )
     if display is not None and hasattr(display, "close"):
@@ -791,9 +788,7 @@ def _plot_sign_flip(groupdir: Path, results: Sequence[dict], plt) -> None:
 
     for result in ok:
         if result.get("metrics"):
-            axes[1].plot(
-                result["metrics"], alpha=0.6, marker="o", markersize=3
-            )
+            axes[1].plot(result["metrics"], alpha=0.6, marker="o", markersize=3)
     axes[1].set_xlabel("initialisation")
     axes[1].set_ylabel("covariance correlation with template")
     axes[1].set_title("Template match")

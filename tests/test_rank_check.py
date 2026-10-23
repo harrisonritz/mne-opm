@@ -69,9 +69,7 @@ def test_extract_run():
         rank_check.extract_run("sub-007_ses-01_task-TSX_run-01_proc-filt_raw.fif")
         == "run-01"
     )
-    assert (
-        rank_check.extract_run("sub-007_ses-01_task-noise_proc-filt_raw.fif") is None
-    )
+    assert rank_check.extract_run("sub-007_ses-01_task-noise_proc-filt_raw.fif") is None
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +120,10 @@ def test_find_primary_raws_noise_no_run(tmp_path):
 
 def test_find_primary_raws_missing_dir(tmp_path):
     # Absent meg dir -> empty list, never raises.
-    assert rank_check.find_primary_raws(tmp_path / "nope", "007", "01", "TSX", "filt") == []
+    assert (
+        rank_check.find_primary_raws(tmp_path / "nope", "007", "01", "TSX", "filt")
+        == []
+    )
 
 
 # ---------------------------------------------------------------------------

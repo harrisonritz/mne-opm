@@ -895,5 +895,3 @@ class TestMain:
 
         output = capsys.readouterr().out
         assert "Decoding disabled" in output
-
-

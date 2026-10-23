@@ -302,8 +302,8 @@ Example config snippet (from this repo's configs):
 ```python
 _skip_on_deriv = True  # if True, skip steps when derivatives exist
 process_empty_room = True
-subjects = ['007']
-task = 'TSX'  # experiment task name
+subjects = ["007"]
+task = "TSX"  # experiment task name
 ```
 
 Notes:

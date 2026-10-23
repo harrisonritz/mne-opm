@@ -41,7 +41,9 @@ def install_notch_summary_fix():
     namespace = {}
     original.__globals__["_opm_notch_frequency_counts"] = _notch_frequency_counts
     exec(
-        compile("\n" * (first_line - 1) + source, original.__code__.co_filename, "exec"),
+        compile(
+            "\n" * (first_line - 1) + source, original.__code__.co_filename, "exec"
+        ),
         original.__globals__,
         namespace,
     )

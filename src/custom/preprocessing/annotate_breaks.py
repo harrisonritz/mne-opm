@@ -35,16 +35,16 @@ class AnnotateBreaksAnalysis(BaseAnalysis):
             raise FileNotFoundError(f"No raw data found for task={self.cfg.task}")
         self._source_bp = paths[0]
         raw = read_raw_bids_with_retry(paths[0], extra_params={"preload": True})
-        events_path = paths[0].copy().update(
-            suffix="events", extension=".tsv", split=None, check=False
-        ).fpath
+        events_path = (
+            paths[0]
+            .copy()
+            .update(suffix="events", extension=".tsv", split=None, check=False)
+            .fpath
+        )
         conditions = tuple(
             sorted(
                 set(getattr(self.cfg, "conditions", ("trial",)) or ("trial",))
-                | set(
-                    getattr(self.cfg, "_trial_conditions", ("trial",))
-                    or ("trial",)
-                )
+                | set(getattr(self.cfg, "_trial_conditions", ("trial",)) or ("trial",))
             )
         )
         trim_raw_to_events_tsv(
@@ -65,7 +65,8 @@ class AnnotateBreaksAnalysis(BaseAnalysis):
             for ann in raw.annotations
         }
         new_breaks = [
-            ann for ann in breaks
+            ann
+            for ann in breaks
             if (ann["onset"], ann["duration"], ann["description"]) not in existing
         ]
         if new_breaks:

@@ -90,9 +90,7 @@ class TestIcaAutorejectSafe:
         )
 
         dataset = make_dataset(make_raw(n_eog=0))
-        ica_autoreject_safe(
-            dataset, {"eogmethod": "default", "skip_if_absent": False}
-        )
+        ica_autoreject_safe(dataset, {"eogmethod": "default", "skip_if_absent": False})
 
         # Left alone, so osl-ephys' own call raises as it normally would.
         assert captured["eogmethod"] == "default"
@@ -155,9 +153,7 @@ class TestIcaKurtosisReject:
         dataset = make_dataset(make_raw())
         ica, raw = dataset["ica"], dataset["raw"]
 
-        via_sources = kurtosis(
-            ica.get_sources(raw).get_data(), axis=1, fisher=False
-        )
+        via_sources = kurtosis(ica.get_sources(raw).get_data(), axis=1, fisher=False)
         picks = mne.pick_types(ica.info, meg=True, eeg=False)
         via_mixing = kurtosis(
             (ica.get_components()[picks, :].T @ raw.get_data()[picks, :]),

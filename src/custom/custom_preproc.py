@@ -228,7 +228,10 @@ def main() -> int:
         # per trial, so their configs must not attempt the response-aligned
         # metadata join yet (none of these steps use the metadata).
         skip_metadata_phase = analysis_key in {
-            "init", "initderivatives", "annotatebreaks", "selecttrialresponse"
+            "init",
+            "initderivatives",
+            "annotatebreaks",
+            "selecttrialresponse",
         }
         previous_skip_metadata = os.environ.get("MNE_OPM_SKIP_METADATA")
         if skip_metadata_phase:

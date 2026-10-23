@@ -56,10 +56,12 @@ def test_retains_shared_pipeline_labels(cfg):
     path = get_ica_bids_path(cfg)
     path.directory.mkdir(parents=True)
     tsv_path = path.copy().update(suffix="components", extension=".tsv")
-    pd.DataFrame({
-        "component": [0],
-        "status_description": ["Auto-detected eye blink (MNE-ICALabel)"],
-    }).to_csv(tsv_path.fpath, sep="\t", index=False)
+    pd.DataFrame(
+        {
+            "component": [0],
+            "status_description": ["Auto-detected eye blink (MNE-ICALabel)"],
+        }
+    ).to_csv(tsv_path.fpath, sep="\t", index=False)
     analysis = BadICAnalysis(cfg)
     analysis._component_labels = {0: []}
     df = analysis._build_components_tsv(SimpleNamespace(n_components_=1, exclude=[0]))

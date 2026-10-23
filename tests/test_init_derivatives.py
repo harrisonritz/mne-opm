@@ -247,9 +247,10 @@ class TestSeedSidecarsJsonSuffix:
         assert not raw_json.exists()
         assert meg_json.read_text() == src_json.read_text()
         split_bp = output_bp.copy().update(split="01", check=False)
-        assert Path(
-            split_bp.find_matching_sidecar(extension=".json", suffix="meg")
-        ) == meg_json
+        assert (
+            Path(split_bp.find_matching_sidecar(extension=".json", suffix="meg"))
+            == meg_json
+        )
         for name in ("participants.tsv", "participants.json"):
             assert (Path(output_bp.root) / name).read_bytes() == (
                 Path(source_bp.root) / name

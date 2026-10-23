@@ -67,7 +67,6 @@ def run(cfg: SimpleNamespace) -> bool:
             f"(mne-opm.sh bids) for subject {paths.subject} first."
         )
 
-
     print(f"[osl:preproc] subject:  {paths.subject_label}")
     print(f"[osl:preproc] input:    {paths.input_fif}")
     print(f"[osl:preproc] outdir:   {paths.outdir}")

@@ -511,8 +511,7 @@ def bad_channels_clean(dataset: Dict[str, Any], userargs: Dict[str, Any]) -> Dic
             "there is nothing to measure. Check the bad_segments steps above."
         )
     logger.info(
-        "measuring %d %s channels over %.1f%% of the recording (%s annotated "
-        "segments)",
+        "measuring %d %s channels over %.1f%% of the recording (%s annotated segments)",
         len(chinds),
         picks,
         100 * n_kept / raw.n_times,

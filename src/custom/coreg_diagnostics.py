@@ -104,9 +104,7 @@ def _setup_3d_backend() -> None:
     try:
         # Disable antialiasing and multisampling for software rendering.
         # Off-screen rendering is controlled by pyvista.OFF_SCREEN above.
-        mne.viz.set_3d_options(
-            depth_peeling=False, antialias=False, multi_samples=1
-        )
+        mne.viz.set_3d_options(depth_peeling=False, antialias=False, multi_samples=1)
     except Exception as e:  # pragma: no cover - defensive
         print(f"[_setup_3d_backend] Could not set 3D options: {e}")
 

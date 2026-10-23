@@ -79,7 +79,9 @@ def test_unrelated_timing_is_refused():
 def test_ambiguous_surplus_location_is_refused():
     # Constant ITIs: every block position aligns the intervals equally well.
     onsets = np.arange(20) * 2.0
-    rows = pd.DataFrame({"trial": np.arange(22), "stim_start_time": np.arange(22) * 2.0})
+    rows = pd.DataFrame(
+        {"trial": np.arange(22), "stim_start_time": np.arange(22) * 2.0}
+    )
     with pytest.raises(RuntimeError, match="equally well"):
         _reconcile([rows], onsets)
 

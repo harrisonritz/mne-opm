@@ -265,8 +265,7 @@ def _check_signature(name: str, func, userargs: dict) -> list[str]:
     required = [
         param_name
         for param_name, param in parameters.items()
-        if param_name != "kwargs"
-        and param.default is inspect.Parameter.empty
+        if param_name != "kwargs" and param.default is inspect.Parameter.empty
     ]
 
     for param_name in required:
@@ -274,7 +273,7 @@ def _check_signature(name: str, func, userargs: dict) -> list[str]:
             errors.append(
                 f"source_recon step '{name}' is declared with *{param_name}, "
                 f"which run_src_chain cannot satisfy: it will raise "
-                f"\"{param_name} needs to be passed to {name}\". Use the "
+                f'"{param_name} needs to be passed to {name}". Use the '
                 f"underlying wrapper instead of this alias."
             )
         elif param_name not in _SRC_PROVIDED_ARGS and param_name not in userargs:

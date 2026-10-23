@@ -98,8 +98,7 @@ class ICAConvergenceAnalysis(BaseAnalysis):
             xlim=(0, max_iter * 1.05),
             yticks=[],
             xlabel="Iterations",
-            title=f"ICA ({ica.method}): {status[converged]}, "
-            f"{ica.n_iter_} iterations",
+            title=f"ICA ({ica.method}): {status[converged]}, {ica.n_iter_} iterations",
         )
         ax.legend(loc="lower right")
         fig.savefig(fname, dpi=150)

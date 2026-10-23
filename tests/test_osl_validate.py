@@ -58,9 +58,7 @@ class TestPreprocSteps:
         assert errors == []
 
     def test_accepts_the_custom_events_step(self, tmp_path):
-        cfg = make_cfg(
-            tmp_path, "- events_from_annotations: {}", VALID_SOURCE
-        )
+        cfg = make_cfg(tmp_path, "- events_from_annotations: {}", VALID_SOURCE)
         errors, _ = validate_config(cfg)
         assert errors == []
 
@@ -145,9 +143,7 @@ class TestSourceSteps:
         rhino = make_cfg(tmp_path, "- filter: {}", steps, backend="rhino")
         assert any("fs_coregister" in e for e in validate_config(rhino)[0])
 
-        freesurfer = make_cfg(
-            tmp_path, "- filter: {}", steps, backend="freesurfer"
-        )
+        freesurfer = make_cfg(tmp_path, "- filter: {}", steps, backend="freesurfer")
         freesurfer.pipeline.freesurfer_subjects_dir = "/fs"
         assert validate_config(freesurfer)[0] == []
 
@@ -259,42 +255,54 @@ class TestGroupSection:
         return load_config(path, env={})
 
     def test_accepts_a_well_formed_group_section(self, tmp_path):
-        cfg = self._cfg(tmp_path, """
+        cfg = self._cfg(
+            tmp_path,
+            """
         conditions: [response/left, response/right]
         contrasts:
           - name: responseHand
             conditions: [response/left, response/right]
             weights: [0.5, -0.5]
-        """)
+        """,
+        )
         assert validate_config(cfg)[0] == []
 
     def test_catches_mismatched_weights(self, tmp_path):
-        cfg = self._cfg(tmp_path, """
+        cfg = self._cfg(
+            tmp_path,
+            """
         contrasts:
           - name: bad
             conditions: [a, b, c]
             weights: [1, -1]
-        """)
+        """,
+        )
         errors, _ = validate_config(cfg)
         assert any("3 condition(s) but 2 weight(s)" in e for e in errors)
 
     def test_catches_a_contrast_condition_that_will_not_be_computed(self, tmp_path):
-        cfg = self._cfg(tmp_path, """
+        cfg = self._cfg(
+            tmp_path,
+            """
         conditions: [response/left]
         contrasts:
           - name: bad
             conditions: [response/left, response/right]
             weights: [1, -1]
-        """)
+        """,
+        )
         errors, _ = validate_config(cfg)
         assert any("response/right" in e for e in errors)
 
     def test_catches_a_malformed_contrast(self, tmp_path):
-        cfg = self._cfg(tmp_path, """
+        cfg = self._cfg(
+            tmp_path,
+            """
         contrasts:
           - name: bad
             conditions: [a, b]
-        """)
+        """,
+        )
         errors, _ = validate_config(cfg)
         assert any("missing ['weights']" in e for e in errors)
 

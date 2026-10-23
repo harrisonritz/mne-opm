@@ -183,6 +183,7 @@ class TestStimChannelDrop:
             "Raw written from annotations-only data should have no stim channels"
         )
 
+
 # ---------------------------------------------------------------------------
 # Tests: metadata ↔ BIDS event alignment
 # ---------------------------------------------------------------------------
@@ -251,6 +252,7 @@ class TestMetadataAlignment:
         assert len(corrupted_df) > original_df_len, (
             "Plain write_raw_bids should add the BAD annotation as an event row"
         )
+
 
 # ---------------------------------------------------------------------------
 # Tests: post-write event-count verification helpers

@@ -132,7 +132,9 @@ def _bids_config(spec: DatasetSpec, subject: str, raw_dir: Path, bids_dir: Path)
     )
 
 
-def _write_landmarks(spec: DatasetSpec, subject: str, bids_dir: Path, subjects_dir: Path):
+def _write_landmarks(
+    spec: DatasetSpec, subject: str, bids_dir: Path, subjects_dir: Path
+):
     """Run the repo's coregistration step against the ground-truth transform.
 
     ``_use_precomputed_trans`` makes ``CoregAnalysis`` skip ICP (there is no
@@ -302,7 +304,9 @@ def make_subject(
 # ---------------------------------------------------------------------------
 
 
-def _write_dataset_files(bids_dir: Path, spec: DatasetSpec, subjects: list[str]) -> None:
+def _write_dataset_files(
+    bids_dir: Path, spec: DatasetSpec, subjects: list[str]
+) -> None:
     """Top-level BIDS metadata that ``mne_bids`` does not write for us."""
     desc_path = bids_dir / "dataset_description.json"
     desc = json.loads(desc_path.read_text()) if desc_path.exists() else {}

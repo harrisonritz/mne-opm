@@ -129,8 +129,8 @@ class TestLoadBeamformerData:
             epo_path.touch()
 
             mock_fwd.return_value = MagicMock(spec=mne.Forward)
-            mock_fwd.return_value.__getitem__ = (
-                lambda self, key: [1, 2] if key == "src" else None
+            mock_fwd.return_value.__getitem__ = lambda self, key: (
+                [1, 2] if key == "src" else None
             )
 
             info = mne.create_info(["MEG001"], 300.0, ["mag"])
@@ -447,8 +447,8 @@ class TestNoiseCovLoading:
             patch("custom.run_beamformer.mne.read_epochs") as mock_epo,
         ):
             mock_fwd.return_value = MagicMock(spec=mne.Forward)
-            mock_fwd.return_value.__getitem__ = (
-                lambda self, key: [1, 2] if key == "src" else None
+            mock_fwd.return_value.__getitem__ = lambda self, key: (
+                [1, 2] if key == "src" else None
             )
             mock_epo.return_value = MagicMock(spec=mne.Epochs)
 
@@ -471,8 +471,8 @@ class TestNoiseCovLoading:
             patch("custom.run_beamformer.mne.read_cov") as mock_cov,
         ):
             mock_fwd.return_value = MagicMock(spec=mne.Forward)
-            mock_fwd.return_value.__getitem__ = (
-                lambda self, key: [1, 2] if key == "src" else None
+            mock_fwd.return_value.__getitem__ = lambda self, key: (
+                [1, 2] if key == "src" else None
             )
             mock_epo.return_value = MagicMock(spec=mne.Epochs)
             mock_cov.return_value = MagicMock(spec=mne.Covariance)

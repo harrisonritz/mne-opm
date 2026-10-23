@@ -62,9 +62,13 @@ def _load_epochs(deriv_root: Path, subject: str, session: str, task: str):
 
     meg_dir = deriv_root / f"sub-{subject}" / f"ses-{session}" / "meg"
     for suffix in ("proc-clean_epo", "proc-ica_epo", "epo"):
-        matches = sorted(meg_dir.glob(f"sub-{subject}_ses-{session}_task-{task}_{suffix}.fif"))
+        matches = sorted(
+            meg_dir.glob(f"sub-{subject}_ses-{session}_task-{task}_{suffix}.fif")
+        )
         if matches:
-            return mne.read_epochs(matches[0], preload=True, verbose="error"), matches[0]
+            return mne.read_epochs(matches[0], preload=True, verbose="error"), matches[
+                0
+            ]
     raise FileNotFoundError(
         f"No epochs found under {meg_dir}. Run the preprocessing pipeline first."
     )

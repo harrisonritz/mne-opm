@@ -11,9 +11,7 @@ from custom.preprocessing import bad_segments
 def _raw():
     info = mne.create_info(["MAG001", "MAG002", "MAG003"], 100, "mag")
     raw = mne.io.RawArray(np.zeros((3, 700)), info, verbose="ERROR")
-    raw.set_annotations(
-        mne.Annotations([1.0, 3.0, 5.0], [0.0] * 3, ["trial"] * 3)
-    )
+    raw.set_annotations(mne.Annotations([1.0, 3.0, 5.0], [0.0] * 3, ["trial"] * 3))
     return raw
 
 

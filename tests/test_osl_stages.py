@@ -139,9 +139,7 @@ class TestPreprocStage:
         assert captured["gen_report"] is False
         assert captured["ret_dataset"] is True
 
-    def test_reports_failure_when_osl_returns_an_empty_dataset(
-        self, cfg, monkeypatch
-    ):
+    def test_reports_failure_when_osl_returns_an_empty_dataset(self, cfg, monkeypatch):
         touch_input(cfg)
         monkeypatch.setattr(
             "osl_ephys.preprocessing.run_proc_chain",
@@ -168,13 +166,9 @@ class TestPreprocStage:
         cfg.pipeline.gen_report = True
         assert preproc_stage.run(cfg) is True
         assert captured["run_id"] == "sub-007_ses-01"
-        assert captured["outdir"].as_posix().endswith(
-            "preproc_report/sub-007_ses-01"
-        )
+        assert captured["outdir"].as_posix().endswith("preproc_report/sub-007_ses-01")
 
-    def test_report_data_arguments_match_what_osl_can_consume(
-        self, cfg, monkeypatch
-    ):
+    def test_report_data_arguments_match_what_osl_can_consume(self, cfg, monkeypatch):
         # gen_html_data indexes outdir with ``/`` (so it must be a Path) and
         # appends '.log'/'.error.log' to a string logsdir (so it must be the
         # log base, not the logs directory).
@@ -255,7 +249,8 @@ class TestHeadless3D:
         from custom.osl._headless import setup_headless_3d
 
         monkeypatch.setenv(
-            "QT_QPA_PLATFORM_PLUGIN_PATH", "/venv/lib/python3.13/site-packages/cv2/qt/plugins"
+            "QT_QPA_PLATFORM_PLUGIN_PATH",
+            "/venv/lib/python3.13/site-packages/cv2/qt/plugins",
         )
         setup_headless_3d()
         assert "QT_QPA_PLATFORM_PLUGIN_PATH" not in os.environ
@@ -348,9 +343,7 @@ class TestSourceStage:
         assert captured["epoch_file"] is None
         assert captured["preproc_file"].endswith("_preproc-raw.fif")
 
-    def test_freesurfer_backend_supplies_the_custom_wrappers(
-        self, cfg, monkeypatch
-    ):
+    def test_freesurfer_backend_supplies_the_custom_wrappers(self, cfg, monkeypatch):
         cfg.pipeline.source_backend = "freesurfer"
         cfg.pipeline.freesurfer_subjects_dir = "/fs"
         cfg.pipeline.gen_report = False
@@ -360,10 +353,9 @@ class TestSourceStage:
 
         monkeypatch.setattr(
             "osl_ephys.source_recon.run_src_chain",
-            lambda config, **kwargs: captured.update(
-                {"config": config, **kwargs}
-            )
-            or True,
+            lambda config, **kwargs: (
+                captured.update({"config": config, **kwargs}) or True
+            ),
         )
 
         assert source_stage.run(cfg) is True
@@ -412,9 +404,7 @@ class TestInjectFreesurferDefaults:
         assert forward["gridstep"] == 8
 
     def test_explicit_values_win(self):
-        config = {
-            "source_recon": [{"fs_forward_model": {"subjects_dir": "/custom"}}]
-        }
+        config = {"source_recon": [{"fs_forward_model": {"subjects_dir": "/custom"}}]}
         result = source_stage._inject_fs_defaults(config, self._paths())
         assert result["source_recon"][0]["fs_forward_model"]["subjects_dir"] == (
             "/custom"
@@ -423,9 +413,7 @@ class TestInjectFreesurferDefaults:
     def test_leaves_other_steps_alone(self):
         config = {"source_recon": [{"compute_surfaces": {"include_nose": False}}]}
         result = source_stage._inject_fs_defaults(config, self._paths())
-        assert result["source_recon"][0]["compute_surfaces"] == {
-            "include_nose": False
-        }
+        assert result["source_recon"][0]["compute_surfaces"] == {"include_nose": False}
 
     def test_does_not_mutate_the_input(self):
         config = {"source_recon": [{"fs_coregister": {}}]}
@@ -492,9 +480,7 @@ class TestCollateStage:
         assert collate_stage.run(cfg) is True
         assert [kind for kind, _ in built] == ["page", "summary"]
 
-    def test_a_failure_in_one_report_does_not_stop_the_other(
-        self, cfg, monkeypatch
-    ):
+    def test_a_failure_in_one_report_does_not_stop_the_other(self, cfg, monkeypatch):
         from custom.osl._paths import resolve_paths
 
         paths = resolve_paths(cfg.pipeline)
@@ -624,10 +610,9 @@ class TestCli:
         )
         seen = {}
         monkeypatch.setattr(
-            self.run_osl, "run_stage", lambda s, c: seen.update(
-                {"subject": c.pipeline.subject}
-            )
-            or True,
+            self.run_osl,
+            "run_stage",
+            lambda s, c: seen.update({"subject": c.pipeline.subject}) or True,
         )
 
         exit_code = self.run_osl.main(
@@ -646,9 +631,7 @@ class TestCli:
             )
         )
         monkeypatch.setattr(self.run_osl, "run_stage", lambda s, c: False)
-        assert (
-            self.run_osl.main(["--stage", "preproc", "--config", str(path)]) == 1
-        )
+        assert self.run_osl.main(["--stage", "preproc", "--config", str(path)]) == 1
 
     def test_returns_nonzero_for_a_missing_config(self, tmp_path):
         assert (

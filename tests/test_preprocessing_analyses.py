@@ -267,7 +267,10 @@ class TestICAConvergence:
         data = rng.randn(n_ch, n_ch) @ rng.laplace(size=(n_ch, 3000))
         raw_meg = mne.io.RawArray(data * 1e-13, meg_info, verbose=False)
         cfg = SimpleNamespace(
-            deriv_root=tmp_path, subjects=["001"], sessions=["01"], task="TSX",
+            deriv_root=tmp_path,
+            subjects=["001"],
+            sessions=["01"],
+            task="TSX",
             spatial_filter="ica",
         )
         bp = get_ica_bids_path(cfg)
@@ -282,8 +285,12 @@ class TestICAConvergence:
         return cfg, bp, fit
 
     def test_enabled_only_for_ica(self):
-        assert ICAConvergenceAnalysis(SimpleNamespace(spatial_filter="ica")).is_enabled()
-        assert not ICAConvergenceAnalysis(SimpleNamespace(spatial_filter="ssp")).is_enabled()
+        assert ICAConvergenceAnalysis(
+            SimpleNamespace(spatial_filter="ica")
+        ).is_enabled()
+        assert not ICAConvergenceAnalysis(
+            SimpleNamespace(spatial_filter="ssp")
+        ).is_enabled()
 
     def test_warns_and_plots_when_not_converged(self, setup):
         cfg, bp, fit = setup

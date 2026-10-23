@@ -104,9 +104,12 @@ Detects and annotates bad data segments using osl-ephys tools.
 
 ```python
 _bad_segments_params = {
-    "1": dict(channel_threshold=0.20, noise_channel_threshold=0.50,
-              segment_len_sec=1.0,
-              amplitude=dict(peak=dict(mag=1e-10), bad_percent=100)),
+    "1": dict(
+        channel_threshold=0.20,
+        noise_channel_threshold=0.50,
+        segment_len_sec=1.0,
+        amplitude=dict(peak=dict(mag=1e-10), bad_percent=100),
+    ),
 }
 ```
 

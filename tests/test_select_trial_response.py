@@ -815,7 +815,10 @@ class TestResponseAlignmentClassification:
         lats = rng.uniform(0.3, 1.5, n)
         events = []
         for i in range(n):
-            events += [(2.0 * i + 1.0, "trial/a"), (2.0 * i + 1.0 + lats[i], f"response/{sides[i]}")]
+            events += [
+                (2.0 * i + 1.0, "trial/a"),
+                (2.0 * i + 1.0 + lats[i], f"response/{sides[i]}"),
+            ]
         raw = _raw_from_events(events)
         meta = pd.DataFrame(
             {"resp": np.where(sides == "left", "z", "m"), "rt": lats + 0.014}
@@ -827,7 +830,12 @@ class TestResponseAlignmentClassification:
         shifted = meta.shift(1).bfill()
         with pytest.raises(RuntimeError):
             assert_response_alignment(
-                raw, shifted, "resp", response_left="z", response_right="m", rt_column="rt"
+                raw,
+                shifted,
+                "resp",
+                response_left="z",
+                response_right="m",
+                rt_column="rt",
             )
 
     def test_raises_when_rt_column_absent(self):

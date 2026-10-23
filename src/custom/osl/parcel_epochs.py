@@ -153,8 +153,7 @@ def build_parcel_epochs(
     parc_data = np.asarray(parc_data)
     if parc_data.ndim != 3:
         raise ValueError(
-            f"parc_data must be (parcels, times, epochs), got shape "
-            f"{parc_data.shape}."
+            f"parc_data must be (parcels, times, epochs), got shape {parc_data.shape}."
         )
 
     events = np.asarray(events)
@@ -175,9 +174,7 @@ def build_parcel_epochs(
 
     event_id = _drop_unmatched(event_id, events)
 
-    info = mne.create_info(
-        ch_names=parcel_names, ch_types="misc", sfreq=float(sfreq)
-    )
+    info = mne.create_info(ch_names=parcel_names, ch_types="misc", sfreq=float(sfreq))
 
     # (parcels, times, epochs) -> (epochs, parcels, times), as MNE stores it.
     data = np.swapaxes(parc_data.T, 1, 2)

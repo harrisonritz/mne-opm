@@ -50,8 +50,8 @@ setting recognized by mne-bids-pipeline. Common ones:
 
 ```python
 # Filtering
-l_freq = 0.1        # high-pass filter (Hz)
-h_freq = 100.0      # low-pass filter (Hz)
+l_freq = 0.1  # high-pass filter (Hz)
+h_freq = 100.0  # low-pass filter (Hz)
 
 # Epoching
 epochs_tmin = -0.2
@@ -116,7 +116,7 @@ You can load config files from Python using the `load_config` utility:
 from custom.preprocessing import load_config
 
 cfg = load_config("/path/to/config-CSI.py")
-print(cfg.subjects)   # ['007']
+print(cfg.subjects)  # ['007']
 print(cfg.bids_root)  # '/data/TSXpilot/bids'
 ```
 

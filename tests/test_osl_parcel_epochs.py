@@ -81,9 +81,7 @@ class TestBuildParcelEpochs:
         )
         assert built.get_data(copy=False).shape == (N_EPOCHS, N_PARCELS, N_TIMES)
         # parcel p, time t, epoch e must land at [e, p, t].
-        assert built.get_data(copy=False)[3, 2, 5] == pytest.approx(
-            parc_data[2, 5, 3]
-        )
+        assert built.get_data(copy=False)[3, 2, 5] == pytest.approx(parc_data[2, 5, 3])
 
     def test_channels_default_to_the_parcel_convention(self):
         built = parcel_epochs.build_parcel_epochs(
@@ -203,9 +201,7 @@ class TestConvert2mneEpochs:
         ours = parcel_epochs.convert2mne_epochs(parc_data, source)
         theirs = parcellation.convert2mne_epochs(parc_data, source)
 
-        assert ours.get_data(copy=False) == pytest.approx(
-            theirs.get_data(copy=False)
-        )
+        assert ours.get_data(copy=False) == pytest.approx(theirs.get_data(copy=False))
         assert ours.ch_names == theirs.ch_names
 
     def test_osl_ephys_own_converter_loses_what_this_module_keeps(self):

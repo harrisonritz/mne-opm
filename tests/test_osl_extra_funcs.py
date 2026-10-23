@@ -84,9 +84,7 @@ class TestEventsFromAnnotations:
 
     def test_userargs_event_id_overrides_the_dataset(self, annotated_raw):
         dataset = make_dataset(annotated_raw, TRIGGER_CODES)
-        result = events_from_annotations(
-            dataset, {"event_id": {"response/left": 7}}
-        )
+        result = events_from_annotations(dataset, {"event_id": {"response/left": 7}})
         assert result["event_id"] == {"response/left": 7}
         assert len(result["events"]) == 1
 
@@ -146,9 +144,7 @@ class TestEventsFromAnnotations:
         # maps a BAD_ annotation, honour it.
         raw = raw_meg.copy()
         raw.set_annotations(
-            mne.Annotations(
-                onset=[0.5], duration=[0.0], description=["BAD_deliberate"]
-            )
+            mne.Annotations(onset=[0.5], duration=[0.0], description=["BAD_deliberate"])
         )
         dataset = make_dataset(raw, {"BAD_deliberate": 3})
         result = events_from_annotations(dataset, {})
@@ -221,7 +217,9 @@ def raw_with_a_noisy_channel(raw_meg):
 
     out = mne.io.RawArray(data, raw.info.copy(), verbose="error")
     out.set_annotations(
-        mne.Annotations(onset=[onset], duration=[duration], description=["bad_segment_mag"])
+        mne.Annotations(
+            onset=[onset], duration=[duration], description=["bad_segment_mag"]
+        )
     )
     return out, out.ch_names[steady], out.ch_names[spiky]
 
@@ -238,9 +236,7 @@ class TestBadChannelsClean:
         # This is osl-ephys' behaviour, and the bug being worked around: the
         # annotated transient dominates the SDs and masks the noisy channel.
         raw, steady, spiky = raw_with_a_noisy_channel
-        bad_channels_clean(
-            {"raw": raw}, {"picks": "mag", "reject_by_annotation": None}
-        )
+        bad_channels_clean({"raw": raw}, {"picks": "mag", "reject_by_annotation": None})
         assert spiky in raw.info["bads"]
         assert steady not in raw.info["bads"]
 
@@ -252,9 +248,7 @@ class TestBadChannelsClean:
         bad_channels_clean({"raw": raw}, {"picks": "mag"})
         assert raw.info["bads"].count(steady) == 1
 
-    def test_the_dataset_is_returned_for_the_next_step(
-        self, raw_with_a_noisy_channel
-    ):
+    def test_the_dataset_is_returned_for_the_next_step(self, raw_with_a_noisy_channel):
         raw, _, _ = raw_with_a_noisy_channel
         dataset = {"raw": raw}
         assert bad_channels_clean(dataset, {"picks": "mag"}) is dataset
@@ -300,9 +294,7 @@ class TestChannelSds:
 
     def test_omitting_annotations_matches_get_data(self, raw_meg):
         raw = raw_meg.copy()
-        raw.set_annotations(
-            mne.Annotations([2.0], [1.5], ["bad_segment_mag"])
-        )
+        raw.set_annotations(mne.Annotations([2.0], [1.5], ["bad_segment_mag"]))
         picks = mne.pick_types(raw.info, meg=True)
         expected = raw.get_data(picks=picks, reject_by_annotation="omit")
 
@@ -326,9 +318,7 @@ class TestRegistry:
     def test_the_step_is_registered_under_its_config_name(self):
         # osl-ephys matches extra_funcs by __name__, so the function name is
         # the config key.
-        assert "events_from_annotations" in [
-            f.__name__ for f in PREPROC_EXTRA_FUNCS
-        ]
+        assert "events_from_annotations" in [f.__name__ for f in PREPROC_EXTRA_FUNCS]
 
     def test_bad_channels_clean_is_registered(self):
         assert "bad_channels_clean" in [f.__name__ for f in PREPROC_EXTRA_FUNCS]

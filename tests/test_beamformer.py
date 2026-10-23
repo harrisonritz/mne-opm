@@ -328,9 +328,7 @@ class TestResolveRank:
         beamformer_cfg._beamformer_rank = "data"
         with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
             mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 110})
-            rank = resolve_rank(
-                beamformer_cfg, MagicMock(), MagicMock(), {"mag": 75}
-            )
+            rank = resolve_rank(beamformer_cfg, MagicMock(), MagicMock(), {"mag": 75})
         assert rank == {"mag": 75}
 
     def test_survives_missing_info_rank(self, beamformer_cfg):

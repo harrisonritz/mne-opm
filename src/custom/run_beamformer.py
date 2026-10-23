@@ -130,11 +130,15 @@ def surface_orient_forward(forward: mne.Forward, cfg: SimpleNamespace) -> mne.Fo
     Only meaningful for surface source spaces; volume grids have no normal.
     """
     if not getattr(cfg, "_beamformer_surf_ori", True):
-        print("[surface_orient_forward] _beamformer_surf_ori=False; leaving forward as-is")
+        print(
+            "[surface_orient_forward] _beamformer_surf_ori=False; leaving forward as-is"
+        )
         return forward
     if forward["surf_ori"]:
         return forward
-    print("[surface_orient_forward] Converting forward to surface orientation (use_cps)")
+    print(
+        "[surface_orient_forward] Converting forward to surface orientation (use_cps)"
+    )
     return mne.convert_forward_solution(
         forward, surf_ori=True, force_fixed=False, use_cps=True
     )
@@ -202,7 +206,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
 
     if info["bads"]:
         print(f"[build_volume_forward] Excluding {len(info['bads'])} bad channel(s)")
-        info = mne.pick_info(info, mne.pick_types(info, meg=True, eeg=False, exclude="bads"))
+        info = mne.pick_info(
+            info, mne.pick_types(info, meg=True, eeg=False, exclude="bads")
+        )
 
     subject = cfg.subjects[0]
     session = cfg.sessions[0]
@@ -224,7 +230,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
     )
 
     pos = float(getattr(cfg, "_beamformer_volume_pos", 5.0))
-    mindist = float(getattr(cfg, "_beamformer_volume_mindist", getattr(cfg, "mindist", 5.0)))
+    mindist = float(
+        getattr(cfg, "_beamformer_volume_mindist", getattr(cfg, "mindist", 5.0))
+    )
     cache = getattr(cfg, "_beamformer_volume_cache", True)
 
     # Cache -----------------------------------------------------------------
@@ -232,7 +240,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         suffix="fwd", acquisition="vol", extension=".fif"
     )
     if cache and vol_fwd_path.fpath.exists():
-        print(f"[build_volume_forward] Loading cached volume forward: {vol_fwd_path.fpath}")
+        print(
+            f"[build_volume_forward] Loading cached volume forward: {vol_fwd_path.fpath}"
+        )
         return mne.read_forward_solution(vol_fwd_path.fpath)
 
     # BEM solution ----------------------------------------------------------
@@ -303,7 +313,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         add_interpolator=True,
         n_jobs=getattr(cfg, "n_jobs", -1),
     )
-    print(f"[build_volume_forward] Volume source space: {sum(s['nuse'] for s in src)} sources")
+    print(
+        f"[build_volume_forward] Volume source space: {sum(s['nuse'] for s in src)} sources"
+    )
 
     # Forward solution ------------------------------------------------------
     print("[build_volume_forward] Computing forward solution...")
@@ -324,7 +336,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         try:
             vol_fwd_path.fpath.parent.mkdir(parents=True, exist_ok=True)
             mne.write_forward_solution(vol_fwd_path.fpath, fwd, overwrite=True)
-            print(f"[build_volume_forward] Cached volume forward to {vol_fwd_path.fpath}")
+            print(
+                f"[build_volume_forward] Cached volume forward to {vol_fwd_path.fpath}"
+            )
         except Exception as e:
             print(f"[build_volume_forward] WARNING: could not cache forward: {e}")
 
@@ -544,9 +558,7 @@ def resolve_rank(
         print(f"[resolve_rank] {name} rank{extra}: {value}")
 
     keys = set().union(*(c.keys() for c in candidates.values()))
-    rank = {
-        key: min(c[key] for c in candidates.values() if key in c) for key in keys
-    }
+    rank = {key: min(c[key] for c in candidates.values() if key in c) for key in keys}
     print(f"[resolve_rank] Using element-wise minimum: {rank}")
 
     # A data estimate at (or above) the info rank means the tolerance did not
@@ -1096,9 +1108,7 @@ def add_to_report(
                     if stc.data.ndim == 3:
                         stc = stc.magnitude()
                     # Representative slice at the peak of the mean-over-sources signal.
-                    peak_time = stc.times[
-                        int(np.argmax(np.abs(stc.data).mean(axis=0)))
-                    ]
+                    peak_time = stc.times[int(np.argmax(np.abs(stc.data).mean(axis=0)))]
                     fig = stc.plot(
                         src=src,
                         subject=fs_subject,
