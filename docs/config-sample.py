@@ -320,6 +320,13 @@ _skip_on_deriv = True
 #                             a segment is marked bad (higher = more lenient).
 #   noise_channel_threshold : same, applied to the empty-room recording.
 #   segment_len_sec         : sliding-window length (s).
+#   amplitude               : optional kwargs for
+#                             mne.preprocessing.annotate_amplitude (peak, flat,
+#                             bad_percent, min_duration). Thresholds apply to
+#                             sample-to-sample differences, so `peak` catches
+#                             jumps (e.g. flux jumps). Adds BAD_peak / BAD_flat
+#                             annotations; channels above bad_percent are marked
+#                             bad. Omit to skip.
 # ================================================================
 
 _bad_segments_params = {
@@ -327,6 +334,7 @@ _bad_segments_params = {
         "channel_threshold": 0.20,  # lenient — only gross artifacts
         "noise_channel_threshold": 0.50,  # very lenient for noise
         "segment_len_sec": 1.0,  # 1 s window (coarse)
+        # "amplitude": dict(peak=dict(mag=1e-10), bad_percent=100),
     },
     "2": {
         "channel_threshold": 0.05,  # strict — fine cleanup

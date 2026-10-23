@@ -93,9 +93,22 @@ Detects and annotates bad data segments using osl-ephys tools.
 
 **What it does:**
 1. Loads raw data
-2. Runs segment-based artifact detection using the configured stage-1 window
-3. Annotates bad segments in the raw data
-4. Saves back to BIDS
+2. Optionally runs `mne.preprocessing.annotate_amplitude` when the stage
+   parameters include an `amplitude` dict. Its thresholds apply to
+   sample-to-sample differences, so `peak` catches jumps such as flux jumps;
+   this adds `BAD_peak` / `BAD_flat` annotations and marks channels that exceed
+   `bad_percent` as bad
+3. Runs segment-based artifact detection using the configured stage-1 window
+4. Annotates bad segments in the raw data
+5. Saves back to BIDS
+
+```python
+_bad_segments_params = {
+    "1": dict(channel_threshold=0.20, noise_channel_threshold=0.50,
+              segment_len_sec=1.0,
+              amplitude=dict(peak=dict(mag=1e-10), bad_percent=100)),
+}
+```
 
 ## MNE preprocessing
 

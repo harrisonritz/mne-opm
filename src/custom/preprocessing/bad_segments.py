@@ -58,6 +58,16 @@ Optional:
                 Same, but for noise (empty-room) recordings.
             segment_len_sec : float
                 Segment window length in seconds.
+            amplitude : dict, optional
+                Keyword arguments for :func:`mne.preprocessing.annotate_amplitude`
+                (e.g. ``peak``, ``flat``, ``bad_percent``, ``min_duration``),
+                run on the same filtered copy before the OSL detection. Its
+                thresholds apply to differences between consecutive samples, so
+                ``peak`` catches jumps (e.g. OPM flux jumps) rather than
+                sustained high amplitude. Adds
+                ``BAD_peak`` / ``BAD_flat`` annotations, and marks channels that
+                exceed ``bad_percent`` as bad (``bad_percent=100`` disables
+                that). Omit to skip.
         See *config-trial.py* for a full example.
     process_empty_room : bool
         Also process empty room noise recording. Default: False.
@@ -344,6 +354,22 @@ class BadSegmentsAnalysis(BaseAnalysis):
             method="iir",
             skip_by_annotation=("edge", "bad"),
         )
+
+        # --- Optional peak-to-peak / flat amplitude annotations -----------
+        amplitude = params.get("amplitude")
+        if amplitude:
+            amp_annotations, amp_bads = mne.preprocessing.annotate_amplitude(
+                filt, picks=self.cfg.ch_types, **amplitude
+            )
+            filt.set_annotations(filt.annotations + amp_annotations)
+            raw.set_annotations(raw.annotations + amp_annotations)
+            new_bads = sorted(set(amp_bads) - set(raw.info["bads"]))
+            raw.info["bads"] += new_bads
+            filt.info["bads"] = list(raw.info["bads"])
+            self.log(
+                f"annotate_amplitude: {len(amp_annotations)} annotations, "
+                f"bad channels {new_bads}"
+            )
 
         # filt already inherits annotations from raw.copy() (breaks, prior BADs)
         # so osl_bad_segments will respect them during metric computation.

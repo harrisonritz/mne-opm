@@ -14,7 +14,11 @@ import mne
 import numpy as np
 import pytest
 
-from custom.preprocessing.bad_segments import BadSegmentsAnalysis, run
+from custom.preprocessing.bad_segments import (
+    _DEFAULT_STAGE_PARAMS,
+    BadSegmentsAnalysis,
+    run,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +98,21 @@ class TestDetectBadSegments:
         analysis = BadSegmentsAnalysis(bad_seg_cfg)
         result = analysis._detect_bad_segments(raw, is_noise=False)
         assert isinstance(result, mne.io.BaseRaw)
+
+    def test_annotate_amplitude(self, raw_with_artifact_segment, bad_seg_cfg):
+        """The optional amplitude pass annotates jumps and flags flat channels."""
+        raw = raw_with_artifact_segment
+        raw._data[0] = 0.0  # a flat MEG channel
+        raw._data[1:6, int(4.5 * raw.info["sfreq"]) :] += 1e-9  # a flux jump
+        bad_seg_cfg._bad_segments_stage = "1"
+        amplitude = dict(peak=dict(mag=1e-10), flat=dict(mag=1e-20), bad_percent=50)
+        bad_seg_cfg._bad_segments_params = {
+            "1": dict(_DEFAULT_STAGE_PARAMS["1"], amplitude=amplitude)
+        }
+        result = BadSegmentsAnalysis(bad_seg_cfg)._detect_bad_segments(raw)
+        peak = [a for a in result.annotations if a["description"] == "BAD_peak"]
+        assert peak and all(4.4 < a["onset"] < 4.6 for a in peak)
+        assert raw.ch_names[0] in result.info["bads"]
 
 
 # ---------------------------------------------------------------------------
