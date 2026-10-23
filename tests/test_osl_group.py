@@ -197,6 +197,11 @@ class TestSignFlipping:
         write_subject(tmp_path, "sub-000", seed=0)
         write_subject(tmp_path, "sub-001", seed=0, flips=truth)
 
+        # osl-ephys' random search draws from the global NumPy RNG. Covariances
+        # cannot tell a flip set from its global inverse, so an unlucky draw
+        # can settle on the inverse (every parcel then anti-correlated); seed it
+        # so the test is deterministic.
+        np.random.seed(0)
         result = sign_flip.flip_subject(
             outdir=tmp_path,
             subject="sub-001",
