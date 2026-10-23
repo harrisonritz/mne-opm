@@ -9,7 +9,7 @@ The `run_preproc.sh` script runs these steps in sequence:
 
 ```text
 init -> annotate_breaks -> select_trial_response
-    -> regress -> bad_segments_1 -> bad_channels -> manual_channel
+    -> bad_segments_1 -> bad_channels -> manual_channel
     -> apply_hfc -> apply_zca -> MNE preprocessing -> bad_ICs
     -> manual_ica -> MNE ICA apply -> bad_epochs
 ```
@@ -96,20 +96,6 @@ Detects and annotates bad data segments using osl-ephys tools.
 2. Runs segment-based artifact detection using the configured stage-1 window
 3. Annotates bad segments in the raw data
 4. Saves back to BIDS
-
-## Sensor regression (`regress`)
-
-Regresses out signals from a configurable list of sensors from the primary
-MEG channels. Commonly used to remove environmental noise captured by
-reference sensors.
-
-**Config flag:** `_regress = True`; **Predictors:** `_regress_preds = ['ref_meg']`
-
-**What it does:**
-1. Loads raw data with both MEG and reference channels
-2. Fits a regression model from reference to MEG channels
-3. Subtracts predicted noise from MEG channels
-4. Saves cleaned data to BIDS
 
 ## MNE preprocessing
 

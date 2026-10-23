@@ -105,16 +105,6 @@ export MNE_OPM_REQUIRE_RESPONSE_METADATA=1
 
 STEP_START=$SECONDS
 echo ""
-echo "======================= custom: regress  =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress --config=$CONFIG_PATH
-_print_timing "custom: regress" $STEP_START
-rank_check init
-
-
-
-STEP_START=$SECONDS
-echo ""
 echo "======================= OSL: bad segment 1 =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH

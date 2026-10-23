@@ -307,11 +307,6 @@ _bad_segments_params = {
     },
 }
 
-# Head-position regressors are shipped as misc channels on the synthetic
-# subject; off by default because the simulated drift is uninformative.
-_regress = False
-_regress_preds = ["x_head", "y_head", "distance"]
-_regress_lags = 1
 
 
 # ============================================================================

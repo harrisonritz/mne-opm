@@ -9,8 +9,6 @@ Available Analyses
 init_derivatives
     Clear leftover ``proc-<custom_proc>`` derivatives from a previous run so
     preprocessing starts from the raw BIDS data.
-regress
-    Regress out a configurable list of sensor signals from MEG data.
 bad_segments
     Detect and annotate bad raw data segments.
 bad_channels
@@ -44,7 +42,6 @@ Author: Harrison Ritz, 2025
 from . import (
     bad_ICs,
     init_derivatives,
-    regress,
     bad_segments,
     bad_channels,
     manual_channel,
@@ -78,7 +75,6 @@ from ._bids_utils import get_bids_path
 __all__ = [
     # Analysis modules
     "init_derivatives",
-    "regress",
     "bad_segments",
     "bad_channels",
     "manual_channel",

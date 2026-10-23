@@ -42,9 +42,8 @@ TRIGGER_CHANNELS = tuple(f"Trigger {i}" for i in range(1, 9))
 
 # Auxiliary channels.  In a real recording these arrive from the eye tracker and
 # are merged in by ``format_bids.process_eyetracking``; the synthetic subject
-# ships them directly in the MEG file so that ICA's EOG detection and the
-# ``_regress_preds`` head-position regressors have something to work with
-# without also having to fake an Eyelink ``.asc``.
+# ships them directly in the MEG file so that ICA's EOG detection has something
+# to work with without also having to fake an Eyelink ``.asc``.
 EYE_CHANNELS: dict[str, str] = {
     "eye_nmf1": "eog",
     "eye_nmf2": "eog",

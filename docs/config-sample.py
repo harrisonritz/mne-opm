@@ -77,7 +77,7 @@ _use_precomputed_trans = False
 
 # Route custom preprocessing outputs through deriv_root using a proc-<label>
 # suffix instead of overwriting the raw BIDS files.  When set (e.g. 'init'),
-# every custom step (bad_channels, bad_segments, regress, apply_hfc,
+# every custom step (bad_channels, bad_segments, apply_hfc,
 # manual_channel, zca_filter) reads from / writes to ``deriv_root`` with
 # ``proc-<custom_proc>``.  Leave as None to overwrite the raw BIDS data files.
 custom_proc = "init"
@@ -337,22 +337,7 @@ _bad_segments_params = {
 
 
 # %% ============================================================
-# SECTION 11: REFERENCE / NUISANCE REGRESSION (regress step)
-# Regress out nuisance predictors from the data before decoding.
-# ================================================================
-
-_regress = False  # master switch
-_regress_preds = ["x_head", "y_head", "distance"]  # predictor channels / signals
-_regress_lags = 1  # delay-embedding lags (0 = none)
-# The regress step also supports (optional, defaults shown):
-# _regress_timevarying = False   # sliding-window (time-varying) regression weights
-# _regress_window      = 100.0   # window size (ms) for time-varying regression
-# _regress_freqs       = None    # frequency band(s) to filter predictors, e.g. [(None, 5.0)]
-# _regress_plot        = False   # save before/after diagnostic plots
-
-
-# %% ============================================================
-# SECTION 12: PREPROCESSING — BREAKS, FILTERING, RESAMPLING
+# SECTION 11: PREPROCESSING — BREAKS, FILTERING, RESAMPLING
 # ================================================================
 
 # -- Rest / break detection --
@@ -383,7 +368,7 @@ epochs_decim = 3
 
 
 # %% ============================================================
-# SECTION 13: ARTIFACT REJECTION — run_preproc.sh
+# SECTION 12: ARTIFACT REJECTION — run_preproc.sh
 # ================================================================
 
 # How to handle trials with duplicate events ("drop" or "merge").
@@ -395,7 +380,7 @@ reject = dict(mag=5e-12)
 
 
 # %% ============================================================
-# SECTION 14: ICA — run_preproc.sh
+# SECTION 13: ICA — run_preproc.sh
 # Components correlated with ECG/EOG (and other diagnostic metrics) are
 # automatically labelled as artifacts via a unified PCA -> GESD step.
 # ================================================================
@@ -462,7 +447,7 @@ _ica_metrics = [
 
 
 # %% ============================================================
-# SECTION 15: SENSOR-SPACE ANALYSIS — DECODING (mne-bids-pipeline)
+# SECTION 14: SENSOR-SPACE ANALYSIS — DECODING (mne-bids-pipeline)
 # ================================================================
 
 # Enable multivariate pattern analysis (MVPA / decoding).
@@ -507,7 +492,7 @@ decoding_csp = True
 
 
 # %% ============================================================
-# SECTION 16: NOISE COVARIANCE
+# SECTION 15: NOISE COVARIANCE
 # Used by source estimation and the LCMV beamformer to whiten / regularise.
 #   'emptyroom' : estimate from the empty-room recording (recommended).
 #   'rest'      : estimate from a resting-state recording.
@@ -519,7 +504,7 @@ noise_cov = "emptyroom"
 
 
 # %% ============================================================
-# SECTION 17: SOURCE ESTIMATION (dSPM family) — run_source.sh
+# SECTION 16: SOURCE ESTIMATION (dSPM family) — run_source.sh
 # ================================================================
 
 # Master switch: whether mne_bids_pipeline runs source estimation steps.
@@ -543,7 +528,7 @@ inverse_method = "dSPM"
 
 
 # %% ============================================================
-# SECTION 18: BEAMFORMER (LCMV) — run_beamformer.sh
+# SECTION 17: BEAMFORMER (LCMV) — run_beamformer.sh
 # Reconstructs source activity with a spatial filter that passes a target
 # location while suppressing all others.  Well-suited to OPM-MEG.
 # ================================================================
@@ -552,7 +537,7 @@ _run_beamformer = True  # master switch
 
 # Source space for the beamformer forward model.
 #   'surface' : cortical-surface source space built by mne-bids-pipeline
-#               (uses SECTION 17 `spacing`/`mindist`; per-hemisphere STCs saved
+#               (uses SECTION 16 `spacing`/`mindist`; per-hemisphere STCs saved
 #               as `*+lcmv+hemi-stc.h5`).
 #   'volume'  : regular 3D grid inside the inner skull, built on the fly by
 #               run_beamformer.py via mne.setup_volume_source_space; the volume
@@ -653,7 +638,7 @@ _beamformer_report_n_time_points = 51  # frames in the report source-map animati
 
 
 # %% ============================================================
-# SECTION 19: COREG DIAGNOSTICS — run_coreg_diagnostics.sh
+# SECTION 18: COREG DIAGNOSTICS — run_coreg_diagnostics.sh
 # Source: src/custom/coreg_diagnostics.py
 # Produces BEM, alignment, dig->scalp distance and sensitivity-map figures
 # under {deriv_root}/sub-XX/ses-YY/meg/coreg_diagnostics/.  No GUI required.
@@ -700,7 +685,7 @@ _coreg_diag_src_spacing = "oct6"
 
 
 # %% ============================================================
-# SECTION 20: MULTIVARIATE DECODING (CUSTOM) — run_decoding.sh
+# SECTION 19: MULTIVARIATE DECODING (CUSTOM) — run_decoding.sh
 # SEPARATE from the built-in mne-bids-pipeline decoding above.
 # Uses its own contrasts (metadata query strings) for binary classification
 # with Leave-One-Group-Out cross-validation.
@@ -759,7 +744,7 @@ if not _load_metadata:
 
 
 # %% ============================================================
-# SECTION 21: VALIDATION
+# SECTION 20: VALIDATION
 # Collected here so misconfigured runs fail early with a clear message.
 # ================================================================
 

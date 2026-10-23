@@ -57,8 +57,6 @@ h_freq = 100.0
 # Custom steps
 _do_HFC = True
 _do_ZCA = False
-_regress = False
-_regress_preds = ["ref_meg"]
 _manual_channels = True
 _auto_ica = True
 _manual_ica = True

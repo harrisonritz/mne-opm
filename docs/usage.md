@@ -156,7 +156,7 @@ python src/custom/custom_preproc.py \
     --config=/path/to/config.py
 ```
 
-Available steps: `regress`, `bad_segments`, `bad_channels`,
+Available steps: `bad_segments`, `bad_channels`,
 `manual_channel`, `apply_hfc`, `zca_filter`, `apply_zca`, `bad_epochs`,
 `auto_ica`, `manual_ica`, `coreg`.
 

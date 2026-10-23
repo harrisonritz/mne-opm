@@ -180,7 +180,7 @@ class BaseAnalysis(ABC):
         Notes
         -----
         This method should check for analysis-specific config flags.
-        For example, regress checks cfg._regress.
+        For example, apply_hfc checks cfg._do_HFC.
         """
         ...
 

@@ -44,7 +44,6 @@ class TestDocstringCoverage:
     def test_public_modules_have_docstrings(self):
         """Each analysis module should have a module-level docstring."""
         module_names = [
-            "regress",
             "bad_segments",
             "bad_channels",
             "manual_channel",

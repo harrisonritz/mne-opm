@@ -11,7 +11,7 @@ the ``proc-<custom_proc>`` file the previous step wrote.  But it also means
 that **stale** ``proc-<custom_proc>`` files left over from a previous run are
 silently picked up as the input to the first custom step of the next run.
 Because each step writes back to the same label, re-running the pipeline then
-processes already-processed data (e.g. regressing twice), producing
+processes already-processed data (e.g. applying HFC twice), producing
 different — and wrong — results.
 
 This module removes the ``proc-<custom_proc>`` files for the configured

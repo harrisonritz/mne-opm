@@ -9,7 +9,6 @@ Provided analyses (CLI --analysis):
     init           -> Clear leftover proc-<custom_proc> derivatives from a
                       previous run so preprocessing starts from the raw data
     annotate_breaks -> Mark recording breaks before artifact detection
-    regress        -> Regress out a configurable list of sensor signals
     bad_segments   -> Detect & annotate bad raw data segments (legacy)
     bad_segments_1 -> Stage 1: coarse bad segment detection (pre-spatial filter)
     bad_segments_2 -> Stage 2: fine bad segment detection (post-spatial filter)
@@ -28,9 +27,6 @@ Usage
 
 Examples
 --------
-    # Run sensor regression
-    python src/custom/custom_preproc.py --analysis=regress --config=config.py
-
     # Run bad segment detection
     python src/custom/custom_preproc.py --analysis=bad_segments --config=config.py
 
@@ -77,7 +73,6 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "init": "init_derivatives",
     "initderivatives": "init_derivatives",
     "annotatebreaks": "annotate_breaks",
-    "regress": "regress",
     "badsegments": "bad_segments",
     "badsegments1": "bad_segments",
     "badsegments2": "bad_segments",
@@ -98,7 +93,6 @@ ANALYSIS_CHOICES: list[str] = [
     "init",
     "init_derivatives",
     "annotate_breaks",
-    "regress",
     "bad_segments",
     "bad_segments_1",
     "bad_segments_2",
@@ -164,7 +158,7 @@ def import_analysis_module(analysis_key: str) -> Callable:
     Parameters
     ----------
     analysis_key : str
-        Normalized analysis key (e.g., 'regressref').
+        Normalized analysis key (e.g., 'applyhfc').
 
     Returns
     -------
