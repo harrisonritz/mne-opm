@@ -45,7 +45,9 @@ def ica_cfg():
 def synthetic_ica_and_raw():
     """Create a synthetic mag-only ICA + Raw pair for testing diagnostics.
 
-    Returns (ica, raw) where ica has been fit on raw.
+    Channels use triaxial OPM names (``... X``/``Y``/``Z``) so the radial-only
+    overlay has ``Z`` channels to plot. Returns (ica, raw) where ica has been
+    fit on raw.
     """
     rng = np.random.RandomState(42)
     n_ch = 20
@@ -53,7 +55,7 @@ def synthetic_ica_and_raw():
     n_times = int(sfreq * 5)  # 5 seconds
 
     info = mne.create_info(
-        [f"MEG{i:03d}" for i in range(n_ch)],
+        [f"MEG{i:03d} {'XYZ'[i % 3]}" for i in range(n_ch)],
         sfreq,
         ["mag"] * n_ch,
     )
