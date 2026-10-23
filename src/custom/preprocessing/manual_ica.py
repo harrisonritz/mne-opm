@@ -56,8 +56,7 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import mne
-import mne_bids
-import mne_qt_browser
+import mne_qt_browser  # noqa: F401  (manual review needs the Qt browser)
 from mne_bids import find_matching_paths
 
 from ._base import BaseAnalysis

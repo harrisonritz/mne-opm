@@ -89,7 +89,6 @@ from scipy.stats import kurtosis
 from scipy.signal import welch
 
 import mne
-import mne_bids
 from mne_bids import BIDSPath, find_matching_paths
 
 from ._base import BaseAnalysis

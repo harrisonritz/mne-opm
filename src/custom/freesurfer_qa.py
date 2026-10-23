@@ -47,11 +47,9 @@ Run:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-import json
 import traceback
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import mne
@@ -318,7 +316,7 @@ _SOFT_LOG_PATTERNS = ("warning", "talairach failed", "defect", "skipping")
 
 
 def test_recon_log(subj_dir: Path, qa_dir: Path) -> TestResult:
-    print(f"    Running recon log test")
+    print("    Running recon log test")
 
     log = _find_first(subj_dir / "scripts" / "recon-all.log")
     status_log = _find_first(subj_dir / "scripts" / "recon-all-status.log")
@@ -404,7 +402,7 @@ def test_euler_nofix(subj_dir: Path, qa_dir: Path, cfg: Config):
     The fixed surfaces are topology-corrected (chi == 2) so they carry no signal;
     the nofix surface counts how many defects the corrector had to repair.
     """
-    print(f"    Running Euler number test")
+    print("    Running Euler number test")
     surf = subj_dir / "surf"
     lines = [
         f"# Euler / defect summary for {subj_dir.name}",
@@ -462,7 +460,7 @@ def test_fixed_surface_topology(subj_dir: Path) -> list[TestResult]:
     edges (no holes) and no non-manifold edges. Any deviation indicates a
     corrupt/truncated surface file.
     """
-    print(f"    Running fixed surface topology test")
+    print("    Running fixed surface topology test")
     surf = subj_dir / "surf"
     results = []
     for hemi in ("lh", "rh"):
@@ -546,7 +544,7 @@ def parse_global_stats(subj_dir: Path) -> dict:
 
 def test_cnr(subj_dir: Path, cfg: Config) -> TestResult:
     """Gray/white CNR via mri_cnr if available (needs FreeSurfer on PATH)."""
-    print(f"    Running gray/white CNR test")
+    print("    Running gray/white CNR test")
     import shutil
     import subprocess
 
@@ -621,7 +619,7 @@ _BEM_NAMES = ("inner_skull", "outer_skull", "outer_skin")
 def locate_bem_surfaces(subj_dir: Path) -> dict:
     """Return {name: Path} for the three BEM surfaces, searching bem/ then
     bem/watershed/. Returns None for any that are missing."""
-    print(f"    Locating BEM surfaces")
+    print("    Locating BEM surfaces")
     bem = subj_dir / "bem"
     ws = bem / "watershed"
     subj = subj_dir.name
@@ -672,7 +670,7 @@ def test_bem_surface_topology(name: str, path: Path) -> tuple[TestResult, dict]:
 
 def test_bem_nesting(meshes: dict, cfg: Config) -> list[TestResult]:
     """inner_skull subset of outer_skull subset of outer_skin (no crossings)."""
-    print(f"    Running BEM nesting test")
+    print("    Running BEM nesting test")
     results = []
     pairs = [("inner_skull", "outer_skull"), ("outer_skull", "outer_skin")]
     for inner, outer in pairs:
@@ -732,7 +730,7 @@ def test_bem_nesting(meshes: dict, cfg: Config) -> list[TestResult]:
 
 def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) -> TestResult:
     """Every cortical (pial) vertex must lie inside the inner_skull surface."""
-    print(f"    Running pial in inner skull test")
+    print("    Running pial in inner skull test")
     if "inner_skull" not in meshes or not meshes["inner_skull"]["topo"]["watertight"]:
         return TestResult(
             "bem",
@@ -760,10 +758,10 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) -> TestR
             "pial surfaces not found",
         )
     pial = np.vstack(pial)
-    print(f"      Reading inner skull surface")
+    print("      Reading inner skull surface")
     inner_v = meshes["inner_skull"]["verts"]
     inner_f = meshes["inner_skull"]["faces"]
-    print(f"      Computing fraction of pial inside inner skull")
+    print("      Computing fraction of pial inside inner skull")
     frac, mask = fraction_inside(pial, inner_v, inner_f)
     n_out = int((~mask).sum())
     out_frac = 1.0 - frac
@@ -781,7 +779,7 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) -> TestR
     try:
         from scipy.spatial import KDTree
 
-        print(f"      Computing distances from outside pial verts to inner skull")
+        print("      Computing distances from outside pial verts to inner skull")
         d, _ = KDTree(inner_v).query(pial[~mask], k=1, workers=-1)
         max_out = float(d.max())
     except Exception:
@@ -807,7 +805,7 @@ def test_pial_in_inner_skull(subj_dir: Path, meshes: dict, cfg: Config) -> TestR
 
 
 def test_bem_gaps(meshes: dict, cfg: Config) -> list[TestResult]:
-    print(f"    Running BEM gaps test")
+    print("    Running BEM gaps test")
     results = []
     pairs = [("inner_skull", "outer_skull"), ("outer_skull", "outer_skin")]
     for a, b in pairs:
@@ -863,7 +861,7 @@ def test_make_bem_model(subj_dir: Path, cfg: Config) -> list[TestResult]:
     the nesting / solid-angle completeness / manifold checks before assembling
     the model. We try both a 3-layer (EEG) and 1-layer (MEG) configuration.
     """
-    print(f"    Running make BEM model test")
+    print("    Running make BEM model test")
     results = []
     subjects_dir = str(cfg.subjects_dir)
     subject = subj_dir.name
@@ -910,7 +908,7 @@ def plot_bem_images(
 ) -> TestResult:
     """Save BEM-on-T1 overlays. Try mne.viz.plot_bem; fall back to a manual
     nibabel + matplotlib scatter overlay if that fails."""
-    print(f"    Running BEM image plotting")
+    print("    Running BEM image plotting")
     saved = []
     try:
         for orientation in ("axial", "coronal", "sagittal"):
@@ -957,7 +955,7 @@ def plot_bem_images(
 
 def _manual_bem_plot(subj_dir: Path, qa_dir: Path, meshes: dict) -> list[str]:
     """Overlay BEM surface vertices (surface RAS) on T1 slices."""
-    print(f"    Running manual BEM plot")
+    print("    Running manual BEM plot")
     import nibabel as nib
 
     t1 = _find_first(subj_dir / "mri" / "T1.mgz", subj_dir / "mri" / "brain.mgz")
@@ -1010,7 +1008,7 @@ def _manual_bem_plot(subj_dir: Path, qa_dir: Path, meshes: dict) -> list[str]:
 
 def plot_alignment_3d(subj_dir: Path, qa_dir: Path, cfg: Config) -> TestResult:
     """Best-effort 3D alignment snapshot (off by default; headless-fragile)."""
-    print(f"    Running 3D alignment snapshot")
+    print("    Running 3D alignment snapshot")
     try:
         mne.viz.set_3d_backend("pyvista")
         import pyvista

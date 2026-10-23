@@ -102,7 +102,7 @@ import mne_bids
 import numpy as np
 from mne._fiff.pick import pick_info
 from mne.preprocessing.maxwell import _prep_mf_coils, _sss_basis
-from scipy.linalg import eigh, null_space
+from scipy.linalg import eigh
 
 from ._base import BaseAnalysis
 from ._io import (
@@ -508,7 +508,6 @@ class ZCAFilterAnalysis(BaseAnalysis):
                 :, ~np.isin(np.arange(eigenvectors_noise.shape[1]), idx)
             ]
 
-        n_channels = U_signal.shape[0]
         n_signal = U_signal.shape[1]
         n_noise = U_noise.shape[1]
 

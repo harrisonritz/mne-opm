@@ -37,9 +37,6 @@ from custom.preprocessing._io import (
     trial_response_side_keep_first,
     write_raw_bids_custom_step,
 )
-from custom.preprocessing.select_trial_response import (
-    SelectTrialResponseAnalysis,
-)
 from custom.preprocessing.select_trial_response import run as select_run
 
 

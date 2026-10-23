@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, Dict
-from unittest.mock import patch
 
 import pytest
 

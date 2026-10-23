@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import mne
-import numpy as np
 import pytest
 
 from custom.preprocessing.bad_segments import (

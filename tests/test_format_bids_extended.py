@@ -7,7 +7,6 @@ _create_eye_feature_channels / _align_eyetracking with synthetic data.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,14 +16,9 @@ import pytest
 
 from custom.format_bids import (
     _add_no_eyetrack_annotations,
-    _annotation_to_timeseries,
     _create_eye_feature_channels,
-    _interpolate_nans,
-    _match_lengths,
-    _reset_first_samp,
     _set_eyetrack_channel_types,
     bids_conversion,
-    convert_triggers,
     set_bids_params,
     validate_raw_folder,
 )
@@ -249,7 +243,7 @@ class TestSetBidsParamsExtended:
         # This should not crash — it handles errors gracefully
         # (but will fail if no template exists)
         try:
-            cfg = set_bids_params(bad_path)
+            set_bids_params(bad_path)
         except Exception:
             pass  # Expected if template doesn't exist
 

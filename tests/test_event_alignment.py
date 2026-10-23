@@ -18,7 +18,6 @@ Author: Harrison Ritz, 2025
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -244,7 +243,6 @@ class TestMetadataAlignment:
             format="FIF",
         )
 
-        corrupted_count = _count_trial_events(_read_events_tsv(bp))
         # After corruption, trial count may still be 20 (since bad_segment
         # doesn't contain "trial"), but total row count changes.
         # The key point: total rows increased because BAD annotation leaked in.

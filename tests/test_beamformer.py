@@ -101,7 +101,7 @@ class TestComputeLcmvFiltersValidation:
         with patch("custom.run_beamformer.make_lcmv") as mock_lcmv:
             mock_lcmv.return_value = {"mock": "filters"}
             info = mne.create_info(["MEG001"], 300.0, ["mag"])
-            result = compute_lcmv_filters(
+            compute_lcmv_filters(
                 forward=MagicMock(),
                 data_cov=MagicMock(),
                 noise_cov=MagicMock(),

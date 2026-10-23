@@ -29,7 +29,6 @@ from abc import ABC, abstractmethod
 from types import SimpleNamespace
 from typing import Any, Dict
 
-import mne
 
 
 # -----------------------------------------------------------------------------
@@ -46,7 +45,7 @@ SEGMENT_LEN_SEC: float = 1.0
 
 # Check for Qt browser availability
 try:
-    import mne_qt_browser
+    import mne_qt_browser  # noqa: F401
 
     _HAVE_QT_BROWSER: bool = True
 except Exception:

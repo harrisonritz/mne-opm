@@ -101,9 +101,8 @@ import mne
 
 from osl_ephys.preprocessing.osl_wrappers import bad_segments as osl_bad_segments
 
-import mne_bids
 
-from ._base import BaseAnalysis, SEGMENT_LEN_SEC
+from ._base import BaseAnalysis
 from ._io import (
     find_custom_input_paths,
     read_raw_bids_with_retry,

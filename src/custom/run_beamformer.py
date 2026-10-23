@@ -450,7 +450,7 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
                 f"rank will be estimated from the data alone"
             )
 
-    print(f"[load_beamformer_data] Data loading complete")
+    print("[load_beamformer_data] Data loading complete")
     print(f"  - Forward: {len(data['forward']['src'])} source spaces")
     print(
         f"  - Epochs: {len(data['epochs'])} epochs, {len(data['epochs'].ch_names)} channels"
@@ -730,7 +730,7 @@ def run_beamformer_timecourse(
 
             if len(evokeds) != len(contrast_def["conditions"]):
                 print(
-                    f"    [WARNING] Could not load all conditions for contrast. Skipping."
+                    "    [WARNING] Could not load all conditions for contrast. Skipping."
                 )
                 continue
 
@@ -891,7 +891,7 @@ def run_beamformer_power(
         stc_contrast.data = out
 
         stcs[contrast_name] = stc_contrast
-        print(f"    - Normalized difference contrast created")
+        print("    - Normalized difference contrast created")
 
     print(f"[run_beamformer_power] Completed. Generated {len(stcs)} source estimates.")
 
@@ -1019,7 +1019,7 @@ def add_to_report(
         first entry of ``_beamformer_source_space`` is used.
     """
     if not cfg._beamformer_add_to_report:
-        print(f"\n[add_to_report] Report generation disabled. Skipping.")
+        print("\n[add_to_report] Report generation disabled. Skipping.")
         return
 
     if source_space is None:
@@ -1057,7 +1057,7 @@ def add_to_report(
             subject=subject_clean,
             session=session_clean,
         ) as report:
-            print(f"[add_to_report] Report opened successfully")
+            print("[add_to_report] Report opened successfully")
 
             n_added = 0
             for condition, stc_path in stcs.items():
@@ -1139,7 +1139,7 @@ def add_to_report(
         # The STCs are already on disk at this point, so a report failure must not
         # take the run down with it.
         print(f"[add_to_report] Warning: Could not add to report: {e}")
-        print(f"[add_to_report] Continuing without report update...")
+        print("[add_to_report] Continuing without report update...")
 
 
 # --------------------------------------------------------------------------------------

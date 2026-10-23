@@ -7,11 +7,9 @@ file I/O in a tmp directory.
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import mne
-import numpy as np
 import pandas as pd
 import pytest
 

@@ -11,7 +11,6 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import mne
-import numpy as np
 import pytest
 
 from custom.preprocessing._io import get_ica_bids_path

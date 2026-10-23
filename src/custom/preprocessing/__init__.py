@@ -97,6 +97,8 @@ __all__ = [
     "normalize_analysis_key",
     "read_ica_bids",
     "save_ica_bids",
+    "first_response_per_trial",
+    "drop_response_rows_from_events_tsv",
     "get_bids_path_for_task",
     "get_bids_path",
     "get_custom_proc",

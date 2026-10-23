@@ -58,7 +58,6 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import mne
-import mne_bids
 
 from ._base import BaseAnalysis
 from ._io import (

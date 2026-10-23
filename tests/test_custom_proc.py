@@ -17,11 +17,9 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import mne
 import mne_bids
-import numpy as np
 import pytest
 from mne_bids import BIDSPath
 

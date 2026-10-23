@@ -230,7 +230,7 @@ class TestBuildVolumeForward:
             patch("custom.run_beamformer.mne.make_bem_model") as mock_make_model,
             patch(
                 "custom.run_beamformer.get_head_mri_trans", return_value="TRANS"
-            ) as mock_trans,
+            ),
             patch(
                 "custom.run_beamformer.mne.setup_volume_source_space",
                 return_value=fake_src,

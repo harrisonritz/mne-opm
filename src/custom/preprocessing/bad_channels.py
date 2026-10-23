@@ -80,7 +80,6 @@ from typing import Any, Dict, List, Tuple
 
 import mne
 import numpy as np
-import pandas as pd
 from mne.annotations import _annotations_starts_stops
 from scipy.stats import kurtosis as scipy_kurtosis
 

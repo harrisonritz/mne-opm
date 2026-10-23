@@ -11,6 +11,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import matplotlib.pyplot as plt
 import mne
 import numpy as np
 import pandas as pd
@@ -34,7 +35,6 @@ from custom.run_decoding import (
     save_cross_tg_results,
     save_fig,
     plot_subject_time_patterns,
-    process_subject,
     main,
 )
 
@@ -897,5 +897,3 @@ class TestMain:
         assert "Decoding disabled" in output
 
 
-# needed for plot tests
-import matplotlib.pyplot as plt

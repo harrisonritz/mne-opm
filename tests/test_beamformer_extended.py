@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 
 from custom.run_beamformer import (
-    compute_lcmv_filters,
     load_beamformer_data,
     run_beamformer_power,
     run_beamformer_timecourse,
@@ -187,7 +186,7 @@ class TestSaveBeamformerResults:
         mock_stc = MagicMock()
         mock_filters = MagicMock()
 
-        out = save_beamformer_results(
+        save_beamformer_results(
             beam_cfg, mock_filters, {"stim_a": mock_stc}, analysis_type="power"
         )
 
@@ -198,7 +197,7 @@ class TestSaveBeamformerResults:
         mock_stc = MagicMock()
         mock_filters = MagicMock()
 
-        out = save_beamformer_results(
+        save_beamformer_results(
             beam_cfg, mock_filters, {"stim_a": mock_stc}, analysis_type="power"
         )
 
