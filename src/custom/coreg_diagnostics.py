@@ -716,7 +716,6 @@ def run_alignment_diagnostics(
     cfg: SimpleNamespace,
     info: mne.Info,
     trans: Optional[mne.transforms.Transform],
-    fwd: Optional[mne.Forward],
     fs_subject: str,
     fs_subjects_dir: str,
     out_dir: Path,
