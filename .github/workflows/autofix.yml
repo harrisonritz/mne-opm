@@ -1,0 +1,24 @@
+# Runs the pre-commit hooks on every PR and lets the autofix.ci GitHub App
+# push any formatting fixes back to the PR branch. The workflow must keep the
+# name "autofix.ci" for the app to accept its output.
+name: autofix.ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - name: Run pre-commit hooks
+        run: uvx pre-commit run --all-files --hook-stage pre-commit
+      - uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a
+        if: failure() || success()
