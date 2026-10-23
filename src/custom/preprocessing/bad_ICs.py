@@ -232,14 +232,14 @@ class BadICAnalysis(BaseAnalysis):
         return {self.cfg.task: raw, "ica": ica}
 
     def save_results(self, results: Dict[str, Any]) -> None:
-        """Save ICA solution with updated exclusions and detailed TSV.
+        """Write the updated exclusions and detailed scores to the components TSV.
 
         Parameters
         ----------
         results : dict
             Dictionary with labeled ICA.
         """
-        self.log("Saving ICA results...")
+        self.log("Saving ICA component labels...")
 
         ica = results["ica"]
 
@@ -247,7 +247,7 @@ class BadICAnalysis(BaseAnalysis):
         components_df = self._build_components_tsv(ica)
         save_ica_bids(ica, self.cfg, components_df=components_df)
 
-        self.log(f"Saved ICA with {len(ica.exclude)} excluded components")
+        self.log(f"Marked {len(ica.exclude)} components as bad in the components TSV")
         self.log(f"Components TSV columns: {list(components_df.columns)}")
 
     def _bad_ICs(

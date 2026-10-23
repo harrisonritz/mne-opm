@@ -61,7 +61,7 @@ import mne_qt_browser
 from mne_bids import find_matching_paths
 
 from ._base import BaseAnalysis
-from ._io import get_ica_bids_path, save_ica_bids
+from ._io import read_ica_bids, save_ica_bids
 
 # mne.viz.set_browser_backend("qt")
 
@@ -158,8 +158,7 @@ class ManualICAAnalysis(BaseAnalysis):
         raw = mne.io.read_raw_fif(bp_raw.fpath, preload=True)
         self.log("Loaded cleaned raw data")
 
-        bp_ica = get_ica_bids_path(self.cfg)
-        ica = mne.preprocessing.read_ica(bp_ica.fpath)
+        ica = read_ica_bids(self.cfg)
         self.log(f"Loaded ICA solution with {ica.n_components_} components")
         self.log(f"Currently excluded ({len(ica.exclude)}): {ica.exclude}")
 
@@ -188,19 +187,19 @@ class ManualICAAnalysis(BaseAnalysis):
         return {self.cfg.task: raw, "ica": ica}
 
     def save_results(self, results: Dict[str, Any]) -> None:
-        """Save ICA solution with updated exclusions.
+        """Write the updated exclusions to the components TSV.
 
         Parameters
         ----------
         results : dict
             Dictionary with reviewed ICA.
         """
-        self.log("Saving ICA results...")
+        self.log("Saving ICA component labels...")
 
         ica = results["ica"]
         save_ica_bids(ica, self.cfg)
 
-        self.log(f"Saved ICA with {len(ica.exclude)} excluded components")
+        self.log(f"Marked {len(ica.exclude)} components as bad in the components TSV")
 
     def _manual_ica_review(
         self, ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw

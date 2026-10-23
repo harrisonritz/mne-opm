@@ -6,12 +6,12 @@ and mne functions.
 
 **Philosophy**: Use mne_bids functions directly where possible. This module
 only provides helpers for commonly repeated patterns or operations that require
-multiple mne_bids calls (like save_ica_bids which updates TSV + saves ICA).
+multiple mne_bids calls.
 
 Core Functions
 --------------
-save_ica_bids
-    Save ICA solution and update components TSV (combines two operations).
+read_ica_bids / save_ica_bids
+    Read the ICA with exclusions from, and write them to, the components TSV.
 get_bids_path_for_task
     Convenience function for creating BIDSPath from config.
 
@@ -1836,22 +1836,50 @@ def get_ica_bids_path(cfg: SimpleNamespace) -> BIDSPath:
     return shared
 
 
+def read_ica_bids(cfg: SimpleNamespace) -> mne.preprocessing.ICA:
+    """Read the pipeline ICA with ``exclude`` taken from the components TSV.
+
+    The components TSV is the record of which components to remove (it is
+    what mne-bids-pipeline's apply_ica step reads), so it overrides the
+    exclusion list stored in the ``.fif``.
+
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Configuration object containing BIDS settings.
+
+    Returns
+    -------
+    ica : mne.preprocessing.ICA
+        The ICA solution with ``ica.exclude`` set from the TSV, if it exists.
+    """
+    ica_path = get_ica_bids_path(cfg)
+    ica = mne.preprocessing.read_ica(ica_path.fpath)
+    tsv_path = ica_path.copy().update(suffix="components", extension=".tsv")
+    if tsv_path.fpath.exists():
+        df = pd.read_csv(tsv_path.fpath, sep="\t")
+        ica.exclude = df.loc[df["status"] == "bad", "component"].astype(int).tolist()
+    return ica
+
+
 def save_ica_bids(
     ica: mne.preprocessing.ICA,
     cfg: SimpleNamespace,
     components_df: "pd.DataFrame | None" = None,
 ) -> None:
-    """Save ICA solution and update components TSV.
+    """Write ``ica.exclude`` to the components TSV.
 
-    This function combines two operations that should happen together:
-    1. Updates the components TSV to mark excluded components as bad
-    2. Saves the ICA object with the updated exclusion list
+    Only the TSV is written. The ICA ``.fif`` is an output of
+    mne-bids-pipeline's ``find_ica_artifacts`` step; rewriting it would make
+    the pipeline re-run that step and regenerate the TSV, discarding these
+    labels. The pipeline's ``apply_ica`` step reads the exclusions from the TSV.
 
     When ``components_df`` is provided (e.g. from
-    ``AutoICAAnalysis._build_components_tsv``), it is written directly,
+    ``BadICAnalysis._build_components_tsv``), it is written directly,
     giving full control over per-method attribution columns.  Otherwise
-    the existing TSV is read and excluded components are marked as
-    ``status='bad'`` with ``status_description='manual'``.
+    the existing TSV is updated so that exactly the components in
+    ``ica.exclude`` are ``status='bad'``; components whose status changes
+    get ``status_description='manual'``.
 
     Parameters
     ----------
@@ -1870,27 +1898,18 @@ def save_ica_bids(
     ica_path = get_ica_bids_path(cfg)
     tsv_path = ica_path.copy().update(suffix="components", extension=".tsv")
 
-    # Update components TSV
-    if components_df is not None:
-        components_df.to_csv(tsv_path.fpath, sep="\t", index=False)
-    else:
+    if components_df is None:
         df = pd.read_csv(tsv_path.fpath, sep="\t")
-        for comp in ica.exclude:
-            mask = df["component"].astype(str) == str(comp)
-            if mask.any():
-                df.loc[mask, "status"] = "bad"
-                try:
-                    df.loc[mask, "status_description"] = "manual"
-                except Exception as e:
-                    print("Exception: ", e)
-                    print(
-                        f"Warning: 'status_description' column not found in {tsv_path.fpath}. Skipping description update."
-                    )
-                    print(f"masked df: {df.loc[mask]}")
-        df.to_csv(tsv_path.fpath, sep="\t", index=False)
-
-    # Save ICA object
-    ica.save(ica_path.fpath, overwrite=True)
+        new_status = df["component"].astype(int).isin(ica.exclude).map(
+            {True: "bad", False: "good"}
+        )
+        changed = df["status"] != new_status
+        df["status"] = new_status
+        if "status_description" in df:
+            df["status_description"] = df["status_description"].astype(object)
+            df.loc[changed, "status_description"] = "manual"
+        components_df = df
+    components_df.to_csv(tsv_path.fpath, sep="\t", index=False)
 
 
 def mark_bad_channels_bids(

@@ -57,6 +57,7 @@ from . import (
 from ._base import BaseAnalysis, SEGMENT_LEN_SEC
 from ._config import load_config, normalize_analysis_key
 from ._io import (
+    read_ica_bids,
     save_ica_bids,
     get_bids_path_for_task,
     get_custom_proc,
@@ -90,6 +91,7 @@ __all__ = [
     "SEGMENT_LEN_SEC",
     "load_config",
     "normalize_analysis_key",
+    "read_ica_bids",
     "save_ica_bids",
     "get_bids_path_for_task",
     "get_bids_path",
