@@ -6,14 +6,6 @@ accepts a `SimpleNamespace` configuration object.
 
 ## Analysis modules
 
-### regress
-
-```{eval-rst}
-.. automodule:: custom.preprocessing.regress
-   :members:
-   :no-index:
-```
-
 ### bad_segments
 
 ```{eval-rst}
@@ -62,10 +54,18 @@ accepts a `SimpleNamespace` configuration object.
    :no-index:
 ```
 
-### auto_ica
+### bad_ICs
 
 ```{eval-rst}
-.. automodule:: custom.preprocessing.auto_ica
+.. automodule:: custom.preprocessing.bad_ICs
+   :members:
+   :no-index:
+```
+
+### ica_convergence
+
+```{eval-rst}
+.. automodule:: custom.preprocessing.ica_convergence
    :members:
    :no-index:
 ```

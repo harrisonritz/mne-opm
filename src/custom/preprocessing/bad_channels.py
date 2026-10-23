@@ -80,7 +80,6 @@ from typing import Any, Dict, List, Tuple
 
 import mne
 import numpy as np
-import pandas as pd
 from mne.annotations import _annotations_starts_stops
 from scipy.stats import kurtosis as scipy_kurtosis
 
@@ -310,11 +309,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         confirmed = sorted(set(results.get("bads", []) or []))
         tasks = {k: v for k, v in results.items() if k != "bads"}
 
-        # Process noise first so the task save can reference it as empty-room.
-        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
-
-        er_output_bp = None
-        for task, raw in ordered_tasks:
+        for task, raw in tasks.items():
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
@@ -326,10 +321,7 @@ class BadChannelsAnalysis(BaseAnalysis):
                 raw.info["bads"] = merged_bads
                 self.log(f"task={task}: {len(merged_bads)} total bad channels")
 
-            empty_room = er_output_bp if task != "noise" else None
-            output_bp = write_raw_bids_custom_step(
-                raw, self.cfg, source_bp, empty_room=empty_room
-            )
+            output_bp = write_raw_bids_custom_step(raw, self.cfg, source_bp)
 
             if confirmed:
                 mne_bids.mark_channels(
@@ -340,9 +332,6 @@ class BadChannelsAnalysis(BaseAnalysis):
                 )
 
             self._save_channel_figures(task, output_bp)
-
-            if task == "noise":
-                er_output_bp = output_bp
 
             self.log(f"Saved task={task} → {output_bp.fpath}")
 
@@ -391,29 +380,29 @@ class BadChannelsAnalysis(BaseAnalysis):
         filt = raw.copy()
         n_short = _mask_short_filter_segments(filt)
         if n_short:
-            self.log(f"  excluded {n_short} short unannotated segment(s) from channel metrics")
+            self.log(
+                f"  excluded {n_short} short unannotated segment(s) from channel metrics"
+            )
         if not any(
             stop - start >= _MIN_FILTER_SEGMENT_SAMPLES
             for start, stop in zip(
                 *_annotations_starts_stops(filt, ("edge", "bad"), invert=True)
             )
         ):
-            raise ValueError("No unannotated segment is long enough for bad-channel filtering")
-        filt = (
-            filt
-            .notch_filter(
-                np.arange(60, 241, 60),
-                method="spectrum_fit",
-                n_jobs=-1,
-                skip_by_annotation=("edge", "bad"),
+            raise ValueError(
+                "No unannotated segment is long enough for bad-channel filtering"
             )
-            .filter(
-                l_freq=self.cfg._bad_channel_lfreq,
-                h_freq=self.cfg._bad_channel_hfreq,
-                method="iir",
-                n_jobs=-1,
-                skip_by_annotation=("edge", "bad"),
-            )
+        filt = filt.notch_filter(
+            np.arange(60, 241, 60),
+            method="spectrum_fit",
+            n_jobs=-1,
+            skip_by_annotation=("edge", "bad"),
+        ).filter(
+            l_freq=getattr(self.cfg, "_bad_channel_lfreq", _DEFAULT_PSD_FMIN),
+            h_freq=getattr(self.cfg, "_bad_channel_hfreq", _DEFAULT_PSD_FMAX),
+            method="iir",
+            n_jobs=-1,
+            skip_by_annotation=("edge", "bad"),
         )
 
         data = filt.get_data(picks=ch_idx, reject_by_annotation="omit")

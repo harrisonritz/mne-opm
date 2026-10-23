@@ -105,16 +105,6 @@ export MNE_OPM_REQUIRE_RESPONSE_METADATA=1
 
 STEP_START=$SECONDS
 echo ""
-echo "======================= custom: regress  =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=regress --config=$CONFIG_PATH
-_print_timing "custom: regress" $STEP_START
-rank_check init
-
-
-
-STEP_START=$SECONDS
-echo ""
 echo "======================= OSL: bad segment 1 =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH
@@ -173,6 +163,15 @@ echo ""
 mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 _print_timing "MNE: preprocessing" $STEP_START
 rank_check filt sss hfc zca
+
+
+
+STEP_START=$SECONDS
+echo ""
+echo "======================= CUSTOM: ICA convergence check =============================================="
+echo ""
+python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=ica_convergence --config=$CONFIG_PATH
+_print_timing "CUSTOM: ICA convergence check" $STEP_START
 
 
 

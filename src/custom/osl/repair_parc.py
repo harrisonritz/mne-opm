@@ -85,8 +85,7 @@ def run(cfg: SimpleNamespace) -> bool:
     )
     if not subjects:
         raise ValueError(
-            f"No subject under {outdir} has parcellated data. Has the source "
-            f"stage run?"
+            f"No subject under {outdir} has parcellated data. Has the source stage run?"
         )
     print(f"[osl:repair-parc] {len(subjects)} subject(s) with parcellated data")
 

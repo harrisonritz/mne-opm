@@ -50,8 +50,8 @@ setting recognized by mne-bids-pipeline. Common ones:
 
 ```python
 # Filtering
-l_freq = 0.1        # high-pass filter (Hz)
-h_freq = 100.0      # low-pass filter (Hz)
+l_freq = 0.1  # high-pass filter (Hz)
+h_freq = 100.0  # low-pass filter (Hz)
 
 # Epoching
 epochs_tmin = -0.2
@@ -75,14 +75,12 @@ mne-opm adds several flags (prefixed with `_`) to control custom steps:
 | `_skip_on_deriv`    | `bool` | `False` | Skip steps when derivatives already exist |
 | `_do_HFC`           | `bool` | `False` | Apply homogeneous field correction        |
 | `_do_ZCA`           | `bool` | `False` | Apply ZCA spatial filter                  |
-| `_regress`          | `bool` | `False` | Regress out sensor signals                |
-| `_regress_preds`    | `list` | `[]`    | Channel names/types to use as predictors  |
 | `_manual_channels`  | `bool` | `False` | Enable interactive bad channel GUI        |
-| `_auto_ica`         | `bool` | `False` | Enable automatic ICA labeling             |
+| `_bad_ICs`          | `bool` | `False` | Enable automatic ICA labeling             |
 | `_manual_ica`       | `bool` | `False` | Enable interactive ICA review             |
 
 :::{note}
-ICA-related flags (`_auto_ica`, `_manual_ica`) also require
+ICA-related flags (`_bad_ICs`, `_manual_ica`) also require
 `spatial_filter = "ica"` to be set.
 :::
 
@@ -118,7 +116,7 @@ You can load config files from Python using the `load_config` utility:
 from custom.preprocessing import load_config
 
 cfg = load_config("/path/to/config-CSI.py")
-print(cfg.subjects)   # ['007']
+print(cfg.subjects)  # ['007']
 print(cfg.bids_root)  # '/data/TSXpilot/bids'
 ```
 

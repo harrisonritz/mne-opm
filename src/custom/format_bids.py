@@ -732,7 +732,7 @@ def _align_eyetracking(
     coefs = poly.convert(domain=(-1, 1)).coef
     zero_ord_est, first_ord_est = float(coefs[0]), float(coefs[1])
 
-    print(f"\n--- Eye-tracking alignment diagnostics ---")
+    print("\n--- Eye-tracking alignment diagnostics ---")
     print(f"  First matched event: raw={raw_times[0]:.3f}s, eye={eye_times[0]:.3f}s")
     print(f"  Last matched event:  raw={raw_times[-1]:.3f}s, eye={eye_times[-1]:.3f}s")
     print(f"  Durations: raw={raw_duration:.1f}s, eye={eye_duration:.1f}s")
@@ -835,7 +835,7 @@ def _add_no_eyetrack_annotations(
     eye_start_raw = max(0.0, zero_ord)
     eye_end_raw = min(raw.times[-1], zero_ord + first_ord * eye_original_duration)
 
-    print(f"\n--- No-eyetrack annotation boundaries ---")
+    print("\n--- No-eyetrack annotation boundaries ---")
     print(f"  Real eye data covers {eye_start_raw:.1f}s to {eye_end_raw:.1f}s")
     print(f"  Raw duration: {raw.times[-1]:.1f}s")
 

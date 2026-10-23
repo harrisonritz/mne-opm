@@ -152,8 +152,7 @@ class TestMain:
         )
         seen = []
         mock_config.side_effect = lambda path: (
-            seen.append(os.environ.get("MNE_OPM_SKIP_METADATA"))
-            or SimpleNamespace()
+            seen.append(os.environ.get("MNE_OPM_SKIP_METADATA")) or SimpleNamespace()
         )
         mock_import.return_value = MagicMock()
 

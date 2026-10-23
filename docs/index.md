@@ -5,7 +5,7 @@
 mne-opm provides a modular, BIDS-native pipeline for preprocessing optically pumped
 magnetometer (OPM) MEG data. It wraps battle-tested tools from the MNE ecosystem with
 OPM-specific steps such as homogeneous field correction (HFC), ZCA spatial filtering,
-reference-channel regression, and automated/manual artifact rejection.
+and automated/manual artifact rejection.
 
 ## Key features
 

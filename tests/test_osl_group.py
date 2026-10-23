@@ -197,6 +197,11 @@ class TestSignFlipping:
         write_subject(tmp_path, "sub-000", seed=0)
         write_subject(tmp_path, "sub-001", seed=0, flips=truth)
 
+        # osl-ephys' random search draws from the global NumPy RNG. Covariances
+        # cannot tell a flip set from its global inverse, so an unlucky draw
+        # can settle on the inverse (every parcel then anti-correlated); seed it
+        # so the test is deterministic.
+        np.random.seed(0)
         result = sign_flip.flip_subject(
             outdir=tmp_path,
             subject="sub-001",
@@ -214,9 +219,9 @@ class TestSignFlipping:
         ).get_data()
         # Correlation per parcel should now be positive across the board.
         for parcel in range(N_PARCELS):
-            r = np.corrcoef(
-                recovered[:, parcel].ravel(), reference[:, parcel].ravel()
-            )[0, 1]
+            r = np.corrcoef(recovered[:, parcel].ravel(), reference[:, parcel].ravel())[
+                0, 1
+            ]
             assert r > 0, f"parcel {parcel} still inverted (r={r:.2f})"
 
     def test_flip_subject_leaves_the_template_unflipped(self, tmp_path):
@@ -274,9 +279,7 @@ def group_cfg(tmp_path):
 
     path = tmp_path / "cfg.yaml"
     path.write_text(
-        textwrap.dedent(
-            GROUP_CONFIG.format(bids_root=tmp_path / "bids", outdir=outdir)
-        )
+        textwrap.dedent(GROUP_CONFIG.format(bids_root=tmp_path / "bids", outdir=outdir))
     )
     return load_config(path, env={}), outdir
 
@@ -375,8 +378,9 @@ class TestGroupStage:
 
     def test_raises_without_a_group_section(self, tmp_path):
         path = tmp_path / "cfg.yaml"
-        path.write_text("pipeline:\n  subject: '007'\n  task: T\n"
-                        "  bids_root: /b\n  outdir: /o\n")
+        path.write_text(
+            "pipeline:\n  subject: '007'\n  task: T\n  bids_root: /b\n  outdir: /o\n"
+        )
         cfg = load_config(path, env={})
         with pytest.raises(ValueError, match="No 'group' section"):
             group_stage.run(cfg)
@@ -484,13 +488,17 @@ class TestWorkerCount:
         assert group_stage._resolve_n_workers(0, n_subjects=0) == 1
 
     def test_available_cpus_takes_the_smallest_signal(self, monkeypatch):
-        monkeypatch.setattr(group_stage.os, "sched_getaffinity", lambda _: set(range(32)))
+        monkeypatch.setattr(
+            group_stage.os, "sched_getaffinity", lambda _: set(range(32))
+        )
         monkeypatch.setenv("SLURM_CPUS_PER_TASK", "4")
         monkeypatch.setenv("MAX_WORKERS", "12")
         assert group_stage._available_cpus() == 4
 
     def test_available_cpus_ignores_unset_and_junk_env_vars(self, monkeypatch):
-        monkeypatch.setattr(group_stage.os, "sched_getaffinity", lambda _: set(range(6)))
+        monkeypatch.setattr(
+            group_stage.os, "sched_getaffinity", lambda _: set(range(6))
+        )
         monkeypatch.setenv("SLURM_CPUS_PER_TASK", "")
         monkeypatch.delenv("MAX_WORKERS", raising=False)
         assert group_stage._available_cpus() == 6

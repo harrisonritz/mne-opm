@@ -186,12 +186,7 @@ class ManualChannelAnalysis(BaseAnalysis):
         # Separate task data from metadata
         tasks = {k: v for k, v in results.items() if k not in {"bads"}}
 
-        # Process noise FIRST (when present) so the task save can use the
-        # already-written noise as its empty-room association.
-        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
-
-        er_output_bp = None
-        for task, raw in ordered_tasks:
+        for task, raw in tasks.items():
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
@@ -201,10 +196,7 @@ class ManualChannelAnalysis(BaseAnalysis):
             if unique_bads:
                 raw.info["bads"] = unique_bads
 
-            empty_room = er_output_bp if task != "noise" else None
-            output_bp = write_raw_bids_custom_step(
-                raw, self.cfg, source_bp, empty_room=empty_room
-            )
+            output_bp = write_raw_bids_custom_step(raw, self.cfg, source_bp)
 
             # Tag the user-selected bad channels with description="osl"
             # in the channels.tsv that write_raw_bids just produced.
@@ -215,9 +207,6 @@ class ManualChannelAnalysis(BaseAnalysis):
                     status="bad",
                     descriptions="osl",
                 )
-
-            if task == "noise":
-                er_output_bp = output_bp
 
             self.log(f"Saved task={task} → {output_bp.fpath}")
 

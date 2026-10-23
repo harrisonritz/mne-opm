@@ -9,7 +9,6 @@ Provided analyses (CLI --analysis):
     init           -> Clear leftover proc-<custom_proc> derivatives from a
                       previous run so preprocessing starts from the raw data
     annotate_breaks -> Mark recording breaks before artifact detection
-    regress        -> Regress out a configurable list of sensor signals
     bad_segments   -> Detect & annotate bad raw data segments (legacy)
     bad_segments_1 -> Stage 1: coarse bad segment detection (pre-spatial filter)
     bad_segments_2 -> Stage 2: fine bad segment detection (post-spatial filter)
@@ -19,6 +18,7 @@ Provided analyses (CLI --analysis):
     select_trial_response -> Keep only the first response following each trial
                       (response-locked analyses; gated by _select_trial_response)
     bad_epochs     -> Drop bad epochs post-epoching
+    ica_convergence -> Check and plot whether the pipeline ICA fit converged
     bad_ICs       -> Automatic ICA component labeling
     manual_ica     -> Interactive ICA component review
 
@@ -28,9 +28,6 @@ Usage
 
 Examples
 --------
-    # Run sensor regression
-    python src/custom/custom_preproc.py --analysis=regress --config=config.py
-
     # Run bad segment detection
     python src/custom/custom_preproc.py --analysis=bad_segments --config=config.py
 
@@ -77,7 +74,6 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "init": "init_derivatives",
     "initderivatives": "init_derivatives",
     "annotatebreaks": "annotate_breaks",
-    "regress": "regress",
     "badsegments": "bad_segments",
     "badsegments1": "bad_segments",
     "badsegments2": "bad_segments",
@@ -90,6 +86,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "badepochs": "bad_epochs",
     "badICs": "bad_ICs",
     "manualica": "manual_ica",
+    "icaconvergence": "ica_convergence",
     "coreg": "coreg",
 }
 
@@ -98,7 +95,6 @@ ANALYSIS_CHOICES: list[str] = [
     "init",
     "init_derivatives",
     "annotate_breaks",
-    "regress",
     "bad_segments",
     "bad_segments_1",
     "bad_segments_2",
@@ -111,6 +107,7 @@ ANALYSIS_CHOICES: list[str] = [
     "apply_zca",  # Alias for zca_filter
     "select_trial_response",
     "manual_ica",
+    "ica_convergence",
     "coreg",
 ]
 
@@ -164,7 +161,7 @@ def import_analysis_module(analysis_key: str) -> Callable:
     Parameters
     ----------
     analysis_key : str
-        Normalized analysis key (e.g., 'regressref').
+        Normalized analysis key (e.g., 'applyhfc').
 
     Returns
     -------
@@ -231,7 +228,10 @@ def main() -> int:
         # per trial, so their configs must not attempt the response-aligned
         # metadata join yet (none of these steps use the metadata).
         skip_metadata_phase = analysis_key in {
-            "init", "initderivatives", "annotatebreaks", "selecttrialresponse"
+            "init",
+            "initderivatives",
+            "annotatebreaks",
+            "selecttrialresponse",
         }
         previous_skip_metadata = os.environ.get("MNE_OPM_SKIP_METADATA")
         if skip_metadata_phase:

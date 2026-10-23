@@ -396,21 +396,28 @@ class TestHeadpointDistance:
         assert out == {"skipped": "no dig points in info"}
 
     def test_stats_and_image(self, coreg_cfg, fake_fs_subject, tmp_path):
+        import mne
+        from mne.io.constants import FIFF
+
         subjects_dir, fs_subject = fake_fs_subject
+        # Head-shape points 1, 2 and 3 mm from a one-vertex scalp (identity
+        # head->MRI transform), so the nearest-vertex distances are known.
+        dig = [
+            {"kind": FIFF.FIFFV_POINT_EXTRA, "r": np.array([d, 0.0, 0.0])}
+            for d in (0.001, 0.002, 0.003)
+        ]
         info = MagicMock()
-        info.get = lambda k: ["dig1"] if k == "dig" else None
-        fake_coreg = MagicMock()
-        fake_coreg.compute_dig_mri_distances.return_value = np.array(
-            [0.001, 0.002, 0.003]
-        )
+        info.get = lambda k: dig if k == "dig" else None
+        info.__getitem__.side_effect = lambda k: dig if k == "dig" else None
+        trans = mne.transforms.Transform("head", "mri")
         with patch(
-            "custom.coreg_diagnostics.mne.coreg.Coregistration",
-            return_value=fake_coreg,
+            "mne.surface._get_head_surface",
+            return_value={"rr": np.zeros((1, 3))},
         ):
             out = run_headpoint_distance_diagnostic(
                 coreg_cfg,
                 info,
-                trans=MagicMock(),
+                trans=trans,
                 fs_subject=fs_subject,
                 fs_subjects_dir=subjects_dir,
                 out_dir=tmp_path,

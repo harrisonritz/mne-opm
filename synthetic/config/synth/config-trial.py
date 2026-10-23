@@ -162,7 +162,9 @@ epochs_metadata_query = "responded == 1"
 if not _load_metadata:
     epochs_custom_metadata = None
 else:
-    _pattern = os.path.join(RAW_DIR, f"synth_{SUBJECT}", "metadata", f"sub-{SUBJECT}_*.csv")
+    _pattern = os.path.join(
+        RAW_DIR, f"synth_{SUBJECT}", "metadata", f"sub-{SUBJECT}_*.csv"
+    )
     _paths = sorted(glob(_pattern))
     assert _paths, (
         f"No behavioural metadata found.\n"
@@ -306,12 +308,6 @@ _bad_segments_params = {
         "segment_len_sec": 0.5,
     },
 }
-
-# Head-position regressors are shipped as misc channels on the synthetic
-# subject; off by default because the simulated drift is uninformative.
-_regress = False
-_regress_preds = ["x_head", "y_head", "distance"]
-_regress_lags = 1
 
 
 # ============================================================================

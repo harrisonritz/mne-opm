@@ -2,7 +2,7 @@
 
 This module factors out the PCA→GESD procedure shared by two analyses:
 
-* ICA component selection (:mod:`custom.preprocessing.auto_ica`), where the
+* ICA component selection (:mod:`custom.preprocessing.bad_ICs`), where the
   *items* are independent components, and
 * bad-channel detection (:mod:`custom.preprocessing.bad_channels`), where the
   *items* are sensor channels.
@@ -538,7 +538,6 @@ def _fig_pc_outliers(result: PCAGesdResult, item_label: str):
     ncol = min(4, n_pcs)
     nrow = int(np.ceil(n_pcs / ncol))
     fig, axes = plt.subplots(nrow, ncol, figsize=(4 * ncol, 3 * nrow), squeeze=False)
-    n_items = result.eigenscores.shape[1]
     x = result.item_indices
     for p in range(n_pcs):
         ax = axes[p // ncol][p % ncol]

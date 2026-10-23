@@ -9,8 +9,8 @@ The `run_preproc.sh` script runs these steps in sequence:
 
 ```text
 init -> annotate_breaks -> select_trial_response
-    -> regress -> bad_segments_1 -> bad_channels -> manual_channel
-    -> apply_hfc -> apply_zca -> MNE preprocessing -> bad_ICs
+    -> bad_segments_1 -> bad_channels -> manual_channel
+    -> apply_hfc -> apply_zca -> MNE preprocessing -> ica_convergence -> bad_ICs
     -> manual_ica -> MNE ICA apply -> bad_epochs
 ```
 
@@ -93,23 +93,25 @@ Detects and annotates bad data segments using osl-ephys tools.
 
 **What it does:**
 1. Loads raw data
-2. Runs segment-based artifact detection using the configured stage-1 window
-3. Annotates bad segments in the raw data
-4. Saves back to BIDS
+2. Optionally runs `mne.preprocessing.annotate_amplitude` when the stage
+   parameters include an `amplitude` dict. Its thresholds apply to
+   sample-to-sample differences, so `peak` catches jumps such as flux jumps;
+   this adds `BAD_peak` / `BAD_flat` annotations and marks channels that exceed
+   `bad_percent` as bad
+3. Runs segment-based artifact detection using the configured stage-1 window
+4. Annotates bad segments in the raw data
+5. Saves back to BIDS
 
-## Sensor regression (`regress`)
-
-Regresses out signals from a configurable list of sensors from the primary
-MEG channels. Commonly used to remove environmental noise captured by
-reference sensors.
-
-**Config flag:** `_regress = True`; **Predictors:** `_regress_preds = ['ref_meg']`
-
-**What it does:**
-1. Loads raw data with both MEG and reference channels
-2. Fits a regression model from reference to MEG channels
-3. Subtracts predicted noise from MEG channels
-4. Saves cleaned data to BIDS
+```python
+_bad_segments_params = {
+    "1": dict(
+        channel_threshold=0.20,
+        noise_channel_threshold=0.50,
+        segment_len_sec=1.0,
+        amplitude=dict(peak=dict(mag=1e-10), bad_percent=100),
+    ),
+}
+```
 
 ## MNE preprocessing
 
@@ -119,6 +121,15 @@ standard preprocessing (filtering, resampling, etc.):
 ```bash
 mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
 ```
+
+## ICA convergence check (`ica_convergence`)
+
+Runs whenever `spatial_filter = "ica"`. Reads the ICA solution fitted by
+mne-bids-pipeline, logs whether it converged and how many of the allowed
+iterations (`ica_max_iterations`) it used, and saves
+`ICA/<basename>_convergence.png` next to the other ICA figures. A fit that did
+not converge raises a warning, or an error with
+`_ica_fail_on_nonconvergence = True`.
 
 ## Automatic ICA (`bad_ICs`)
 
@@ -173,7 +184,7 @@ python src/custom/custom_preproc.py --analysis=bad_channels --config=config.py
 python src/custom/custom_preproc.py --analysis=apply_hfc --config=config.py
 
 # Just auto ICA
-python src/custom/custom_preproc.py --analysis=auto_ica --config=config.py
+python src/custom/custom_preproc.py --analysis=bad_ICs --config=config.py
 ```
 
 This is useful for re-running a single step after adjusting config settings

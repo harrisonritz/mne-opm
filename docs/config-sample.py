@@ -77,9 +77,9 @@ _use_precomputed_trans = False
 
 # Route custom preprocessing outputs through deriv_root using a proc-<label>
 # suffix instead of overwriting the raw BIDS files.  When set (e.g. 'init'),
-# every custom step (bad_channels, bad_segments, regress, apply_hfc,
+# every custom step (bad_channels, bad_segments, apply_hfc,
 # manual_channel, zca_filter) reads from / writes to ``deriv_root`` with
-# ``proc-<custom_proc>``.  Leave as None to overwrite the raw BIDS data files.
+# ``proc-<custom_proc>``.  Required: custom steps never write to bids_root.
 custom_proc = "init"
 
 # Generate the mne-bids-pipeline HTML reports.  Disable to speed up runs.
@@ -298,7 +298,7 @@ find_bad_channels_extra_kws = {"ignore_ref": True}
 # ================================================================
 
 _manual_channels = False  # pause to inspect bad channels interactively
-_auto_ica = True  # run automated ICA component classification
+_bad_ICs = True  # run automated ICA component classification
 _manual_ica = False  # pause for manual inspection / override of ICA labels
 
 # Skip a pipeline step if its derivatives folder already exists (resume runs).
@@ -320,6 +320,13 @@ _skip_on_deriv = True
 #                             a segment is marked bad (higher = more lenient).
 #   noise_channel_threshold : same, applied to the empty-room recording.
 #   segment_len_sec         : sliding-window length (s).
+#   amplitude               : optional kwargs for
+#                             mne.preprocessing.annotate_amplitude (peak, flat,
+#                             bad_percent, min_duration). Thresholds apply to
+#                             sample-to-sample differences, so `peak` catches
+#                             jumps (e.g. flux jumps). Adds BAD_peak / BAD_flat
+#                             annotations; channels above bad_percent are marked
+#                             bad. Omit to skip.
 # ================================================================
 
 _bad_segments_params = {
@@ -327,6 +334,7 @@ _bad_segments_params = {
         "channel_threshold": 0.20,  # lenient — only gross artifacts
         "noise_channel_threshold": 0.50,  # very lenient for noise
         "segment_len_sec": 1.0,  # 1 s window (coarse)
+        # "amplitude": dict(peak=dict(mag=1e-10), bad_percent=100),
     },
     "2": {
         "channel_threshold": 0.05,  # strict — fine cleanup
@@ -337,22 +345,7 @@ _bad_segments_params = {
 
 
 # %% ============================================================
-# SECTION 11: REFERENCE / NUISANCE REGRESSION (regress step)
-# Regress out nuisance predictors from the data before decoding.
-# ================================================================
-
-_regress = False  # master switch
-_regress_preds = ["x_head", "y_head", "distance"]  # predictor channels / signals
-_regress_lags = 1  # delay-embedding lags (0 = none)
-# The regress step also supports (optional, defaults shown):
-# _regress_timevarying = False   # sliding-window (time-varying) regression weights
-# _regress_window      = 100.0   # window size (ms) for time-varying regression
-# _regress_freqs       = None    # frequency band(s) to filter predictors, e.g. [(None, 5.0)]
-# _regress_plot        = False   # save before/after diagnostic plots
-
-
-# %% ============================================================
-# SECTION 12: PREPROCESSING — BREAKS, FILTERING, RESAMPLING
+# SECTION 11: PREPROCESSING — BREAKS, FILTERING, RESAMPLING
 # ================================================================
 
 # -- Rest / break detection --
@@ -383,7 +376,7 @@ epochs_decim = 3
 
 
 # %% ============================================================
-# SECTION 13: ARTIFACT REJECTION — run_preproc.sh
+# SECTION 12: ARTIFACT REJECTION — run_preproc.sh
 # ================================================================
 
 # How to handle trials with duplicate events ("drop" or "merge").
@@ -395,7 +388,7 @@ reject = dict(mag=5e-12)
 
 
 # %% ============================================================
-# SECTION 14: ICA — run_preproc.sh
+# SECTION 13: ICA — run_preproc.sh
 # Components correlated with ECG/EOG (and other diagnostic metrics) are
 # automatically labelled as artifacts via a unified PCA -> GESD step.
 # ================================================================
@@ -412,6 +405,7 @@ ica_algorithm = "picard-extended_infomax"
 ica_l_freq = np.max([l_freq, 1.0])
 
 ica_max_iterations = 1024  # maximum ICA fitting iterations
+_ica_fail_on_nonconvergence = False  # ica_convergence step: error instead of warning
 ica_n_components = 64  # number of components (<= data rank)
 ica_decim = epochs_decim  # decimation during ICA fitting
 ica_reject = dict(mag=5e-12)  # peak-to-peak threshold for ICA-fit data
@@ -419,7 +413,7 @@ ica_ecg_threshold = 0.10  # correlation threshold for cardiac components
 ica_eog_threshold = 3.0  # z-score threshold for ocular components
 
 # Disable mne-bids-pipeline's built-in EOG/ECG detection — ALL ICA component
-# selection is performed by the unified GESD in the custom auto_ica step, where
+# selection is performed by the unified GESD in the custom bad_ICs step, where
 # the EOG/ECG correlations are included as scores.
 ica_use_eog_detection = False
 ica_use_ecg_detection = False
@@ -462,7 +456,7 @@ _ica_metrics = [
 
 
 # %% ============================================================
-# SECTION 15: SENSOR-SPACE ANALYSIS — DECODING (mne-bids-pipeline)
+# SECTION 14: SENSOR-SPACE ANALYSIS — DECODING (mne-bids-pipeline)
 # ================================================================
 
 # Enable multivariate pattern analysis (MVPA / decoding).
@@ -507,7 +501,7 @@ decoding_csp = True
 
 
 # %% ============================================================
-# SECTION 16: NOISE COVARIANCE
+# SECTION 15: NOISE COVARIANCE
 # Used by source estimation and the LCMV beamformer to whiten / regularise.
 #   'emptyroom' : estimate from the empty-room recording (recommended).
 #   'rest'      : estimate from a resting-state recording.
@@ -519,7 +513,7 @@ noise_cov = "emptyroom"
 
 
 # %% ============================================================
-# SECTION 17: SOURCE ESTIMATION (dSPM family) — run_source.sh
+# SECTION 16: SOURCE ESTIMATION (dSPM family) — run_source.sh
 # ================================================================
 
 # Master switch: whether mne_bids_pipeline runs source estimation steps.
@@ -543,7 +537,7 @@ inverse_method = "dSPM"
 
 
 # %% ============================================================
-# SECTION 18: BEAMFORMER (LCMV) — run_beamformer.sh
+# SECTION 17: BEAMFORMER (LCMV) — run_beamformer.sh
 # Reconstructs source activity with a spatial filter that passes a target
 # location while suppressing all others.  Well-suited to OPM-MEG.
 # ================================================================
@@ -552,7 +546,7 @@ _run_beamformer = True  # master switch
 
 # Source space for the beamformer forward model.
 #   'surface' : cortical-surface source space built by mne-bids-pipeline
-#               (uses SECTION 17 `spacing`/`mindist`; per-hemisphere STCs saved
+#               (uses SECTION 16 `spacing`/`mindist`; per-hemisphere STCs saved
 #               as `*+lcmv+hemi-stc.h5`).
 #   'volume'  : regular 3D grid inside the inner skull, built on the fly by
 #               run_beamformer.py via mne.setup_volume_source_space; the volume
@@ -653,7 +647,7 @@ _beamformer_report_n_time_points = 51  # frames in the report source-map animati
 
 
 # %% ============================================================
-# SECTION 19: COREG DIAGNOSTICS — run_coreg_diagnostics.sh
+# SECTION 18: COREG DIAGNOSTICS — run_coreg_diagnostics.sh
 # Source: src/custom/coreg_diagnostics.py
 # Produces BEM, alignment, dig->scalp distance and sensitivity-map figures
 # under {deriv_root}/sub-XX/ses-YY/meg/coreg_diagnostics/.  No GUI required.
@@ -700,7 +694,7 @@ _coreg_diag_src_spacing = "oct6"
 
 
 # %% ============================================================
-# SECTION 20: MULTIVARIATE DECODING (CUSTOM) — run_decoding.sh
+# SECTION 19: MULTIVARIATE DECODING (CUSTOM) — run_decoding.sh
 # SEPARATE from the built-in mne-bids-pipeline decoding above.
 # Uses its own contrasts (metadata query strings) for binary classification
 # with Leave-One-Group-Out cross-validation.
@@ -759,7 +753,7 @@ if not _load_metadata:
 
 
 # %% ============================================================
-# SECTION 21: VALIDATION
+# SECTION 20: VALIDATION
 # Collected here so misconfigured runs fail early with a clear message.
 # ================================================================
 

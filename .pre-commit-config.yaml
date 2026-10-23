@@ -1,0 +1,13 @@
+# Install once per clone with:  uvx pre-commit install
+# Hooks then run on every commit and again before every push, so pushed code
+# is always formatted. CI runs the same hooks (see .github/workflows/ci.yml).
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format

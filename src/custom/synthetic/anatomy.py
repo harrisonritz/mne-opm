@@ -144,7 +144,9 @@ class HeadModel:
 
     # -- surfaces ----------------------------------------------------------
 
-    def shell(self, which: str, grade: int = BEM_GRADE) -> tuple[np.ndarray, np.ndarray]:
+    def shell(
+        self, which: str, grade: int = BEM_GRADE
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Return ``(rr, tris)`` in metres for a BEM shell."""
         axes = {
             "inner_skull": self.inner_skull_axes,
@@ -282,8 +284,10 @@ def _write_t1(head: HeadModel, path: Path) -> None:
                 + (yy / head.hemi_axes[1]) ** 2
                 + (zz / head.hemi_axes[2]) ** 2
             )
-            fold = 0.10 * np.sin(head.fold_lobes * 20.0 * hx) * np.cos(
-                head.fold_lobes * 15.0 * yy
+            fold = (
+                0.10
+                * np.sin(head.fold_lobes * 20.0 * hx)
+                * np.cos(head.fold_lobes * 15.0 * yy)
             )
             slice_[hemi <= 1.0 + fold] = _INTENSITY["gray"]
             slice_[hemi <= 0.62] = _INTENSITY["white"]

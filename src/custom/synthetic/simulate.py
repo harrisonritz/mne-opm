@@ -90,7 +90,9 @@ class SourceSpec:
     #: sensor-space RMS target.
     amplitude: float = 1.0
     #: Per-condition gain, keyed by the ``condition`` column of the metadata.
-    condition_gain: dict[str, float] = field(default_factory=lambda: {"A": 1.0, "B": 1.0})
+    condition_gain: dict[str, float] = field(
+        default_factory=lambda: {"A": 1.0, "B": 1.0}
+    )
     #: When set, the response is locked to the response event rather than the
     #: stimulus, and only fires for this response hand.
     response_locked: str | None = None
@@ -185,9 +187,9 @@ def _dipole_field(
 
 def _pink_noise(rng, n_signals: int, n_times: int, exponent: float = 1.0) -> np.ndarray:
     """Zero-mean 1/f^exponent noise via spectral shaping."""
-    spec = rng.standard_normal((n_signals, n_times // 2 + 1)) + 1j * rng.standard_normal(
+    spec = rng.standard_normal(
         (n_signals, n_times // 2 + 1)
-    )
+    ) + 1j * rng.standard_normal((n_signals, n_times // 2 + 1))
     freqs = np.fft.rfftfreq(n_times, d=1.0)
     scale = np.ones_like(freqs)
     scale[1:] = freqs[1:] ** (-exponent / 2.0)
@@ -244,7 +246,9 @@ def build_forward(info, head, subjects_dir, fs_subject, *, spacing: str = "oct4"
     fwd = mne.make_forward_solution(
         meg_info, trans=head.mri_head_t, src=src, bem=bem, mindist=5.0, n_jobs=1
     )
-    fwd = mne.convert_forward_solution(fwd, surf_ori=True, force_fixed=True, use_cps=True)
+    fwd = mne.convert_forward_solution(
+        fwd, surf_ori=True, force_fixed=True, use_cps=True
+    )
     return fwd, bem
 
 
@@ -292,9 +296,7 @@ def _resolve_sources(
         hemi_centre = head.center + np.array(
             [(-1.0 if spec.hemi == "lh" else 1.0) * head.hemi_offset, 0.0, 0.0]
         )
-        target_head = apply_trans(
-            head.mri_head_t, hemi_centre + unit * head.hemi_axes
-        )
+        target_head = apply_trans(head.mri_head_t, hemi_centre + unit * head.hemi_axes)
         distance = np.linalg.norm(rr - target_head, axis=1)
         candidates = np.flatnonzero(distance <= search_radius)
         if candidates.size == 0:
@@ -395,8 +397,12 @@ def _ocular(rng, sensor_pos, sensor_ori, head, times, sfreq):
     n_times = len(times)
     duration = times[-1] if n_times else 0.0
 
-    blink_times = np.sort(rng.uniform(0.5, max(duration - 0.5, 1.0), size=int(duration / 4.5)))
-    sacc_times = np.sort(rng.uniform(0.5, max(duration - 0.5, 1.0), size=int(duration / 1.6)))
+    blink_times = np.sort(
+        rng.uniform(0.5, max(duration - 0.5, 1.0), size=int(duration / 4.5))
+    )
+    sacc_times = np.sort(
+        rng.uniform(0.5, max(duration - 0.5, 1.0), size=int(duration / 1.6))
+    )
 
     blink_trace = np.zeros(n_times)
     for t0 in blink_times:
@@ -413,15 +419,23 @@ def _ocular(rng, sensor_pos, sensor_ori, head, times, sfreq):
 
     # Eyeballs sit anterior and inferior to the head centre.
     cx, cy, cz = head.center
-    eye_offset = np.array([0.032, head.scalp_axes[1] * 0.80, -head.scalp_axes[2] * 0.35])
+    eye_offset = np.array(
+        [0.032, head.scalp_axes[1] * 0.80, -head.scalp_axes[2] * 0.35]
+    )
     topo = np.zeros(len(sensor_pos))
     for sign in (-1.0, 1.0):
-        eye = np.array([cx + sign * eye_offset[0], cy + eye_offset[1], cz + eye_offset[2]])
+        eye = np.array(
+            [cx + sign * eye_offset[0], cy + eye_offset[1], cz + eye_offset[2]]
+        )
         topo += _dipole_field(sensor_pos, sensor_ori, eye, np.array([0.0, 0.0, 1.0]))
     sacc_topo = np.zeros(len(sensor_pos))
     for sign in (-1.0, 1.0):
-        eye = np.array([cx + sign * eye_offset[0], cy + eye_offset[1], cz + eye_offset[2]])
-        sacc_topo += _dipole_field(sensor_pos, sensor_ori, eye, np.array([1.0, 0.0, 0.0]))
+        eye = np.array(
+            [cx + sign * eye_offset[0], cy + eye_offset[1], cz + eye_offset[2]]
+        )
+        sacc_topo += _dipole_field(
+            sensor_pos, sensor_ori, eye, np.array([1.0, 0.0, 0.0])
+        )
 
     sensor = np.outer(topo, blink_trace) + 0.5 * np.outer(sacc_topo, sacc_trace)
     rms = np.sqrt(np.mean(sensor**2))
@@ -467,7 +481,8 @@ def _external_interference(rng, sensor_pos, sensor_ori, times, sfreq, line_freq)
     line = np.vstack(
         [
             np.sin(2 * np.pi * line_freq * times + rng.uniform(0, 2 * np.pi))
-            + 0.3 * np.sin(2 * np.pi * 2 * line_freq * times + rng.uniform(0, 2 * np.pi))
+            + 0.3
+            * np.sin(2 * np.pi * 2 * line_freq * times + rng.uniform(0, 2 * np.pi))
             for _ in range(3)
         ]
     )
@@ -587,8 +602,10 @@ def simulate_task(
     interference = _external_interference(
         rng, sensor_pos, sensor_ori, times, sfreq, info["line_freq"]
     )
-    noise = rng.standard_normal((len(picks), n_times)) * _SENSOR_NOISE_DENSITY * np.sqrt(
-        sfreq / 2.0
+    noise = (
+        rng.standard_normal((len(picks), n_times))
+        * _SENSOR_NOISE_DENSITY
+        * np.sqrt(sfreq / 2.0)
     )
 
     data = np.zeros((len(info["ch_names"]), n_times))
@@ -646,7 +663,9 @@ def simulate_task(
     return raw, ground_truth, forward
 
 
-def _eye_channel_data(rng, blink_trace, sacc_trace, times, sfreq) -> dict[str, np.ndarray]:
+def _eye_channel_data(
+    rng, blink_trace, sacc_trace, times, sfreq
+) -> dict[str, np.ndarray]:
     """Eye-tracker derived traces, in the units ``format_bids`` would produce."""
     n_times = len(times)
     missing = (blink_trace > 0.35).astype(float)
@@ -695,8 +714,10 @@ def simulate_empty_room(info, head, duration: float, *, seed: int = 0):
     interference = _external_interference(
         rng, sensor_pos, sensor_ori, times, sfreq, info["line_freq"]
     )
-    noise = rng.standard_normal((len(picks), n_times)) * _SENSOR_NOISE_DENSITY * np.sqrt(
-        sfreq / 2.0
+    noise = (
+        rng.standard_normal((len(picks), n_times))
+        * _SENSOR_NOISE_DENSITY
+        * np.sqrt(sfreq / 2.0)
     )
 
     data = np.zeros((len(info["ch_names"]), n_times))

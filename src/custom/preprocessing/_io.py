@@ -6,14 +6,12 @@ and mne functions.
 
 **Philosophy**: Use mne_bids functions directly where possible. This module
 only provides helpers for commonly repeated patterns or operations that require
-multiple mne_bids calls (like save_ica_bids which updates TSV + saves ICA).
+multiple mne_bids calls.
 
 Core Functions
 --------------
-write_raw_bids_preserve_events
-    Wrapper around write_raw_bids that preserves events.tsv/json.
-save_ica_bids
-    Save ICA solution and update components TSV (combines two operations).
+read_ica_bids / save_ica_bids
+    Read the ICA with exclusions from, and write them to, the components TSV.
 get_bids_path_for_task
     Convenience function for creating BIDSPath from config.
 
@@ -21,10 +19,9 @@ custom_proc helpers
 -------------------
 ``cfg.custom_proc`` lets custom preprocessing steps write their results to
 ``deriv_root`` under a ``proc-<custom_proc>`` BIDS suffix (e.g. ``proc-init``)
-rather than overwriting the raw files in ``bids_root``.  When set, the matching
-mne-bids-pipeline run will read its inputs from the same proc-tagged
-derivatives.  When ``custom_proc`` is unset or ``None``, the legacy behaviour
-is preserved: custom steps read from and overwrite the BIDS data files.
+rather than overwriting the raw files in ``bids_root``.  The matching
+mne-bids-pipeline run reads its inputs from the same proc-tagged derivatives.
+``custom_proc`` is required for every step that writes data.
 
 The following helpers implement that routing:
     get_custom_proc(cfg)
@@ -1372,89 +1369,6 @@ def read_raw_bids_with_retry(bids_path, extra_params=None, max_retries=10):
                 raise
 
 
-def write_raw_bids_preserve_events(**write_kwargs) -> None:
-    """Write raw data to BIDS while preserving the existing events files.
-
-    ``mne_bids.write_raw_bids()`` regenerates *_events.tsv* and
-    *_events.json* from ``raw.annotations`` every time it is called.
-    Because the annotation ↔ events.tsv round-trip is lossy (e.g. BAD
-    annotations become event rows, timing quantisation differences),
-    repeated writes corrupt the canonical event table produced during
-    the initial BIDS conversion.
-
-    This wrapper backs up events.tsv / events.json before the write and
-    restores them afterwards so that only the raw data file and other
-    sidecar files (channels.tsv, etc.) are updated.
-
-    An exclusive file lock on ``<bids_root>/participants.tsv.lock`` is
-    acquired before calling ``write_raw_bids`` to prevent race conditions
-    when multiple SLURM array jobs write to the shared ``participants.tsv``
-    concurrently.  If the lock cannot be obtained within the timeout, or if
-    a transient read error occurs despite the lock (possible on NFS), the
-    call is retried with exponential back-off.
-
-    Parameters
-    ----------
-    **write_kwargs
-        All keyword arguments forwarded to
-        ``mne_bids.write_raw_bids()``.  Must include ``bids_path``.
-
-    Notes
-    -----
-    If no events files exist yet (first-time write), the function falls
-    through to a plain ``write_raw_bids`` call with no backup/restore.
-    """
-    bp: BIDSPath = write_kwargs["bids_path"]
-
-    # Exclusive lock on participants.tsv to serialise concurrent SLURM jobs.
-    # The .lock file is created next to participants.tsv in the BIDS root.
-    assert bp.root is not None, "bids_path must have a root set"
-    # participants_lock = SoftFileLock(
-    #     Path(bp.root) / "participants.tsv.lock",
-    #     timeout=TIMEOUT,  # seconds; long enough for slow writes, prevents deadlock
-    # )
-
-    # Derive the events sidecar paths from the raw BIDSPath
-    events_tsv: Path = bp.copy().update(suffix="events", extension=".tsv").fpath
-    events_json: Path = bp.copy().update(suffix="events", extension=".json").fpath
-
-    # Back up existing events files
-    tsv_backup = Path(str(events_tsv) + ".bak") if events_tsv.exists() else None
-    json_backup = Path(str(events_json) + ".bak") if events_json.exists() else None
-
-    if tsv_backup is not None:
-        shutil.copy2(events_tsv, tsv_backup)
-    if json_backup is not None:
-        shutil.copy2(events_json, json_backup)
-
-    try:
-        _max_retries = 10
-        for _attempt in range(_max_retries):
-            try:
-                mne_bids.write_raw_bids(**write_kwargs)
-                break
-            except (IndexError, json.JSONDecodeError):
-                # Transient empty-file read — can still occur on NFS even with
-                # advisory locking.  Retry with exponential back-off.
-                if _attempt < _max_retries - 1:
-                    _delay = (2**_attempt) + random.uniform(0, 2)
-                    print(
-                        f"[write_raw_bids_preserve_events] Transient "
-                        f"BIDS sidecar read error "
-                        f"(attempt {_attempt + 1}/{_max_retries}), "
-                        f"retrying in {_delay:.1f} s..."
-                    )
-                    time.sleep(_delay)
-                else:
-                    raise
-    finally:
-        # Restore the original events files regardless of success or failure
-        if tsv_backup is not None and tsv_backup.exists():
-            shutil.move(str(tsv_backup), str(events_tsv))
-        if json_backup is not None and json_backup.exists():
-            shutil.move(str(json_backup), str(events_json))
-
-
 def get_bids_path_for_task(
     cfg: SimpleNamespace,
     task: str,
@@ -1532,9 +1446,8 @@ def get_custom_proc(cfg: SimpleNamespace) -> Optional[str]:
     -----
     When this returns a string (e.g. ``"init"``), custom preprocessing
     steps should read from / write to ``deriv_root`` using
-    ``processing="init"``.  When it returns ``None``, custom steps fall
-    back to the legacy behaviour of reading from / overwriting
-    ``bids_root``.
+    ``processing="init"``.  When it returns ``None``, custom steps can only
+    read from ``bids_root``; writing raises an error.
     """
     val = getattr(cfg, "custom_proc", None)
     return val if val else None
@@ -1675,10 +1588,9 @@ def get_custom_output_path(
 ) -> BIDSPath:
     """Compute the output BIDSPath for a custom preprocessing step.
 
-    When ``cfg.custom_proc`` is set, redirects to ``deriv_root`` with
-    ``processing=cfg.custom_proc``.  Otherwise returns a copy of
-    ``source_bp`` unchanged so the legacy "write back to source"
-    behaviour is preserved.
+    Redirects to ``deriv_root`` with ``processing=cfg.custom_proc``.
+    Raises ``ValueError`` if ``cfg.custom_proc`` is not set, because custom
+    steps must never overwrite the raw BIDS data.
 
     Parameters
     ----------
@@ -1702,7 +1614,10 @@ def get_custom_output_path(
 
     proc = get_custom_proc(cfg)
     if proc is None:
-        return source_bp.copy()
+        raise ValueError(
+            "cfg.custom_proc must be set: custom preprocessing steps write to "
+            "deriv_root with proc-<custom_proc> and never to bids_root."
+        )
 
     return source_bp.copy().update(
         root=cfg.deriv_root,
@@ -1729,6 +1644,7 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
     The split entity is stripped from both sides so the lookup is correct
     regardless of whether source_bp refers to a split file.
     """
+
     def copy_if_missing(src: Path, dst: Path) -> None:
         if src == dst or not src.exists() or dst.exists():
             return
@@ -1770,9 +1686,9 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
             src = (
                 Path(inherited)
                 if inherited is not None
-                else source_bp.copy().update(
-                    suffix="raw", extension=".json", split=None, check=False
-                ).fpath
+                else source_bp.copy()
+                .update(suffix="raw", extension=".json", split=None, check=False)
+                .fpath
             )
         copy_if_missing(src, dst)
 
@@ -1780,48 +1696,18 @@ def _seed_sidecars(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
         copy_if_missing(Path(source_bp.root) / name, Path(output_bp.root) / name)
 
 
-def _seed_events_files(source_bp: BIDSPath, output_bp: BIDSPath) -> None:
-    """Copy events.tsv / events.json from source to destination if needed.
-
-    ``write_raw_bids_preserve_events`` backs up and restores the events
-    sidecars at the destination so that the lossy
-    annotation ↔ events.tsv round-trip does not corrupt them.  When the
-    destination is a fresh ``proc-<custom_proc>`` directory there is
-    nothing to back up yet, which means the first write would clobber
-    whatever round-trip ``write_raw_bids`` produces from
-    ``raw.annotations``.  Seeding the destination with the source's
-    events files restores the preserve-and-restore guarantee.
-    """
-    if output_bp.fpath == source_bp.fpath:
-        return
-
-    for ext in (".tsv", ".json"):
-        src = source_bp.copy().update(suffix="events", extension=ext, check=False).fpath
-        dst = output_bp.copy().update(suffix="events", extension=ext, check=False).fpath
-        if src.exists() and not dst.exists():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-
-
 def write_raw_bids_custom_step(
     raw,
     cfg: SimpleNamespace,
     source_bp: BIDSPath,
-    *,
-    empty_room: Optional[BIDSPath] = None,
-    **extra_write_kwargs,
 ) -> BIDSPath:
-    """Write raw data, redirecting to deriv_root when ``custom_proc`` is set.
+    """Write raw data to ``deriv_root`` with ``proc-<custom_proc>``.
 
-    **Derivative mode** (``custom_proc`` is set):
     Follows the mne-bids-pipeline save pattern (see ``_04_frequency_filter.py``):
     seeds BIDS sidecars from the source on the first write, then saves the FIF
     data with ``raw.save(split_naming="bids")``.  This avoids the
     ``suffix=datatype`` override in ``write_raw_bids`` and all associated
     ``scans.tsv`` conflicts.
-
-    **Legacy mode** (``custom_proc`` is None):
-    Writes back to the source location via :func:`write_raw_bids_preserve_events`.
 
     Parameters
     ----------
@@ -1832,13 +1718,6 @@ def write_raw_bids_custom_step(
     source_bp : BIDSPath
         Path the data was read from (used as base for output path and
         sidecar seeding).
-    empty_room : BIDSPath or None
-        Empty-room association.  Only used in legacy mode; silently ignored
-        in derivative mode (the ``emptyroommatch.json`` is seeded once from
-        the source and not updated thereafter).
-    **extra_write_kwargs
-        Extra keyword arguments forwarded to
-        :func:`write_raw_bids_preserve_events` in legacy mode only.
 
     Returns
     -------
@@ -1846,82 +1725,64 @@ def write_raw_bids_custom_step(
         The BIDSPath the data was written to (base path, split=None).
     """
     output_bp = get_custom_output_path(cfg, source_bp)
-    proc = get_custom_proc(cfg)
 
     # Safety invariant: a custom step must never overwrite the raw BIDS data.
     # This guards against a misconfigured custom_proc (or a future change to
     # the routing helpers) silently writing back into bids_root.
     assert_not_raw_bids_write(output_bp, cfg, context="write_raw_bids_custom_step")
 
-    if proc is not None:
-        # Derivative mode — follow the mne-bids-pipeline save pattern:
-        #   - Seed BIDS sidecars (channels.tsv, meg.json, events.*) from the
-        #     source on first write; subsequent writes are a no-op here.
-        #   - Save FIF data with raw.save() + split_naming="bids" so that
-        #     FIF split-file headers reference _split-02_raw.fif, not _meg.fif.
-        #     This avoids all scans.tsv / suffix conflicts from write_raw_bids.
-        # See _04_frequency_filter.py in mne-bids-pipeline for the same pattern.
-        _seed_sidecars(source_bp, output_bp)
+    # Follow the mne-bids-pipeline save pattern:
+    #   - Seed BIDS sidecars (channels.tsv, meg.json, events.*) from the
+    #     source on first write; subsequent writes are a no-op here.
+    #   - Save FIF data with raw.save() + split_naming="bids" so that
+    #     FIF split-file headers reference _split-02_raw.fif, not _meg.fif.
+    #     This avoids all scans.tsv / suffix conflicts from write_raw_bids.
+    # See _04_frequency_filter.py in mne-bids-pipeline for the same pattern.
+    _seed_sidecars(source_bp, output_bp)
 
-        # Before writing, trim any condition annotations that are absent from
-        # the seeded events.tsv.  Recordings sometimes carry trailing or leading
-        # trigger events that were never part of the task (e.g. the recording
-        # started/stopped while triggers were firing).  These orphan annotations
-        # would make the derivative FIF disagree with the authoritative
-        # events.tsv, breaking metadata ↔ epochs alignment downstream.
-        #
-        # Always trim BOTH the epoch-locked conditions (cfg.conditions) AND
-        # trial-onset annotations (_trial_conditions, default "trial").  The
-        # epoch-locked conditions handle stray response presses; the trial
-        # conditions handle extra trigger pulses from the OPM recording
-        # system that appear in raw.annotations but were filtered out during
-        # the initial BIDS conversion and are absent from the events.tsv.
-        task_name_for_trim = getattr(output_bp, "task", None) or ""
-        if not task_name_for_trim.startswith("noise"):
-            _epoch_conds = tuple(getattr(cfg, "conditions", ("trial",)) or ("trial",))
-            _trial_conds = tuple(
-                getattr(cfg, "_trial_conditions", ("trial",)) or ("trial",)
-            )
-            conditions_for_trim = tuple(set(_epoch_conds + _trial_conds))
-            _events_tsv_for_trim = (
-                output_bp.copy()
-                .update(suffix="events", extension=".tsv", split=None, check=False)
-                .fpath
-            )
-            trim_raw_to_events_tsv(
-                raw,
-                _events_tsv_for_trim,
-                conditions=conditions_for_trim,
-                context=f"write_raw_bids_custom_step:{task_name_for_trim or '?'}",
-            )
-
-        output_bp.split = None
-        output_bp.fpath.parent.mkdir(parents=True, exist_ok=True)
-        raw.save(output_bp.fpath, overwrite=True, split_naming="bids")
-
-        # With split_naming="bids", MNE writes _split-01_raw.fif (not the
-        # nominal unsplit path) when data is large enough to be split.
-        # Resolve the actual first file so verification and callers can find it.
-        if not output_bp.fpath.exists():
-            split01_bp = output_bp.copy().update(split="01", check=False)
-            if split01_bp.fpath.exists():
-                output_bp = split01_bp
-    else:
-        # Legacy mode: write back to the source location unchanged.
-        _seed_events_files(source_bp, output_bp)
-        output_bp.split = None
-
-        write_kwargs = dict(
-            raw=raw,
-            bids_path=output_bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
+    # Before writing, trim any condition annotations that are absent from
+    # the seeded events.tsv.  Recordings sometimes carry trailing or leading
+    # trigger events that were never part of the task (e.g. the recording
+    # started/stopped while triggers were firing).  These orphan annotations
+    # would make the derivative FIF disagree with the authoritative
+    # events.tsv, breaking metadata ↔ epochs alignment downstream.
+    #
+    # Always trim BOTH the epoch-locked conditions (cfg.conditions) AND
+    # trial-onset annotations (_trial_conditions, default "trial").  The
+    # epoch-locked conditions handle stray response presses; the trial
+    # conditions handle extra trigger pulses from the OPM recording
+    # system that appear in raw.annotations but were filtered out during
+    # the initial BIDS conversion and are absent from the events.tsv.
+    task_name_for_trim = getattr(output_bp, "task", None) or ""
+    if not task_name_for_trim.startswith("noise"):
+        _epoch_conds = tuple(getattr(cfg, "conditions", ("trial",)) or ("trial",))
+        _trial_conds = tuple(
+            getattr(cfg, "_trial_conditions", ("trial",)) or ("trial",)
         )
-        if empty_room is not None:
-            write_kwargs["empty_room"] = empty_room
-        write_kwargs.update(extra_write_kwargs)
-        write_raw_bids_preserve_events(**write_kwargs)
+        conditions_for_trim = tuple(set(_epoch_conds + _trial_conds))
+        _events_tsv_for_trim = (
+            output_bp.copy()
+            .update(suffix="events", extension=".tsv", split=None, check=False)
+            .fpath
+        )
+        trim_raw_to_events_tsv(
+            raw,
+            _events_tsv_for_trim,
+            conditions=conditions_for_trim,
+            context=f"write_raw_bids_custom_step:{task_name_for_trim or '?'}",
+        )
+
+    output_bp.split = None
+    output_bp.fpath.parent.mkdir(parents=True, exist_ok=True)
+    raw.save(output_bp.fpath, overwrite=True, split_naming="bids")
+
+    # With split_naming="bids", MNE writes _split-01_raw.fif (not the
+    # nominal unsplit path) when data is large enough to be split.
+    # Resolve the actual first file so verification and callers can find it.
+    if not output_bp.fpath.exists():
+        split01_bp = output_bp.copy().update(split="01", check=False)
+        if split01_bp.fpath.exists():
+            output_bp = split01_bp
 
     # Post-write verification — catch silent annotation loss before later
     # pipeline steps fail with a confusing metadata-mismatch error.  We skip
@@ -1976,22 +1837,50 @@ def get_ica_bids_path(cfg: SimpleNamespace) -> BIDSPath:
     return shared
 
 
+def read_ica_bids(cfg: SimpleNamespace) -> mne.preprocessing.ICA:
+    """Read the pipeline ICA with ``exclude`` taken from the components TSV.
+
+    The components TSV is the record of which components to remove (it is
+    what mne-bids-pipeline's apply_ica step reads), so it overrides the
+    exclusion list stored in the ``.fif``.
+
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Configuration object containing BIDS settings.
+
+    Returns
+    -------
+    ica : mne.preprocessing.ICA
+        The ICA solution with ``ica.exclude`` set from the TSV, if it exists.
+    """
+    ica_path = get_ica_bids_path(cfg)
+    ica = mne.preprocessing.read_ica(ica_path.fpath)
+    tsv_path = ica_path.copy().update(suffix="components", extension=".tsv")
+    if tsv_path.fpath.exists():
+        df = pd.read_csv(tsv_path.fpath, sep="\t")
+        ica.exclude = df.loc[df["status"] == "bad", "component"].astype(int).tolist()
+    return ica
+
+
 def save_ica_bids(
     ica: mne.preprocessing.ICA,
     cfg: SimpleNamespace,
     components_df: "pd.DataFrame | None" = None,
 ) -> None:
-    """Save ICA solution and update components TSV.
+    """Write ``ica.exclude`` to the components TSV.
 
-    This function combines two operations that should happen together:
-    1. Updates the components TSV to mark excluded components as bad
-    2. Saves the ICA object with the updated exclusion list
+    Only the TSV is written. The ICA ``.fif`` is an output of
+    mne-bids-pipeline's ``find_ica_artifacts`` step; rewriting it would make
+    the pipeline re-run that step and regenerate the TSV, discarding these
+    labels. The pipeline's ``apply_ica`` step reads the exclusions from the TSV.
 
     When ``components_df`` is provided (e.g. from
-    ``AutoICAAnalysis._build_components_tsv``), it is written directly,
+    ``BadICAnalysis._build_components_tsv``), it is written directly,
     giving full control over per-method attribution columns.  Otherwise
-    the existing TSV is read and excluded components are marked as
-    ``status='bad'`` with ``status_description='manual'``.
+    the existing TSV is updated so that exactly the components in
+    ``ica.exclude`` are ``status='bad'``; components whose status changes
+    get ``status_description='manual'``.
 
     Parameters
     ----------
@@ -2010,27 +1899,21 @@ def save_ica_bids(
     ica_path = get_ica_bids_path(cfg)
     tsv_path = ica_path.copy().update(suffix="components", extension=".tsv")
 
-    # Update components TSV
-    if components_df is not None:
-        components_df.to_csv(tsv_path.fpath, sep="\t", index=False)
-    else:
+    if components_df is None:
         df = pd.read_csv(tsv_path.fpath, sep="\t")
-        for comp in ica.exclude:
-            mask = df["component"].astype(str) == str(comp)
-            if mask.any():
-                df.loc[mask, "status"] = "bad"
-                try:
-                    df.loc[mask, "status_description"] = "manual"
-                except Exception as e:
-                    print("Exception: ", e)
-                    print(
-                        f"Warning: 'status_description' column not found in {tsv_path.fpath}. Skipping description update."
-                    )
-                    print(f"masked df: {df.loc[mask]}")
-        df.to_csv(tsv_path.fpath, sep="\t", index=False)
-
-    # Save ICA object
-    ica.save(ica_path.fpath, overwrite=True)
+        new_status = (
+            df["component"]
+            .astype(int)
+            .isin(ica.exclude)
+            .map({True: "bad", False: "good"})
+        )
+        changed = df["status"] != new_status
+        df["status"] = new_status
+        if "status_description" in df:
+            df["status_description"] = df["status_description"].astype(object)
+            df.loc[changed, "status_description"] = "manual"
+        components_df = df
+    components_df.to_csv(tsv_path.fpath, sep="\t", index=False)
 
 
 def mark_bad_channels_bids(
@@ -2057,9 +1940,8 @@ def mark_bad_channels_bids(
         Description for why channels are bad. Default is 'osl'.
     bids_path : BIDSPath, optional
         Explicit BIDSPath to mark.  When omitted, the path is derived
-        from ``cfg``: if ``cfg.custom_proc`` is set, the
-        ``deriv_root`` / ``proc-<custom_proc>`` location is used;
-        otherwise ``bids_root`` is used.
+        from ``cfg`` as the ``deriv_root`` / ``proc-<custom_proc>``
+        location (``cfg.custom_proc`` must be set).
 
     Notes
     -----
@@ -2075,19 +1957,9 @@ def mark_bad_channels_bids(
         return
 
     if bids_path is None:
-        proc = get_custom_proc(cfg)
-        if proc is None:
-            bids_path = get_bids_path_for_task(cfg, task=task, from_derivatives=False)
-        else:
-            bids_path = (
-                get_bids_path_for_task(cfg, task=task, from_derivatives=False)
-                .copy()
-                .update(
-                    root=cfg.deriv_root,
-                    processing=proc,
-                    check=False,
-                )
-            )
+        bids_path = get_custom_output_path(
+            cfg, get_bids_path_for_task(cfg, task=task, from_derivatives=False)
+        )
 
     # Never mark channels on the raw BIDS recordings — only on derivatives.
     assert_not_raw_bids_write(bids_path, cfg, context="mark_bad_channels_bids")

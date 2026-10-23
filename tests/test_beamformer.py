@@ -101,7 +101,7 @@ class TestComputeLcmvFiltersValidation:
         with patch("custom.run_beamformer.make_lcmv") as mock_lcmv:
             mock_lcmv.return_value = {"mock": "filters"}
             info = mne.create_info(["MEG001"], 300.0, ["mag"])
-            result = compute_lcmv_filters(
+            compute_lcmv_filters(
                 forward=MagicMock(),
                 data_cov=MagicMock(),
                 noise_cov=MagicMock(),
@@ -328,9 +328,7 @@ class TestResolveRank:
         beamformer_cfg._beamformer_rank = "data"
         with patch("custom.run_beamformer.mne.compute_rank") as mock_rank:
             mock_rank.side_effect = _rank_side_effect({"mag": 120}, {"mag": 110})
-            rank = resolve_rank(
-                beamformer_cfg, MagicMock(), MagicMock(), {"mag": 75}
-            )
+            rank = resolve_rank(beamformer_cfg, MagicMock(), MagicMock(), {"mag": 75})
         assert rank == {"mag": 75}
 
     def test_survives_missing_info_rank(self, beamformer_cfg):

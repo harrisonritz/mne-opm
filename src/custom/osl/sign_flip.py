@@ -98,9 +98,7 @@ def parc_file(
     writes, for both the continuous and epoched cases.
     """
     suffix = "epo" if epoched else "raw"
-    return op.join(
-        str(outdir), subject, "parc", f"{source_method}-parc-{suffix}.fif"
-    )
+    return op.join(str(outdir), subject, "parc", f"{source_method}-parc-{suffix}.fif")
 
 
 def sflip_file(
@@ -330,6 +328,7 @@ def apply_flips(
 
     if epoched:
         data = mne.read_epochs(infile, preload=True, verbose=False)
+
         # Epochs data is (epochs, channels, times); flips index the channels.
         def flip(values):
             return values * flips[np.newaxis, :, np.newaxis]

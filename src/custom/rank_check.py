@@ -185,9 +185,7 @@ def raw_glob_pattern(subject: str, session: str, task: str, proc: str) -> str:
     """
     subject = subject.replace("sub-", "")
     session = session.replace("ses-", "")
-    return (
-        f"sub-{subject}_ses-{session}_task-{task}_*proc-{proc}_*raw.fif"
-    )
+    return f"sub-{subject}_ses-{session}_task-{task}_*proc-{proc}_*raw.fif"
 
 
 def find_primary_raws(
@@ -320,7 +318,9 @@ def _fmt(v) -> str:
 
 def print_block(proc: str, model: str, subject: str, rows: list[dict]) -> None:
     """Print the per-subject, per-stage rank table (and task−noise deltas)."""
-    print(f"\n[rank_check]  proc-{proc}  |  sub-{subject.replace('sub-', '')}  |  {model}")
+    print(
+        f"\n[rank_check]  proc-{proc}  |  sub-{subject.replace('sub-', '')}  |  {model}"
+    )
     if not rows:
         print("    (no task/noise derivatives for this stage yet — skipped)")
         return
@@ -403,7 +403,9 @@ def _discover_subjects(deriv_root: str) -> list[str]:
     if not root.is_dir():
         return []
     return sorted(
-        p.name.replace("sub-", "") for p in root.iterdir() if p.is_dir() and p.name.startswith("sub-")
+        p.name.replace("sub-", "")
+        for p in root.iterdir()
+        if p.is_dir() and p.name.startswith("sub-")
     )
 
 

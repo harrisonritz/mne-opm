@@ -130,11 +130,15 @@ def surface_orient_forward(forward: mne.Forward, cfg: SimpleNamespace) -> mne.Fo
     Only meaningful for surface source spaces; volume grids have no normal.
     """
     if not getattr(cfg, "_beamformer_surf_ori", True):
-        print("[surface_orient_forward] _beamformer_surf_ori=False; leaving forward as-is")
+        print(
+            "[surface_orient_forward] _beamformer_surf_ori=False; leaving forward as-is"
+        )
         return forward
     if forward["surf_ori"]:
         return forward
-    print("[surface_orient_forward] Converting forward to surface orientation (use_cps)")
+    print(
+        "[surface_orient_forward] Converting forward to surface orientation (use_cps)"
+    )
     return mne.convert_forward_solution(
         forward, surf_ori=True, force_fixed=False, use_cps=True
     )
@@ -202,7 +206,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
 
     if info["bads"]:
         print(f"[build_volume_forward] Excluding {len(info['bads'])} bad channel(s)")
-        info = mne.pick_info(info, mne.pick_types(info, meg=True, eeg=False, exclude="bads"))
+        info = mne.pick_info(
+            info, mne.pick_types(info, meg=True, eeg=False, exclude="bads")
+        )
 
     subject = cfg.subjects[0]
     session = cfg.sessions[0]
@@ -224,7 +230,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
     )
 
     pos = float(getattr(cfg, "_beamformer_volume_pos", 5.0))
-    mindist = float(getattr(cfg, "_beamformer_volume_mindist", getattr(cfg, "mindist", 5.0)))
+    mindist = float(
+        getattr(cfg, "_beamformer_volume_mindist", getattr(cfg, "mindist", 5.0))
+    )
     cache = getattr(cfg, "_beamformer_volume_cache", True)
 
     # Cache -----------------------------------------------------------------
@@ -232,7 +240,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         suffix="fwd", acquisition="vol", extension=".fif"
     )
     if cache and vol_fwd_path.fpath.exists():
-        print(f"[build_volume_forward] Loading cached volume forward: {vol_fwd_path.fpath}")
+        print(
+            f"[build_volume_forward] Loading cached volume forward: {vol_fwd_path.fpath}"
+        )
         return mne.read_forward_solution(vol_fwd_path.fpath)
 
     # BEM solution ----------------------------------------------------------
@@ -303,7 +313,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         add_interpolator=True,
         n_jobs=getattr(cfg, "n_jobs", -1),
     )
-    print(f"[build_volume_forward] Volume source space: {sum(s['nuse'] for s in src)} sources")
+    print(
+        f"[build_volume_forward] Volume source space: {sum(s['nuse'] for s in src)} sources"
+    )
 
     # Forward solution ------------------------------------------------------
     print("[build_volume_forward] Computing forward solution...")
@@ -324,7 +336,9 @@ def build_volume_forward(cfg: SimpleNamespace, info: mne.Info) -> mne.Forward:
         try:
             vol_fwd_path.fpath.parent.mkdir(parents=True, exist_ok=True)
             mne.write_forward_solution(vol_fwd_path.fpath, fwd, overwrite=True)
-            print(f"[build_volume_forward] Cached volume forward to {vol_fwd_path.fpath}")
+            print(
+                f"[build_volume_forward] Cached volume forward to {vol_fwd_path.fpath}"
+            )
         except Exception as e:
             print(f"[build_volume_forward] WARNING: could not cache forward: {e}")
 
@@ -450,7 +464,7 @@ def load_beamformer_data(cfg: SimpleNamespace) -> Dict[str, Any]:
                 f"rank will be estimated from the data alone"
             )
 
-    print(f"[load_beamformer_data] Data loading complete")
+    print("[load_beamformer_data] Data loading complete")
     print(f"  - Forward: {len(data['forward']['src'])} source spaces")
     print(
         f"  - Epochs: {len(data['epochs'])} epochs, {len(data['epochs'].ch_names)} channels"
@@ -544,9 +558,7 @@ def resolve_rank(
         print(f"[resolve_rank] {name} rank{extra}: {value}")
 
     keys = set().union(*(c.keys() for c in candidates.values()))
-    rank = {
-        key: min(c[key] for c in candidates.values() if key in c) for key in keys
-    }
+    rank = {key: min(c[key] for c in candidates.values() if key in c) for key in keys}
     print(f"[resolve_rank] Using element-wise minimum: {rank}")
 
     # A data estimate at (or above) the info rank means the tolerance did not
@@ -730,7 +742,7 @@ def run_beamformer_timecourse(
 
             if len(evokeds) != len(contrast_def["conditions"]):
                 print(
-                    f"    [WARNING] Could not load all conditions for contrast. Skipping."
+                    "    [WARNING] Could not load all conditions for contrast. Skipping."
                 )
                 continue
 
@@ -891,7 +903,7 @@ def run_beamformer_power(
         stc_contrast.data = out
 
         stcs[contrast_name] = stc_contrast
-        print(f"    - Normalized difference contrast created")
+        print("    - Normalized difference contrast created")
 
     print(f"[run_beamformer_power] Completed. Generated {len(stcs)} source estimates.")
 
@@ -1019,7 +1031,7 @@ def add_to_report(
         first entry of ``_beamformer_source_space`` is used.
     """
     if not cfg._beamformer_add_to_report:
-        print(f"\n[add_to_report] Report generation disabled. Skipping.")
+        print("\n[add_to_report] Report generation disabled. Skipping.")
         return
 
     if source_space is None:
@@ -1057,7 +1069,7 @@ def add_to_report(
             subject=subject_clean,
             session=session_clean,
         ) as report:
-            print(f"[add_to_report] Report opened successfully")
+            print("[add_to_report] Report opened successfully")
 
             n_added = 0
             for condition, stc_path in stcs.items():
@@ -1096,9 +1108,7 @@ def add_to_report(
                     if stc.data.ndim == 3:
                         stc = stc.magnitude()
                     # Representative slice at the peak of the mean-over-sources signal.
-                    peak_time = stc.times[
-                        int(np.argmax(np.abs(stc.data).mean(axis=0)))
-                    ]
+                    peak_time = stc.times[int(np.argmax(np.abs(stc.data).mean(axis=0)))]
                     fig = stc.plot(
                         src=src,
                         subject=fs_subject,
@@ -1139,7 +1149,7 @@ def add_to_report(
         # The STCs are already on disk at this point, so a report failure must not
         # take the run down with it.
         print(f"[add_to_report] Warning: Could not add to report: {e}")
-        print(f"[add_to_report] Continuing without report update...")
+        print("[add_to_report] Continuing without report update...")
 
 
 # --------------------------------------------------------------------------------------

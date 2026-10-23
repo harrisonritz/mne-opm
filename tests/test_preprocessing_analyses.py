@@ -7,22 +7,23 @@ core computation methods with synthetic data.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import mne
-import numpy as np
 import pytest
 
+from custom.preprocessing._io import get_ica_bids_path
 from custom.preprocessing.bad_segments import BadSegmentsAnalysis
 from custom.preprocessing.bad_channels import BadChannelsAnalysis
 from custom.preprocessing.bad_epochs import BadEpochsAnalysis
 from custom.preprocessing.manual_channel import ManualChannelAnalysis
-from custom.preprocessing.regress import RegressAnalysis
 from custom.preprocessing.apply_hfc import ApplyHFCAnalysis
 from custom.preprocessing.zca_filter import ZCAFilterAnalysis
 from custom.preprocessing.bad_ICs import BadICAnalysis
 from custom.preprocessing.manual_ica import ManualICAAnalysis
 from custom.preprocessing.coreg import CoregAnalysis
+from custom.preprocessing.ica_convergence import ICAConvergenceAnalysis
 
 
 # ---------------------------------------------------------------------------
@@ -40,12 +41,12 @@ class TestAnalysisClassConstants:
             (BadChannelsAnalysis, "badchannels", "bad_channels"),
             (BadEpochsAnalysis, "badepochs", "bad_epochs"),
             (ManualChannelAnalysis, "manualchannel", "manual_channel"),
-            (RegressAnalysis, "regress", "regress"),
             (ApplyHFCAnalysis, "applyhfc", "apply_hfc"),
             (ZCAFilterAnalysis, "zcafilter", "zca_filter"),
-            (BadICAnalysis, "autoica", "auto_ica"),
+            (BadICAnalysis, "badICs", "bad_ICs"),
             (ManualICAAnalysis, "manualica", "manual_ica"),
             (CoregAnalysis, "coreg", "coreg"),
+            (ICAConvergenceAnalysis, "icaconvergence", "ica_convergence"),
         ],
     )
     def test_keys_and_names(self, cls, expected_key, expected_name):
@@ -79,18 +80,6 @@ class TestAlwaysEnabled:
 class TestFlagGatedEnabled:
     """Analyses gated by a config flag."""
 
-    def test_regress_enabled(self):
-        cfg = SimpleNamespace(_regress=True)
-        assert RegressAnalysis(cfg).is_enabled() is True
-
-    def test_regress_disabled(self):
-        cfg = SimpleNamespace(_regress=False)
-        assert RegressAnalysis(cfg).is_enabled() is False
-
-    def test_regress_missing_defaults_false(self):
-        cfg = SimpleNamespace()
-        assert RegressAnalysis(cfg).is_enabled() is False
-
     def test_hfc_enabled(self):
         cfg = SimpleNamespace(_do_HFC=True)
         assert ApplyHFCAnalysis(cfg).is_enabled() is True
@@ -122,23 +111,23 @@ class TestFlagGatedEnabled:
 
 
 class TestICAEnabled:
-    """auto_ica and manual_ica require both flag AND spatial_filter='ica'."""
+    """bad_ICs and manual_ica require both flag AND spatial_filter='ica'."""
 
-    def test_auto_ica_both_set(self):
-        cfg = SimpleNamespace(_auto_ica=True, spatial_filter="ica")
-        assert AutoICAAnalysis(cfg).is_enabled() is True
+    def test_bad_ICs_both_set(self):
+        cfg = SimpleNamespace(_bad_ICs=True, spatial_filter="ica")
+        assert BadICAnalysis(cfg).is_enabled() is True
 
-    def test_auto_ica_flag_missing(self):
+    def test_bad_ICs_flag_missing(self):
         cfg = SimpleNamespace(spatial_filter="ica")
-        assert AutoICAAnalysis(cfg).is_enabled() is False
+        assert BadICAnalysis(cfg).is_enabled() is False
 
-    def test_auto_ica_spatial_filter_missing(self):
-        cfg = SimpleNamespace(_auto_ica=True)
-        assert AutoICAAnalysis(cfg).is_enabled() is False
+    def test_bad_ICs_spatial_filter_missing(self):
+        cfg = SimpleNamespace(_bad_ICs=True)
+        assert BadICAnalysis(cfg).is_enabled() is False
 
-    def test_auto_ica_spatial_filter_wrong(self):
-        cfg = SimpleNamespace(_auto_ica=True, spatial_filter="ssp")
-        assert AutoICAAnalysis(cfg).is_enabled() is False
+    def test_bad_ICs_spatial_filter_wrong(self):
+        cfg = SimpleNamespace(_bad_ICs=True, spatial_filter="ssp")
+        assert BadICAnalysis(cfg).is_enabled() is False
 
     def test_manual_ica_both_set(self):
         cfg = SimpleNamespace(_manual_ica=True, spatial_filter="ica")
@@ -147,112 +136,6 @@ class TestICAEnabled:
     def test_manual_ica_flag_missing(self):
         cfg = SimpleNamespace(spatial_filter="ica")
         assert ManualICAAnalysis(cfg).is_enabled() is False
-
-
-# ---------------------------------------------------------------------------
-# RegressAnalysis — core regression logic (time-varying)
-# ---------------------------------------------------------------------------
-
-
-class TestRegressCore:
-    """Test the time-varying sliding-window regression on synthetic data."""
-
-    @pytest.fixture()
-    def regression_setup(self):
-        """Create raw data where ref channels are correlated with MEG."""
-        rng = np.random.RandomState(42)
-        sfreq = 300.0
-        n_samples = int(sfreq * 10)  # 10 seconds
-        n_meg = 10
-        n_ref = 3
-
-        # Reference signals
-        ref_signals = rng.randn(n_ref, n_samples) * 1e-12
-
-        # MEG = brain signal + linear mixing of ref (interference)
-        mixing = rng.randn(n_meg, n_ref)
-        brain = rng.randn(n_meg, n_samples) * 1e-14  # weaker brain signal
-        meg_data = brain + mixing @ ref_signals
-
-        info = mne.create_info(
-            ch_names=[f"MEG{i:03d}" for i in range(n_meg)]
-            + [f"REF{i:03d}" for i in range(n_ref)],
-            sfreq=sfreq,
-            ch_types=["mag"] * n_meg + ["ref_meg"] * n_ref,
-        )
-        data = np.vstack([meg_data, ref_signals])
-        raw = mne.io.RawArray(data, info)
-        return raw, brain
-
-    def test_prepare_predictor_data_shape(self, regression_setup):
-        raw, _ = regression_setup
-        cfg = SimpleNamespace(
-            _regress=True,
-            _regress_preds=["ref_meg"],
-            ch_types=["mag"],
-            _regress_freqs=None,
-        )
-        analysis = RegressAnalysis(cfg)
-        pred_data = analysis._prepare_predictor_data(raw)
-        # Without freq bands: raw + squared = 2 * n_ref features
-        assert pred_data.shape[0] == 6  # 3 ref * 2 (raw + squared)
-        assert pred_data.shape[1] == raw.n_times
-
-    def test_prepare_predictor_data_with_freqs(self, regression_setup):
-        raw, _ = regression_setup
-        cfg = SimpleNamespace(
-            _regress=True,
-            _regress_preds=["ref_meg"],
-            ch_types=["mag"],
-            _regress_freqs=[(None, 10.0), (10.0, 50.0)],
-        )
-        analysis = RegressAnalysis(cfg)
-        pred_data = analysis._prepare_predictor_data(raw)
-        # 2 freq bands * 3 ref channels = 6 features
-        assert pred_data.shape[0] == 6
-        assert pred_data.shape[1] == raw.n_times
-
-    def test_standard_regression_reduces_variance(self, regression_setup):
-        """Standard regression should reduce MEG variance."""
-        raw, _ = regression_setup
-        cfg = SimpleNamespace(
-            _regress=True,
-            _regress_preds=["ref_meg"],
-            _regress_timevarying=False,
-            _regress_plot=False,
-            ch_types=["mag"],
-            find_breaks=False,
-        )
-        analysis = RegressAnalysis(cfg)
-
-        var_before = np.var(raw.get_data(picks="mag"))
-        raw_clean = analysis._regress(raw.copy())
-        var_after = np.var(raw_clean.get_data(picks="mag"))
-
-        assert var_after < var_before, (
-            "Variance should decrease after regressing out reference signals"
-        )
-
-    def test_timevarying_regression_reduces_variance(self, regression_setup):
-        """Time-varying regression should reduce MEG variance."""
-        raw, _ = regression_setup
-        cfg = SimpleNamespace(
-            _regress=True,
-            _regress_preds=["ref_meg"],
-            _regress_timevarying=True,
-            _regress_window=3.0,  # short windows for 10s data
-            _regress_freqs=None,
-            _regress_plot=False,
-            ch_types=["mag"],
-            find_breaks=False,
-        )
-        analysis = RegressAnalysis(cfg)
-
-        var_before = np.var(raw.get_data(picks="mag"))
-        raw_clean = analysis._regress(raw.copy())
-        var_after = np.var(raw_clean.get_data(picks="mag"))
-
-        assert var_after < var_before
 
 
 # ---------------------------------------------------------------------------
@@ -369,3 +252,59 @@ class TestZCAHelpers:
         cfg = SimpleNamespace(subjects=["002"], sessions=[])
         analysis = ZCAFilterAnalysis(cfg)
         assert analysis._get_fs_subject() == "sub-002"
+
+
+# ---------------------------------------------------------------------------
+# ICA convergence check
+# ---------------------------------------------------------------------------
+
+
+class TestICAConvergence:
+    @pytest.fixture()
+    def setup(self, tmp_path, meg_info, rng):
+        # mixed Laplace sources, so that ICA can converge
+        n_ch = len(meg_info["ch_names"])
+        data = rng.randn(n_ch, n_ch) @ rng.laplace(size=(n_ch, 3000))
+        raw_meg = mne.io.RawArray(data * 1e-13, meg_info, verbose=False)
+        cfg = SimpleNamespace(
+            deriv_root=tmp_path,
+            subjects=["001"],
+            sessions=["01"],
+            task="TSX",
+            spatial_filter="ica",
+        )
+        bp = get_ica_bids_path(cfg)
+        bp.directory.mkdir(parents=True)
+
+        def fit(max_iter):
+            ica = mne.preprocessing.ICA(5, max_iter=max_iter, random_state=0)
+            with pytest.warns(UserWarning) if max_iter < 50 else nullcontext():
+                ica.fit(raw_meg, verbose=False)
+            ica.save(bp.fpath, overwrite=True, verbose=False)
+
+        return cfg, bp, fit
+
+    def test_enabled_only_for_ica(self):
+        assert ICAConvergenceAnalysis(
+            SimpleNamespace(spatial_filter="ica")
+        ).is_enabled()
+        assert not ICAConvergenceAnalysis(
+            SimpleNamespace(spatial_filter="ssp")
+        ).is_enabled()
+
+    def test_warns_and_plots_when_not_converged(self, setup):
+        cfg, bp, fit = setup
+        fit(max_iter=2)
+        with pytest.warns(RuntimeWarning, match="did not converge after 2 of 2"):
+            ICAConvergenceAnalysis(cfg).execute()
+        assert (bp.directory / "ICA" / f"{bp.fpath.stem}_convergence.png").exists()
+        cfg._ica_fail_on_nonconvergence = True
+        with pytest.raises(RuntimeError, match="did not converge"):
+            ICAConvergenceAnalysis(cfg).execute()
+
+    def test_converged_is_silent(self, setup, recwarn):
+        cfg, bp, fit = setup
+        fit(max_iter=1000)
+        ICAConvergenceAnalysis(cfg).execute()
+        assert not [w for w in recwarn if "did not converge" in str(w.message)]
+        assert (bp.directory / "ICA" / f"{bp.fpath.stem}_convergence.png").exists()

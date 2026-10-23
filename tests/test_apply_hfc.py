@@ -51,7 +51,6 @@ class TestApplyHFC:
     def test_applies_projections_to_raw(self, raw_meg, hfc_cfg):
         """HFC should add and apply SSP projections to raw data."""
         analysis = ApplyHFCAnalysis(hfc_cfg)
-        raw_before = raw_meg.copy()
         raw_out, noise_out = analysis._apply_hfc(raw_meg)
 
         # Projections should be applied

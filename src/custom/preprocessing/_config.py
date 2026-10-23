@@ -38,15 +38,14 @@ from mne_bids_pipeline._config_import import (
 # Analyses not in this mapping are always enabled (no config flag required).
 ANALYSIS_CONFIG_FLAGS: dict[str, str] = {
     "manualchannel": "_manual_channels",
-    "autoica": "_auto_ica",
+    "badICs": "_bad_ICs",
     "manualica": "_manual_ica",
-    "regress": "_regress",
     "applyhfc": "_do_HFC",
     "zcafilter": "_do_ZCA",
 }
 
 # Analyses that require spatial_filter="ica" to be set
-ICA_ANALYSES: set[str] = {"autoica", "manualica"}
+ICA_ANALYSES: set[str] = {"badICs", "manualica"}
 
 
 def load_config(config_path: str) -> SimpleNamespace:
@@ -96,19 +95,19 @@ def normalize_analysis_key(analysis: str) -> str:
     Parameters
     ----------
     analysis : str
-        Analysis name from CLI (e.g., 'bad_segments', 'regress').
+        Analysis name from CLI (e.g., 'bad_segments', 'apply_hfc').
 
     Returns
     -------
     key : str
-        Normalized key (e.g., 'badsegments', 'regressref').
+        Normalized key (e.g., 'badsegments', 'applyhfc').
 
     Examples
     --------
     >>> normalize_analysis_key('bad_segments')
     'badsegments'
-    >>> normalize_analysis_key('regress')
-    'regress'
+    >>> normalize_analysis_key('apply_hfc')
+    'applyhfc'
     """
     return analysis.replace("_", "")
 
@@ -119,7 +118,7 @@ def get_analysis_config_flag(analysis_key: str) -> Optional[str]:
     Parameters
     ----------
     analysis_key : str
-        Normalized analysis key (e.g., 'regressref').
+        Normalized analysis key (e.g., 'applyhfc').
 
     Returns
     -------
@@ -129,8 +128,8 @@ def get_analysis_config_flag(analysis_key: str) -> Optional[str]:
 
     Examples
     --------
-    >>> get_analysis_config_flag('regress')
-    '_regress'
+    >>> get_analysis_config_flag('applyhfc')
+    '_do_HFC'
     >>> get_analysis_config_flag('badsegments')
     None
     """
@@ -148,7 +147,7 @@ def check_analysis_enabled(cfg: SimpleNamespace, analysis_key: str) -> bool:
     cfg : SimpleNamespace
         Configuration object.
     analysis_key : str
-        Normalized analysis key (e.g., 'regressref', 'manualica').
+        Normalized analysis key (e.g., 'applyhfc', 'manualica').
 
     Returns
     -------
@@ -162,8 +161,8 @@ def check_analysis_enabled(cfg: SimpleNamespace, analysis_key: str) -> bool:
 
     Examples
     --------
-    >>> cfg = SimpleNamespace(_regress=True)
-    >>> check_analysis_enabled(cfg, 'regress')
+    >>> cfg = SimpleNamespace(_do_HFC=True)
+    >>> check_analysis_enabled(cfg, 'applyhfc')
     True
     >>> check_analysis_enabled(cfg, 'badsegments')
     True

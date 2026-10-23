@@ -1,20 +1,19 @@
-"""Tests for preprocessing._io.save_ica_bids.
+"""Tests for preprocessing._io.save_ica_bids and read_ica_bids.
 
-Covers the main utility function in _io.py that combines ICA saving
-with TSV component status updates. Uses real file I/O in a tmp directory.
+The components TSV is the hand-off to mne-bids-pipeline's apply_ica step:
+custom steps update it and never rewrite the pipeline's ICA .fif. Uses real
+file I/O in a tmp directory.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import mne
-import numpy as np
 import pandas as pd
 import pytest
 
-from custom.preprocessing._io import get_ica_bids_path, save_ica_bids
+from custom.preprocessing._io import get_ica_bids_path, read_ica_bids, save_ica_bids
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +64,7 @@ def ica_setup(tmp_path, meg_info, rng):
 
 
 class TestSaveIcaBids:
-    """Test that save_ica_bids updates TSV and saves ICA object."""
+    """Test that save_ica_bids updates the TSV only."""
 
     def test_shared_ica_updates_pipeline_artifacts(self, ica_setup):
         """Save exclusions where the downstream pipeline reads them."""
@@ -76,8 +75,6 @@ class TestSaveIcaBids:
 
         path = get_ica_bids_path(cfg)
         assert path.task is None
-        loaded = mne.preprocessing.read_ica(path.fpath)
-        assert loaded.exclude == [0, 2]
         df = pd.read_csv(shared_tsv, sep="\t")
         assert df.loc[df.status == "bad", "component"].tolist() == [0, 2]
         assert not legacy_tsv.exists()
@@ -115,22 +112,32 @@ class TestSaveIcaBids:
         assert df.loc[df["component"] == 0, "status_description"].iloc[0] == "manual"
         assert df.loc[df["component"] == 2, "status_description"].iloc[0] == "manual"
 
-    def test_saves_ica_fif(self, ica_setup):
-        """ICA should be saved as a .fif file."""
+    def test_does_not_rewrite_ica_fif(self, ica_setup):
+        """The pipeline's ICA .fif is left alone, so its cache stays valid."""
         ica, cfg, _, deriv = ica_setup
-        save_ica_bids(ica, cfg)
-
         ica_path = deriv / "sub-001_ses-01_task-restingstate_proc-ica_ica.fif"
-        assert ica_path.exists()
-
-    def test_saved_ica_preserves_excludes(self, ica_setup):
-        """The saved ICA should preserve the exclude list."""
-        ica, cfg, _, deriv = ica_setup
+        ica.save(ica_path)
+        before = ica_path.read_bytes()
+        ica.exclude = [1, 3]
         save_ica_bids(ica, cfg)
+        assert ica_path.read_bytes() == before
 
-        ica_path = deriv / "sub-001_ses-01_task-restingstate_proc-ica_ica.fif"
-        loaded = mne.preprocessing.read_ica(ica_path)
-        assert loaded.exclude == [0, 2]
+    def test_unmarked_component_becomes_good(self, ica_setup):
+        """Removing a component from ica.exclude marks it good again."""
+        ica, cfg, tsv_path, _ = ica_setup
+        save_ica_bids(ica, cfg)
+        ica.exclude = [2]
+        save_ica_bids(ica, cfg)
+        df = pd.read_csv(tsv_path, sep="\t")
+        assert df.loc[df.status == "bad", "component"].tolist() == [2]
+
+    def test_read_ica_bids_uses_tsv_exclusions(self, ica_setup):
+        """read_ica_bids takes ica.exclude from the TSV, not the .fif."""
+        ica, cfg, tsv_path, deriv = ica_setup
+        ica.save(deriv / "sub-001_ses-01_task-restingstate_proc-ica_ica.fif")
+        ica.exclude = [1, 4]
+        save_ica_bids(ica, cfg)
+        assert read_ica_bids(cfg).exclude == [1, 4]
 
     def test_empty_exclude_no_changes(self, ica_setup):
         """ICA with empty exclude list should leave TSV unchanged."""

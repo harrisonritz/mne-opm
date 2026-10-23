@@ -6,7 +6,6 @@ namespaces so that tests can run without real MEG data files.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,7 +41,6 @@ def _make_info(
     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
 
     # Assign unique sensor locations so HFC and forward-model helpers don't complain.
-    rng = np.random.RandomState(42)
     for idx, ch in enumerate(info["chs"]):
         loc = np.zeros(12)
         # Position on a sphere of radius ~0.1 m

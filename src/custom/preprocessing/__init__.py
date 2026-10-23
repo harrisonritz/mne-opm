@@ -9,8 +9,6 @@ Available Analyses
 init_derivatives
     Clear leftover ``proc-<custom_proc>`` derivatives from a previous run so
     preprocessing starts from the raw BIDS data.
-regress
-    Regress out a configurable list of sensor signals from MEG data.
 bad_segments
     Detect and annotate bad raw data segments.
 bad_channels
@@ -21,10 +19,12 @@ apply_hfc
     Apply homogeneous field correction (HFC) projections.
 bad_epochs
     Drop bad epochs post-epoching using GESD.
-auto_ica
+bad_ICs
     Automatic ICA component labeling based on reference sensors.
 manual_ica
     Interactive ICA component review and selection.
+ica_convergence
+    Check and plot whether the pipeline ICA fit converged.
 
 Shared Utilities
 ----------------
@@ -44,7 +44,6 @@ Author: Harrison Ritz, 2025
 from . import (
     bad_ICs,
     init_derivatives,
-    regress,
     bad_segments,
     bad_channels,
     manual_channel,
@@ -53,6 +52,7 @@ from . import (
     select_trial_response,
     bad_epochs,
     manual_ica,
+    ica_convergence,
     coreg,
 )
 
@@ -60,6 +60,7 @@ from . import (
 from ._base import BaseAnalysis, SEGMENT_LEN_SEC
 from ._config import load_config, normalize_analysis_key
 from ._io import (
+    read_ica_bids,
     save_ica_bids,
     get_bids_path_for_task,
     get_custom_proc,
@@ -78,7 +79,6 @@ from ._bids_utils import get_bids_path
 __all__ = [
     # Analysis modules
     "init_derivatives",
-    "regress",
     "bad_segments",
     "bad_channels",
     "manual_channel",
@@ -88,13 +88,17 @@ __all__ = [
     "bad_epochs",
     "bad_ICs",
     "manual_ica",
+    "ica_convergence",
     "coreg",
     # Shared utilities
     "BaseAnalysis",
     "SEGMENT_LEN_SEC",
     "load_config",
     "normalize_analysis_key",
+    "read_ica_bids",
     "save_ica_bids",
+    "first_response_per_trial",
+    "drop_response_rows_from_events_tsv",
     "get_bids_path_for_task",
     "get_bids_path",
     "get_custom_proc",

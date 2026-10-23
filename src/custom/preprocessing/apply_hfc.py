@@ -58,7 +58,6 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import mne
-import mne_bids
 
 from ._base import BaseAnalysis
 from ._io import (
@@ -175,24 +174,13 @@ class ApplyHFCAnalysis(BaseAnalysis):
         # Separate task data from metadata
         tasks = {k: v for k, v in results.items() if k not in {"bads"}}
 
-        # Process noise FIRST (when present) so the task save can use the
-        # already-written noise as its empty-room association.
-        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
-
-        er_output_bp = None
-        for task, raw in ordered_tasks:
+        for task, raw in tasks.items():
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
 
             source_bp = paths[0]
-            empty_room = er_output_bp if task != "noise" else None
-            output_bp = write_raw_bids_custom_step(
-                raw, self.cfg, source_bp, empty_room=empty_room
-            )
-
-            if task == "noise":
-                er_output_bp = output_bp
+            output_bp = write_raw_bids_custom_step(raw, self.cfg, source_bp)
 
             self.log(f"Saved task={task} → {output_bp.fpath}")
 

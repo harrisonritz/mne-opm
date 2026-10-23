@@ -28,9 +28,8 @@ class TestNormalizeAnalysisKey:
         "raw, expected",
         [
             ("bad_segments", "badsegments"),
-            ("regress", "regress"),
             ("manual_channel", "manualchannel"),
-            ("auto_ica", "autoica"),
+            ("bad_ICs", "badICs"),
             ("apply_hfc", "applyhfc"),
             ("zca_filter", "zcafilter"),
             ("bad_epochs", "badepochs"),
@@ -60,10 +59,9 @@ class TestGetAnalysisConfigFlag:
     """Tests for mapping analysis keys to config flags."""
 
     def test_known_keys_return_flags(self):
-        assert get_analysis_config_flag("regress") == "_regress"
         assert get_analysis_config_flag("applyhfc") == "_do_HFC"
         assert get_analysis_config_flag("zcafilter") == "_do_ZCA"
-        assert get_analysis_config_flag("autoica") == "_auto_ica"
+        assert get_analysis_config_flag("badICs") == "_bad_ICs"
         assert get_analysis_config_flag("manualica") == "_manual_ica"
         assert get_analysis_config_flag("manualchannel") == "_manual_channels"
 
@@ -101,32 +99,32 @@ class TestCheckAnalysisEnabled:
         assert check_analysis_enabled(cfg, "coreg") is True
 
     def test_flag_gated_enabled(self):
-        cfg = SimpleNamespace(_regress=True)
-        assert check_analysis_enabled(cfg, "regress") is True
+        cfg = SimpleNamespace(_do_HFC=True)
+        assert check_analysis_enabled(cfg, "applyhfc") is True
 
     def test_flag_gated_disabled(self):
-        cfg = SimpleNamespace(_regress=False)
-        assert check_analysis_enabled(cfg, "regress") is False
+        cfg = SimpleNamespace(_do_HFC=False)
+        assert check_analysis_enabled(cfg, "applyhfc") is False
 
     def test_flag_gated_missing_defaults_false(self):
         cfg = SimpleNamespace()
-        assert check_analysis_enabled(cfg, "regress") is False
+        assert check_analysis_enabled(cfg, "applyhfc") is False
 
     def test_ica_requires_spatial_filter(self):
-        cfg = SimpleNamespace(_auto_ica=True, spatial_filter="ica")
-        assert check_analysis_enabled(cfg, "autoica") is True
+        cfg = SimpleNamespace(_bad_ICs=True, spatial_filter="ica")
+        assert check_analysis_enabled(cfg, "badICs") is True
 
     def test_ica_disabled_without_spatial_filter(self):
-        cfg = SimpleNamespace(_auto_ica=True, spatial_filter=None)
-        assert check_analysis_enabled(cfg, "autoica") is False
+        cfg = SimpleNamespace(_bad_ICs=True, spatial_filter=None)
+        assert check_analysis_enabled(cfg, "badICs") is False
 
     def test_ica_disabled_with_wrong_spatial_filter(self):
-        cfg = SimpleNamespace(_auto_ica=True, spatial_filter="ssp")
-        assert check_analysis_enabled(cfg, "autoica") is False
+        cfg = SimpleNamespace(_bad_ICs=True, spatial_filter="ssp")
+        assert check_analysis_enabled(cfg, "badICs") is False
 
     def test_ica_disabled_flag_false(self):
-        cfg = SimpleNamespace(_auto_ica=False, spatial_filter="ica")
-        assert check_analysis_enabled(cfg, "autoica") is False
+        cfg = SimpleNamespace(_bad_ICs=False, spatial_filter="ica")
+        assert check_analysis_enabled(cfg, "badICs") is False
 
     def test_manual_ica_requires_both(self):
         cfg = SimpleNamespace(_manual_ica=True, spatial_filter="ica")
@@ -180,9 +178,9 @@ class TestValidateRequiredConfig:
 
 class TestICAAnalyses:
     def test_ica_analyses_contains_expected(self):
-        assert "autoica" in ICA_ANALYSES
+        assert "badICs" in ICA_ANALYSES
         assert "manualica" in ICA_ANALYSES
 
     def test_ica_analyses_does_not_contain_others(self):
         assert "badsegments" not in ICA_ANALYSES
-        assert "regress" not in ICA_ANALYSES
+        assert "applyhfc" not in ICA_ANALYSES

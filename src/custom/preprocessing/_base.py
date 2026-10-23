@@ -29,8 +29,6 @@ from abc import ABC, abstractmethod
 from types import SimpleNamespace
 from typing import Any, Dict
 
-import mne
-
 
 # -----------------------------------------------------------------------------
 # Global Constants
@@ -46,7 +44,7 @@ SEGMENT_LEN_SEC: float = 1.0
 
 # Check for Qt browser availability
 try:
-    import mne_qt_browser
+    import mne_qt_browser  # noqa: F401
 
     _HAVE_QT_BROWSER: bool = True
 except Exception:
@@ -180,7 +178,7 @@ class BaseAnalysis(ABC):
         Notes
         -----
         This method should check for analysis-specific config flags.
-        For example, regress checks cfg._regress.
+        For example, apply_hfc checks cfg._do_HFC.
         """
         ...
 

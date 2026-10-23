@@ -130,7 +130,9 @@ def build_schedule(
             # so a decoder has signal without the problem being trivial.
             correct = "left" if condition == "A" else "right"
             accurate = bool(rng.random() < 0.85)
-            response = correct if accurate else ("right" if correct == "left" else "left")
+            response = (
+                correct if accurate else ("right" if correct == "left" else "left")
+            )
             rt = float(rng.gamma(shape=6.0, scale=0.075) + 0.25)
 
             onsets.append(t)
@@ -198,7 +200,9 @@ def trigger_annotations(trigger_data: np.ndarray, sfreq: float):
     )
 
 
-def trigger_waveforms(schedule: TrialSchedule, sfreq: float, n_times: int) -> np.ndarray:
+def trigger_waveforms(
+    schedule: TrialSchedule, sfreq: float, n_times: int
+) -> np.ndarray:
     """Render a schedule onto eight parallel-port trigger lines.
 
     Returns

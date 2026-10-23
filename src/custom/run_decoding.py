@@ -16,8 +16,6 @@ import argparse
 import sys
 from collections import Counter
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Optional
 
 import matplotlib
 
@@ -37,7 +35,7 @@ from mne.decoding import (
 )
 from mne_bids import BIDSPath
 from sklearn.metrics import get_scorer, roc_auc_score
-from sklearn.model_selection import GridSearchCV, LeaveOneGroupOut, cross_val_score
+from sklearn.model_selection import GridSearchCV, LeaveOneGroupOut
 from sklearn.pipeline import make_pipeline
 from sklearn.svm import LinearSVC
 
@@ -220,7 +218,7 @@ def run_subject_time_decoding(
     )
     mean_scores = cv_scores.mean(axis=0)
 
-    print(f"      Fitting on all data for patterns/filters ...")
+    print("      Fitting on all data for patterns/filters ...")
     sliding.fit(X, y)
     patterns = get_coef(sliding, "patterns_", inverse_transform=True)
     filters_ = get_coef(sliding, "filters_", inverse_transform=True)
@@ -1263,7 +1261,7 @@ def process_subject(cfg):
         print(f"\n  {subject} -- {cname}  ({cond_1}  vs  {cond_2})")
 
         # Time-resolved decoding
-        print(f"  [time decoding]")
+        print("  [time decoding]")
         t_res = run_subject_time_decoding(
             epochs,
             contrast,
@@ -1279,7 +1277,7 @@ def process_subject(cfg):
 
         # Temporal generalization
         if run_tg:
-            print(f"  [temporal generalization]")
+            print("  [temporal generalization]")
             tg_res = run_subject_temporal_gen(
                 epochs,
                 contrast,
@@ -1294,7 +1292,7 @@ def process_subject(cfg):
                 tg_results[cname] = tg_res
 
         # Full-epoch decoding
-        print(f"  [epoch decoding]")
+        print("  [epoch decoding]")
         e_res = run_subject_epoch_decoding(
             epochs,
             contrast,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import mne
@@ -14,7 +12,6 @@ from custom.format_bids import (
     _DEFAULT_SCREEN_DISTANCE,
     _DEFAULT_SCREEN_RESOLUTION,
     _DEFAULT_SCREEN_SIZE,
-    _HEAD_POS_CHANNELS,
     _build_file_tree,
     _get_head_pos_channels,
     _interpolate_nans,

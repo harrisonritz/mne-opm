@@ -89,7 +89,6 @@ from scipy.stats import kurtosis
 from scipy.signal import welch
 
 import mne
-import mne_bids
 from mne_bids import BIDSPath, find_matching_paths
 
 from ._base import BaseAnalysis
@@ -232,14 +231,14 @@ class BadICAnalysis(BaseAnalysis):
         return {self.cfg.task: raw, "ica": ica}
 
     def save_results(self, results: Dict[str, Any]) -> None:
-        """Save ICA solution with updated exclusions and detailed TSV.
+        """Write the updated exclusions and detailed scores to the components TSV.
 
         Parameters
         ----------
         results : dict
             Dictionary with labeled ICA.
         """
-        self.log("Saving ICA results...")
+        self.log("Saving ICA component labels...")
 
         ica = results["ica"]
 
@@ -247,7 +246,7 @@ class BadICAnalysis(BaseAnalysis):
         components_df = self._build_components_tsv(ica)
         save_ica_bids(ica, self.cfg, components_df=components_df)
 
-        self.log(f"Saved ICA with {len(ica.exclude)} excluded components")
+        self.log(f"Marked {len(ica.exclude)} components as bad in the components TSV")
         self.log(f"Components TSV columns: {list(components_df.columns)}")
 
     def _bad_ICs(
@@ -508,9 +507,7 @@ class BadICAnalysis(BaseAnalysis):
             after = cleaned.pick(radial_channels)
             fig, ax = plt.subplots(layout="constrained")
             fig.suptitle(title)
-            before.plot(
-                axes=ax, show=False, time_unit="s", spatial_colors=False
-            )
+            before.plot(axes=ax, show=False, time_unit="s", spatial_colors=False)
             for line in ax.lines:
                 line.set_color("r")
             n_before = len(ax.lines)
@@ -858,7 +855,8 @@ class BadICAnalysis(BaseAnalysis):
         excluded_before = set(ica.exclude)
         candidate_indices = np.array(
             [
-                i for i in range(n_comps)
+                i
+                for i in range(n_comps)
                 if include_preexcluded or i not in excluded_before
             ],
             dtype=int,
@@ -872,8 +870,7 @@ class BadICAnalysis(BaseAnalysis):
         n_remaining = n_comps - len(excluded_before)
         if n_remaining < 5 or len(candidate_indices) < 5:
             self.log(
-                f"Too few unexcluded components ({n_remaining}) for "
-                "PCA-GESD; skipping"
+                f"Too few unexcluded components ({n_remaining}) for PCA-GESD; skipping"
             )
             result = empty_result(names, sides, len(candidate_indices), alpha)
             result.item_indices = candidate_indices
@@ -884,8 +881,7 @@ class BadICAnalysis(BaseAnalysis):
             values = np.asarray(spec.values).reshape(-1)
             if values.size != n_comps:
                 self.log(
-                    f"metric '{spec.name}' length {values.size} != "
-                    f"{n_comps}; dropping"
+                    f"metric '{spec.name}' length {values.size} != {n_comps}; dropping"
                 )
                 continue
             candidate_specs.append(
@@ -1142,8 +1138,10 @@ class BadICAnalysis(BaseAnalysis):
         n_comps = ica.n_components_
 
         # --- Read existing pipeline TSV for ICALabel attributions only ---
-        tsv_path = get_ica_bids_path(self.cfg).copy().update(
-            suffix="components", extension=".tsv"
+        tsv_path = (
+            get_ica_bids_path(self.cfg)
+            .copy()
+            .update(suffix="components", extension=".tsv")
         )
 
         pipeline_icalabel = ["n/a"] * n_comps

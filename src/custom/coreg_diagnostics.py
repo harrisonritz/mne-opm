@@ -24,11 +24,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import warnings
 from datetime import datetime, timezone
-from glob import glob
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
@@ -106,9 +104,7 @@ def _setup_3d_backend() -> None:
     try:
         # Disable antialiasing and multisampling for software rendering.
         # Off-screen rendering is controlled by pyvista.OFF_SCREEN above.
-        mne.viz.set_3d_options(
-            depth_peeling=False, antialias=False, multi_samples=1
-        )
+        mne.viz.set_3d_options(depth_peeling=False, antialias=False, multi_samples=1)
     except Exception as e:  # pragma: no cover - defensive
         print(f"[_setup_3d_backend] Could not set 3D options: {e}")
 
@@ -716,7 +712,6 @@ def run_alignment_diagnostics(
     cfg: SimpleNamespace,
     info: mne.Info,
     trans: Optional[mne.transforms.Transform],
-    fwd: Optional[mne.Forward],
     fs_subject: str,
     fs_subjects_dir: str,
     out_dir: Path,

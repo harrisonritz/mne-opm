@@ -1,4 +1,4 @@
-"""Tests for auto_ica.py — unified per-IC scoring, PCA-whitened GESD, figures.
+"""Tests for bad_ICs.py — unified per-IC scoring, PCA-whitened GESD, figures.
 
 These tests focus on the computational methods that can be validated with
 synthetic data, without needing real BIDS or ICA files.
@@ -28,7 +28,7 @@ def ica_cfg():
     individual tests override ``_ica_metrics`` to exercise targeted scores.
     """
     return SimpleNamespace(
-        _auto_ica=True,
+        _bad_ICs=True,
         spatial_filter="ica",
         ch_types=["mag"],
         deriv_root="/tmp/deriv",
@@ -37,7 +37,7 @@ def ica_cfg():
         task="restingstate",
         # Single unified selection list (diagnostics only here).
         _ica_metrics=list(BadICAnalysis.AVAILABLE_ICA_METRICS),
-        _auto_ica_overlay=False,  # skip figure PNGs in unit tests
+        _bad_ICs_overlay=False,  # skip figure PNGs in unit tests
     )
 
 
@@ -45,7 +45,9 @@ def ica_cfg():
 def synthetic_ica_and_raw():
     """Create a synthetic mag-only ICA + Raw pair for testing diagnostics.
 
-    Returns (ica, raw) where ica has been fit on raw.
+    Channels use triaxial OPM names (``... X``/``Y``/``Z``) so the radial-only
+    overlay has ``Z`` channels to plot. Returns (ica, raw) where ica has been
+    fit on raw.
     """
     rng = np.random.RandomState(42)
     n_ch = 20
@@ -53,7 +55,7 @@ def synthetic_ica_and_raw():
     n_times = int(sfreq * 5)  # 5 seconds
 
     info = mne.create_info(
-        [f"MEG{i:03d}" for i in range(n_ch)],
+        [f"MEG{i:03d} {'XYZ'[i % 3]}" for i in range(n_ch)],
         sfreq,
         ["mag"] * n_ch,
     )
@@ -109,7 +111,7 @@ class TestAutoICAIsEnabled:
         assert BadICAnalysis(ica_cfg).is_enabled() is True
 
     def test_disabled_without_flag(self, ica_cfg):
-        ica_cfg._auto_ica = False
+        ica_cfg._bad_ICs = False
         assert BadICAnalysis(ica_cfg).is_enabled() is False
 
     def test_disabled_without_spatial_filter(self, ica_cfg):
@@ -584,9 +586,9 @@ class TestBuildComponentsTSV:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg.deriv_root = str(tmp_path)
-        ica_cfg._auto_ica_overlay = False
+        ica_cfg._bad_ICs_overlay = False
         analysis = BadICAnalysis(ica_cfg)
-        analysis._auto_ica(ica, raw)
+        analysis._bad_ICs(ica, raw)
         df = analysis._build_components_tsv(ica)
 
         cols = set(df.columns)
@@ -614,7 +616,7 @@ class TestBuildComponentsTSV:
 
 
 # ---------------------------------------------------------------------------
-# _auto_ica integration
+# _bad_ICs integration
 # ---------------------------------------------------------------------------
 
 
@@ -623,7 +625,7 @@ class TestAutoICAIntegration:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         analysis = BadICAnalysis(ica_cfg)
-        result = analysis._auto_ica(ica, raw)
+        result = analysis._bad_ICs(ica, raw)
         assert isinstance(result, mne.preprocessing.ICA)
         assert result.exclude == sorted(set(result.exclude))
 
@@ -632,7 +634,7 @@ class TestAutoICAIntegration:
         ica.exclude = []
         ica_cfg._ica_metrics = []
         analysis = BadICAnalysis(ica_cfg)
-        result = analysis._auto_ica(ica, raw)
+        result = analysis._bad_ICs(ica, raw)
         assert result.exclude == []
 
 
@@ -651,7 +653,7 @@ class TestMakeOverlayEvoked:
 
 
 class TestICAOverlay:
-    """Tests for the report-style ICA overlay PNGs written during _auto_ica."""
+    """Tests for the report-style ICA overlay PNGs written during _bad_ICs."""
 
     def test_overlay_basepath_in_ica_folder(self, ica_cfg, tmp_path):
         ica_cfg.deriv_root = str(tmp_path)
@@ -666,7 +668,7 @@ class TestICAOverlay:
     ):
         ica, raw = synthetic_ica_and_raw
         ica_cfg.deriv_root = str(tmp_path)
-        ica_cfg._auto_ica_overlay = False
+        ica_cfg._bad_ICs_overlay = False
         analysis = BadICAnalysis(ica_cfg)
         analysis._save_ica_overlay(ica, None, 0, "pre-custom")
         assert list(tmp_path.rglob("*.png")) == []
@@ -679,7 +681,7 @@ class TestICAOverlay:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = [0]
         ica_cfg.deriv_root = str(tmp_path)
-        ica_cfg._auto_ica_overlay = True
+        ica_cfg._bad_ICs_overlay = True
         analysis = BadICAnalysis(ica_cfg)
         evoked = analysis._make_overlay_evoked(raw)
         analysis._save_ica_overlay(ica, evoked, 1, "gesd-PC1")
@@ -694,7 +696,7 @@ class TestICAOverlay:
         )
         assert expected.exists()
 
-    def test_overlay_steps_during_auto_ica(
+    def test_overlay_steps_during_bad_ICs(
         self, ica_cfg, synthetic_ica_and_raw, tmp_path
     ):
         import matplotlib
@@ -704,9 +706,9 @@ class TestICAOverlay:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg.deriv_root = str(tmp_path)
-        ica_cfg._auto_ica_overlay = True
+        ica_cfg._bad_ICs_overlay = True
         analysis = BadICAnalysis(ica_cfg)
-        analysis._auto_ica(ica, raw)
+        analysis._bad_ICs(ica, raw)
 
         pngs = sorted(p.name for p in tmp_path.rglob("*icaOverlay*.png"))
         assert any("_00_pre-custom.png" in p for p in pngs)
@@ -731,9 +733,9 @@ class TestGesdFigures:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg.deriv_root = str(tmp_path)
-        ica_cfg._auto_ica_overlay = True
+        ica_cfg._bad_ICs_overlay = True
         analysis = BadICAnalysis(ica_cfg)
-        analysis._auto_ica(ica, raw)
+        analysis._bad_ICs(ica, raw)
 
         names = sorted(p.name for p in tmp_path.rglob("*.png"))
         assert any("gesdLoadings" in n for n in names)
@@ -751,7 +753,7 @@ class TestGesdFigures:
         ica, raw = synthetic_ica_and_raw
         ica.exclude = []
         ica_cfg.deriv_root = str(tmp_path)
-        ica_cfg._auto_ica_overlay = True
+        ica_cfg._bad_ICs_overlay = True
         analysis = BadICAnalysis(ica_cfg)
 
         def _boom(_result):
@@ -759,5 +761,5 @@ class TestGesdFigures:
 
         # A single failing figure builder must not abort labelling.
         monkeypatch.setattr("custom.preprocessing.pca_gesd._fig_scree", _boom)
-        result = analysis._auto_ica(ica, raw)
+        result = analysis._bad_ICs(ica, raw)
         assert isinstance(result, mne.preprocessing.ICA)

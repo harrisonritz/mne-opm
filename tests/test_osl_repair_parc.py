@@ -164,9 +164,10 @@ class TestRepairStage:
         repair_parc.run(cfg)
 
         for subject in data:
-            assert read(
-                sign_flip.parc_file(outdir, subject, True, "lcmv")
-            ).event_id == EVENT_ID
+            assert (
+                read(sign_flip.parc_file(outdir, subject, True, "lcmv")).event_id
+                == EVENT_ID
+            )
 
     def test_is_idempotent(self, repair_cfg):
         cfg, outdir, _ = repair_cfg
@@ -197,9 +198,10 @@ class TestRepairStage:
         write_subject(outdir, "sub-001", with_sflip=False)
 
         assert repair_parc.run(cfg) is True
-        assert read(
-            sign_flip.parc_file(outdir, "sub-000", True, "lcmv")
-        ).event_id == EVENT_ID
+        assert (
+            read(sign_flip.parc_file(outdir, "sub-000", True, "lcmv")).event_id
+            == EVENT_ID
+        )
 
 
 class TestFailures:
@@ -215,9 +217,10 @@ class TestFailures:
         assert "FAILED for sub-000" in out
         assert "repaired 2/3" in out
         # The other subjects were still repaired.
-        assert read(
-            sign_flip.parc_file(outdir, "sub-001", True, "lcmv")
-        ).event_id == EVENT_ID
+        assert (
+            read(sign_flip.parc_file(outdir, "sub-001", True, "lcmv")).event_id
+            == EVENT_ID
+        )
 
     def test_a_failed_subject_keeps_its_original_file(self, repair_cfg):
         cfg, outdir, data = repair_cfg

@@ -184,7 +184,9 @@ class TestBuildVolumeForward:
         sentinel = MagicMock(spec=mne.Forward)
 
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",
@@ -211,7 +213,9 @@ class TestBuildVolumeForward:
         fake_fwd = MagicMock(spec=mne.Forward)
 
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",
@@ -228,9 +232,7 @@ class TestBuildVolumeForward:
                 "custom.run_beamformer.mne.read_bem_solution", return_value=fake_bem
             ) as mock_read_bem,
             patch("custom.run_beamformer.mne.make_bem_model") as mock_make_model,
-            patch(
-                "custom.run_beamformer.get_head_mri_trans", return_value="TRANS"
-            ) as mock_trans,
+            patch("custom.run_beamformer.get_head_mri_trans", return_value="TRANS"),
             patch(
                 "custom.run_beamformer.mne.setup_volume_source_space",
                 return_value=fake_src,
@@ -256,7 +258,9 @@ class TestBuildVolumeForward:
         """When no BEM is on disk, one is built via make_bem_model/solution."""
         info = mne.create_info(["MEG001"], 300.0, ["mag"])
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",
@@ -295,7 +299,9 @@ class TestBuildVolumeForward:
         vol_cfg._beamformer_volume_cache = False
         info = mne.create_info(["MEG001"], 300.0, ["mag"])
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",
@@ -333,7 +339,9 @@ class TestBuildVolumeForward:
         # fake path so the "BEM on disk" branch is taken.
         mock_find = MagicMock(return_value=Path("/fake/bem-sol.fif"))
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",
@@ -536,7 +544,9 @@ class TestAddToReportVolume:
         stcs = {"stim_a": Path("/fake/sub-001_stim_a+lcmv+vol")}
 
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",
@@ -569,7 +579,9 @@ class TestAddToReportVolume:
         stcs = {"stim_a": Path("/fake/sub-001_stim_a+lcmv+hemi")}
 
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",
@@ -581,7 +593,10 @@ class TestAddToReportVolume:
             patch("custom.run_beamformer._sanitize_cond_tag", side_effect=lambda c: c),
         ):
             add_to_report(
-                vol_cfg, stcs, analysis_type="time", src=MagicMock(),
+                vol_cfg,
+                stcs,
+                analysis_type="time",
+                src=MagicMock(),
                 source_space="surface",
             )
 
@@ -597,7 +612,9 @@ class TestAddToReportVolume:
         stcs = {"stim_a": Path("/fake/sub-001_stim_a+lcmv+vol")}
 
         with (
-            patch("custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"),
+            patch(
+                "custom.run_beamformer.get_fs_subject", return_value="sub-001_ses-01"
+            ),
             patch(
                 "custom.run_beamformer.get_fs_subjects_dir",
                 return_value="/fake/subjects_dir",

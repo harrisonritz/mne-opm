@@ -1,7 +1,7 @@
 """Custom preprocessing and analysis modules for OPM-MEG data.
 
 This package provides modular preprocessing analyses for OPM-MEG data,
-including bad segment/channel detection, reference regression, ICA, and more.
+including bad segment/channel detection, ICA, and more.
 
 Main entry point:
     python -m src.custom.custom_preproc --analysis=<name> --config=<path>

@@ -58,6 +58,16 @@ Optional:
                 Same, but for noise (empty-room) recordings.
             segment_len_sec : float
                 Segment window length in seconds.
+            amplitude : dict, optional
+                Keyword arguments for :func:`mne.preprocessing.annotate_amplitude`
+                (e.g. ``peak``, ``flat``, ``bad_percent``, ``min_duration``),
+                run on the same filtered copy before the OSL detection. Its
+                thresholds apply to differences between consecutive samples, so
+                ``peak`` catches jumps (e.g. OPM flux jumps) rather than
+                sustained high amplitude. Adds
+                ``BAD_peak`` / ``BAD_flat`` annotations, and marks channels that
+                exceed ``bad_percent`` as bad (``bad_percent=100`` disables
+                that). Omit to skip.
         See *config-trial.py* for a full example.
     process_empty_room : bool
         Also process empty room noise recording. Default: False.
@@ -91,9 +101,8 @@ import mne
 
 from osl_ephys.preprocessing.osl_wrappers import bad_segments as osl_bad_segments
 
-import mne_bids
 
-from ._base import BaseAnalysis, SEGMENT_LEN_SEC
+from ._base import BaseAnalysis
 from ._io import (
     find_custom_input_paths,
     read_raw_bids_with_retry,
@@ -268,24 +277,13 @@ class BadSegmentsAnalysis(BaseAnalysis):
         # Separate task data from metadata
         tasks = {k: v for k, v in results.items() if k not in {"bads"}}
 
-        # Process noise FIRST (when present) so its saved location can be
-        # used as the empty-room association when saving the task.
-        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
-
-        er_output_bp = None
-        for task, raw in ordered_tasks:
+        for task, raw in tasks.items():
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task} to save to")
 
             source_bp = paths[0]
-            empty_room = er_output_bp if task != "noise" else None
-            output_bp = write_raw_bids_custom_step(
-                raw, self.cfg, source_bp, empty_room=empty_room
-            )
-
-            if task == "noise":
-                er_output_bp = output_bp
+            output_bp = write_raw_bids_custom_step(raw, self.cfg, source_bp)
 
             self.log(f"Saved task={task} → {output_bp.fpath}")
 
@@ -355,6 +353,22 @@ class BadSegmentsAnalysis(BaseAnalysis):
             method="iir",
             skip_by_annotation=("edge", "bad"),
         )
+
+        # --- Optional peak-to-peak / flat amplitude annotations -----------
+        amplitude = params.get("amplitude")
+        if amplitude:
+            amp_annotations, amp_bads = mne.preprocessing.annotate_amplitude(
+                filt, picks=self.cfg.ch_types, **amplitude
+            )
+            filt.set_annotations(filt.annotations + amp_annotations)
+            raw.set_annotations(raw.annotations + amp_annotations)
+            new_bads = sorted(set(amp_bads) - set(raw.info["bads"]))
+            raw.info["bads"] += new_bads
+            filt.info["bads"] = list(raw.info["bads"])
+            self.log(
+                f"annotate_amplitude: {len(amp_annotations)} annotations, "
+                f"bad channels {new_bads}"
+            )
 
         # filt already inherits annotations from raw.copy() (breaks, prior BADs)
         # so osl_bad_segments will respect them during metric computation.
