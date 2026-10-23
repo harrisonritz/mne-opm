@@ -17,6 +17,22 @@ from custom.osl import source as source_stage
 from custom.osl._config import load_config
 
 
+@pytest.fixture(autouse=True)
+def _restore_freesurfer_env():
+    """Undo the env vars the freesurfer backend sets via _ensure_freesurfer_env.
+
+    They are written straight into ``os.environ``, so without this a test here
+    leaks e.g. ``SUBJECTS_DIR=/fs`` into every later test (and config import).
+    """
+    saved = {name: os.environ.get(name) for name in ("SUBJECTS_DIR", "FREESURFERDIR")}
+    yield
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
 CONFIG = """
 pipeline:
   subject: "007"
