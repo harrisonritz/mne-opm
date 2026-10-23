@@ -105,3 +105,16 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::RuntimeWarning",
 ]
+
+[tool.ruff]
+target-version = "py313"
+# Exploratory scripts with hard-coded local paths; not part of the package.
+extend-exclude = ["src/dev"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# CLI entry points put src/ on sys.path before importing the package
+"src/custom/custom_preproc.py" = ["E402"]
+"src/custom/run_osl.py" = ["E402"]
