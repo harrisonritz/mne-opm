@@ -446,9 +446,10 @@ class BadICAnalysis(BaseAnalysis):
     ) -> None:
         """Save a report-style ICA overlay for the current (cumulative) exclusions.
 
-        Renders ``ica.plot_overlay(inst=evoked)`` — the averaged evoked response
+        Renders radial (``Z``) sensor traces of the averaged evoked response
         before (red) and after (black) removing the components currently in
-        ``ica.exclude`` — matching the mne-bids-pipeline report overlay.  Because
+        ``ica.exclude``. ICA is applied to all fitted channels before selecting
+        radial channels for display. Because
         ``ica.exclude`` grows across the per-PC GESD steps, successive calls
         produce cumulative overlays.  Files are named::
 
@@ -466,7 +467,7 @@ class BadICAnalysis(BaseAnalysis):
         ica : mne.preprocessing.ICA
             ICA solution with the current ``exclude`` list.
         evoked : mne.Evoked | None
-            Averaged response passed to ``plot_overlay`` as ``inst``.
+            Averaged response containing all fitted channels.
         step_idx : int
             Step number used for the zero-padded filename ordinal.
         step_label : str
@@ -477,6 +478,15 @@ class BadICAnalysis(BaseAnalysis):
         if evoked is None:
             return
 
+        radial_channels = [
+            name
+            for name in ica.ch_names
+            if name in evoked.ch_names and name.endswith(" Z")
+        ]
+        if not radial_channels:
+            self.log("No radial (Z) ICA channels found; skipping overlay.")
+            return
+
         import matplotlib.pyplot as plt
 
         out_dir, basename = self._overlay_basepath()
@@ -485,15 +495,31 @@ class BadICAnalysis(BaseAnalysis):
 
         n_excl = len(ica.exclude)
         title = (
-            f"Step {step_idx:02d}: {step_label} — {n_excl} excluded "
+            f"Radial Z — Step {step_idx:02d}: {step_label} — {n_excl} excluded "
             f"(red=before, black=after cleaning)"
         )
 
+        fig = None
         try:
-            fig = ica.plot_overlay(
-                inst=evoked, show=False, on_baseline="reapply", title=title
+            # MNE's Evoked plot_overlay picks channels before applying ICA,
+            # which would remove X/Y channels required by this triaxial fit.
+            cleaned = ica.apply(evoked.copy(), on_baseline="reapply")
+            before = evoked.copy().pick(radial_channels)
+            after = cleaned.pick(radial_channels)
+            fig, ax = plt.subplots(layout="constrained")
+            fig.suptitle(title)
+            before.plot(
+                axes=ax, show=False, time_unit="s", spatial_colors=False
             )
+            for line in ax.lines:
+                line.set_color("r")
+            n_before = len(ax.lines)
+            after.plot(axes=ax, show=False, time_unit="s", spatial_colors=False)
+            for line in ax.lines[n_before:]:
+                line.set_color("k")
         except Exception as exc:  # plotting must never break labelling
+            if fig is not None:
+                plt.close(fig)
             self.log(f"Overlay plot '{step_label}' failed: {type(exc).__name__}: {exc}")
             return
 
