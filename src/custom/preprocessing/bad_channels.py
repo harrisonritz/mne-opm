@@ -310,11 +310,7 @@ class BadChannelsAnalysis(BaseAnalysis):
         confirmed = sorted(set(results.get("bads", []) or []))
         tasks = {k: v for k, v in results.items() if k != "bads"}
 
-        # Process noise first so the task save can reference it as empty-room.
-        ordered_tasks = sorted(tasks.items(), key=lambda kv: kv[0] != "noise")
-
-        er_output_bp = None
-        for task, raw in ordered_tasks:
+        for task, raw in tasks.items():
             paths = find_custom_input_paths(self.cfg, task=task)
             if not paths:
                 raise FileNotFoundError(f"No file found for task={task}")
@@ -326,10 +322,7 @@ class BadChannelsAnalysis(BaseAnalysis):
                 raw.info["bads"] = merged_bads
                 self.log(f"task={task}: {len(merged_bads)} total bad channels")
 
-            empty_room = er_output_bp if task != "noise" else None
-            output_bp = write_raw_bids_custom_step(
-                raw, self.cfg, source_bp, empty_room=empty_room
-            )
+            output_bp = write_raw_bids_custom_step(raw, self.cfg, source_bp)
 
             if confirmed:
                 mne_bids.mark_channels(
@@ -340,9 +333,6 @@ class BadChannelsAnalysis(BaseAnalysis):
                 )
 
             self._save_channel_figures(task, output_bp)
-
-            if task == "noise":
-                er_output_bp = output_bp
 
             self.log(f"Saved task={task} → {output_bp.fpath}")
 

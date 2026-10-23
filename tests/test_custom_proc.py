@@ -8,8 +8,8 @@ steps must:
 2. Write outputs to ``deriv_root`` with ``proc-<custom_proc>`` instead
    of overwriting the BIDS data files.
 
-When ``cfg.custom_proc`` is unset / ``None``, behaviour falls back to
-the legacy contract of reading from / writing to ``bids_root``.
+When ``cfg.custom_proc`` is unset / ``None``, inputs are read from
+``bids_root`` and any write raises, so the raw BIDS data are never overwritten.
 """
 
 from __future__ import annotations
@@ -127,13 +127,11 @@ class TestGetCustomProc:
 class TestGetCustomOutputPath:
     """get_custom_output_path redirects writes when custom_proc is set."""
 
-    def test_no_custom_proc_returns_source_unchanged(self, tmp_path):
+    def test_no_custom_proc_raises(self, tmp_path):
         cfg = _make_cfg(tmp_path)  # no custom_proc
         source_bp = _make_bids_path(tmp_path / "bids")
-
-        output_bp = get_custom_output_path(cfg, source_bp)
-        assert str(output_bp.root) == str(source_bp.root)
-        assert output_bp.processing == source_bp.processing  # both None
+        with pytest.raises(ValueError, match="custom_proc must be set"):
+            get_custom_output_path(cfg, source_bp)
 
     def test_custom_proc_redirects_to_deriv_root(self, tmp_path):
         cfg = _make_cfg(tmp_path, custom_proc="init")
@@ -168,15 +166,6 @@ class TestGetCustomOutputPath:
 
         output_bp = get_custom_output_path(cfg, source_bp)
         output_bp.update(task="otherTask", check=False)
-        assert source_bp.task == "restingstate"
-
-    def test_returns_copy_when_proc_unset(self, tmp_path):
-        """Even with no custom_proc, the returned bp should be a copy."""
-        cfg = _make_cfg(tmp_path)
-        source_bp = _make_bids_path(tmp_path / "bids")
-
-        output_bp = get_custom_output_path(cfg, source_bp)
-        output_bp.update(task="otherTask")
         assert source_bp.task == "restingstate"
 
 
@@ -264,8 +253,8 @@ class TestWriteRawBidsCustomStep:
     """End-to-end behaviour of write_raw_bids_custom_step."""
 
     def test_raises_when_proc_unset_would_overwrite_bids(self, tmp_path, raw_meg):
-        """With custom_proc unset the output resolves to the source BIDS file;
-        writing there is refused so the raw BIDS data is never overwritten."""
+        """With custom_proc unset, writing is refused so the raw BIDS data is
+        never overwritten."""
         bids_root = tmp_path / "bids"
         bids_root.mkdir()
         source_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
@@ -273,7 +262,7 @@ class TestWriteRawBidsCustomStep:
         cfg = _make_cfg(tmp_path)  # no custom_proc
 
         raw_meg.info["bads"] = ["MEG001"]
-        with pytest.raises(RuntimeError, match="raw BIDS"):
+        with pytest.raises(ValueError, match="custom_proc must be set"):
             write_raw_bids_custom_step(raw_meg, cfg, source_bp)
 
     def test_writes_to_deriv_with_proc_when_set(self, tmp_path, raw_meg):
@@ -360,21 +349,6 @@ class TestWriteRawBidsCustomStep:
         deriv_events = output_bp.copy().update(suffix="events", extension=".tsv").fpath
         assert deriv_events.exists()
         assert deriv_events.read_text().splitlines() == source_event_lines
-
-    def test_accepts_empty_room_kwarg(self, tmp_path, raw_meg):
-        """The empty_room kwarg is accepted (ignored in derivative mode)
-        without raising, and the output still lands in deriv_root."""
-        bids_root = tmp_path / "bids"
-        bids_root.mkdir()
-        source_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="restingstate")
-        er_bp = _write_minimal_raw_to_bids(bids_root, raw_meg, task="noise")
-
-        cfg = _make_cfg(tmp_path, custom_proc="init")
-        output_bp = write_raw_bids_custom_step(
-            raw_meg, cfg, source_bp, empty_room=er_bp
-        )
-        assert output_bp.fpath.exists()
-        assert str(output_bp.root) == cfg.deriv_root
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +452,7 @@ class TestBadChannelsRespectsCustomProc:
 
         analysis = BadChannelsAnalysis(cfg)
         results = {cfg.task: raw_meg, "bads": ["MEG001"]}
-        with pytest.raises(RuntimeError, match="raw BIDS"):
+        with pytest.raises(ValueError, match="custom_proc must be set"):
             analysis.save_results(results)
 
         # The refusal must happen before any mutation of the BIDS data, so
@@ -595,52 +569,3 @@ class TestLoadDataPrefersDeriv:
         assert cfg.task in data
         # The loaded raw should reflect the bads tagged by step 1
         assert "MEG001" in data[cfg.task].info["bads"]
-
-
-# ---------------------------------------------------------------------------
-# noise + task ordering when custom_proc is set
-# ---------------------------------------------------------------------------
-
-
-class TestNoiseTaskOrdering:
-    """When both noise and task are saved, noise must be saved first so the
-    task save can use its newly-written deriv path as the empty_room."""
-
-    @patch("custom.preprocessing.bad_channels.write_raw_bids_custom_step")
-    @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
-    def test_noise_saved_before_task(self, mock_find, mock_write, raw_meg, tmp_path):
-        from custom.preprocessing.bad_channels import BadChannelsAnalysis
-
-        cfg = SimpleNamespace(
-            bids_root=str(tmp_path / "bids"),
-            deriv_root=str(tmp_path / "derivatives"),
-            subjects=["001"],
-            sessions=["01"],
-            task="restingstate",
-            ch_types=["mag"],
-            l_freq=1.0,
-            h_freq=100.0,
-            process_empty_room=True,
-            find_breaks=False,
-            n_jobs=1,
-            custom_proc="init",
-        )
-
-        noise_source_bp = MagicMock(name="noise_src")
-        task_source_bp = MagicMock(name="task_src")
-        noise_output_bp = MagicMock(name="noise_out")
-        task_output_bp = MagicMock(name="task_out")
-        # First find call is for noise, second for the task
-        mock_find.side_effect = [[noise_source_bp], [task_source_bp]]
-        mock_write.side_effect = [noise_output_bp, task_output_bp]
-
-        analysis = BadChannelsAnalysis(cfg)
-        results = {"noise": raw_meg, cfg.task: raw_meg, "bads": []}
-        analysis.save_results(results)
-
-        # Two writes, noise first, then task
-        assert mock_write.call_count == 2
-
-        # Task write should reference the noise output as its empty_room
-        task_call = mock_write.call_args_list[-1]
-        assert task_call.kwargs.get("empty_room") is noise_output_bp

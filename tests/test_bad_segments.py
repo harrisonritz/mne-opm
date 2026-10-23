@@ -224,9 +224,6 @@ class TestBadSegmentsSaveResults:
 
         # Should write both noise and task
         assert mock_write.call_count == 2
-        # The task write should include empty_room=noise_bp
-        task_call_kwargs = mock_write.call_args_list[-1][1]
-        assert task_call_kwargs.get("empty_room") is noise_bp
 
 
 # ---------------------------------------------------------------------------

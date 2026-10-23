@@ -79,7 +79,7 @@ _use_precomputed_trans = False
 # suffix instead of overwriting the raw BIDS files.  When set (e.g. 'init'),
 # every custom step (bad_channels, bad_segments, apply_hfc,
 # manual_channel, zca_filter) reads from / writes to ``deriv_root`` with
-# ``proc-<custom_proc>``.  Leave as None to overwrite the raw BIDS data files.
+# ``proc-<custom_proc>``.  Required: custom steps never write to bids_root.
 custom_proc = "init"
 
 # Generate the mne-bids-pipeline HTML reports.  Disable to speed up runs.

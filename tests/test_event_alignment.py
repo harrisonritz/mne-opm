@@ -9,10 +9,9 @@ the lossy annotation ↔ events round-trip.  The fixes are:
 1. **format_bids.py** drops trigger stim channels after converting them
    to annotations, preventing ``write_raw_bids`` from re-discovering
    events via ``mne.find_events`` on stim channels.
-2. **_io.write_raw_bids_preserve_events()** backs up and restores
-   *_events.tsv* / *_events.json* around ``write_raw_bids`` calls so
-   preprocessing steps (bad_segments, bad_channels, …) cannot corrupt
-   the canonical event table.
+2. Custom preprocessing steps save with ``raw.save`` into ``deriv_root``
+   (``write_raw_bids_custom_step``) instead of ``write_raw_bids``, and
+   verify the event count after each write.
 
 Author: Harrison Ritz, 2025
 """
@@ -34,7 +33,6 @@ from custom.preprocessing._io import (
     count_condition_events_in_tsv,
     verify_event_count_after_write,
     write_raw_bids_custom_step,
-    write_raw_bids_preserve_events,
 )
 
 
@@ -167,213 +165,6 @@ def _count_trial_events(events_df: pd.DataFrame) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Tests: write_raw_bids_preserve_events utility
-# ---------------------------------------------------------------------------
-
-
-class TestWriteRawBidsPreserveEvents:
-    """Verify that write_raw_bids_preserve_events keeps events.tsv intact."""
-
-    def test_events_tsv_unchanged_after_rewrite(self, tmp_path):
-        """Events.tsv should be identical before and after a rewrite."""
-        raw = _make_raw_with_events(n_trial_events=20)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        original_df = _read_events_tsv(bp)
-
-        # Add BAD annotations (simulating bad_segments detection)
-        raw_read = mne_bids.read_raw_bids(bp)
-        raw_read.load_data()
-        raw_read.annotations.append(
-            onset=2.0, duration=0.5, description="bad_segment_mag"
-        )
-
-        # Re-write with the preserve wrapper
-        bp.split = None
-        write_raw_bids_preserve_events(
-            raw=raw_read,
-            bids_path=bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-
-        restored_df = _read_events_tsv(bp)
-
-        pd.testing.assert_frame_equal(
-            original_df,
-            restored_df,
-            obj="events.tsv after preserve-events rewrite",
-        )
-
-    def test_events_tsv_corrupted_without_preserve(self, tmp_path):
-        """Without the wrapper, events.tsv changes on rewrite.
-
-        This test documents the *problem* — plain write_raw_bids
-        may produce a different events.tsv after a read-modify-write
-        cycle because it regenerates from annotations.
-        """
-        raw = _make_raw_with_events(n_trial_events=20)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        original_df = _read_events_tsv(bp)
-        original_count = len(original_df)
-
-        raw_read = mne_bids.read_raw_bids(bp)
-        raw_read.load_data()
-        raw_read.annotations.append(
-            onset=2.0, duration=0.5, description="bad_segment_mag"
-        )
-
-        bp.split = None
-        mne_bids.write_raw_bids(
-            raw=raw_read,
-            bids_path=bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-
-        new_df = _read_events_tsv(bp)
-
-        # The bad_segment_mag annotation now appears in events.tsv
-        # (or the count may otherwise differ).
-        assert len(new_df) != original_count or not original_df.equals(new_df), (
-            "Expected events.tsv to change after plain write_raw_bids "
-            "(this test documents the corruption problem)"
-        )
-
-    def test_no_events_files_first_write(self, tmp_path):
-        """First-time write with no existing events.tsv should work fine."""
-        raw = _make_raw_with_events(n_trial_events=10)
-        bp = mne_bids.BIDSPath(
-            root=str(tmp_path / "bids"),
-            subject="001",
-            session="01",
-            task="test",
-            datatype="meg",
-            suffix="meg",
-            extension=".fif",
-        )
-        # Use the wrapper for the first write — should not crash
-        write_raw_bids_preserve_events(
-            raw=raw,
-            bids_path=bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-        df = _read_events_tsv(bp)
-        assert _count_trial_events(df) == 10
-
-    def test_no_backup_residue_on_success(self, tmp_path):
-        """Backup files (.bak) should be cleaned up after a successful write."""
-        raw = _make_raw_with_events(n_trial_events=15)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        raw_read = mne_bids.read_raw_bids(bp)
-        raw_read.load_data()
-
-        bp.split = None
-        write_raw_bids_preserve_events(
-            raw=raw_read,
-            bids_path=bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-
-        events_tsv = bp.copy().update(suffix="events", extension=".tsv").fpath
-        assert not Path(str(events_tsv) + ".bak").exists()
-
-
-# ---------------------------------------------------------------------------
-# Tests: event count stability across simulated pipeline
-# ---------------------------------------------------------------------------
-
-
-class TestEventCountStability:
-    """Simulate the read → modify → write cycle that preprocessing steps
-    perform and verify event counts remain stable."""
-
-    def test_single_rewrite_preserves_trial_count(self, tmp_path):
-        """One read-modify-write cycle should not change trial event count."""
-        n_trials = 25
-        raw = _make_raw_with_events(n_trial_events=n_trials)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        assert _count_trial_events(_read_events_tsv(bp)) == n_trials
-
-        # Simulate bad_segments: read, add BAD annotation, re-write
-        raw_read = mne_bids.read_raw_bids(bp)
-        raw_read.load_data()
-        raw_read.annotations.append(3.0, 1.0, "bad_segment_mag")
-
-        bp.split = None
-        write_raw_bids_preserve_events(
-            raw=raw_read,
-            bids_path=bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-
-        assert _count_trial_events(_read_events_tsv(bp)) == n_trials
-
-    def test_multiple_rewrites_preserve_trial_count(self, tmp_path):
-        """Simulating 5 consecutive pipeline steps should not accumulate
-        extra events."""
-        n_trials = 30
-        raw = _make_raw_with_events(n_trial_events=n_trials)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        # 5 read-modify-write cycles (bad_segments_1, bad_channels,
-        # apply_hfc, apply_zca, bad_segments_2)
-        for i in range(5):
-            raw_read = mne_bids.read_raw_bids(bp)
-            raw_read.load_data()
-            # Each step might add a BAD annotation
-            raw_read.annotations.append(float(i + 1) * 2, 0.5, f"bad_segment_pass{i}")
-            bp.split = None
-            write_raw_bids_preserve_events(
-                raw=raw_read,
-                bids_path=bp,
-                allow_preload=True,
-                overwrite=True,
-                format="FIF",
-            )
-
-        final_df = _read_events_tsv(bp)
-        assert _count_trial_events(final_df) == n_trials
-
-    def test_total_event_rows_unchanged_across_rewrites(self, tmp_path):
-        """Not just trial events — ALL rows in events.tsv should be stable."""
-        n_trials = 20
-        raw = _make_raw_with_events(n_trial_events=n_trials)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        original_df = _read_events_tsv(bp)
-        original_rows = len(original_df)
-
-        # 3 rewrite cycles
-        for _ in range(3):
-            raw_read = mne_bids.read_raw_bids(bp)
-            raw_read.load_data()
-            raw_read.annotations.append(5.0, 0.2, "bad_segment_mag")
-            bp.split = None
-            write_raw_bids_preserve_events(
-                raw=raw_read,
-                bids_path=bp,
-                allow_preload=True,
-                overwrite=True,
-                format="FIF",
-            )
-
-        final_df = _read_events_tsv(bp)
-        assert len(final_df) == original_rows
-
-
-# ---------------------------------------------------------------------------
 # Tests: stim channel removal in format_bids
 # ---------------------------------------------------------------------------
 
@@ -392,27 +183,6 @@ class TestStimChannelDrop:
         assert len(stim_chs) == 0, (
             "Raw written from annotations-only data should have no stim channels"
         )
-
-    def test_events_unchanged_after_rewrite_without_stim(self, tmp_path):
-        """Without stim channels, a plain write_raw_bids should still
-        produce events only from annotations (no stim-based duplication)."""
-        raw = _make_raw_with_events(n_trial_events=15, include_stim=False)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-        original_count = _count_trial_events(_read_events_tsv(bp))
-
-        # Re-read and re-write once (simulating a pipeline step)
-        raw_read = mne_bids.read_raw_bids(bp)
-        raw_read.load_data()
-        bp.split = None
-        write_raw_bids_preserve_events(
-            raw=raw_read,
-            bids_path=bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-        assert _count_trial_events(_read_events_tsv(bp)) == original_count
-
 
 # ---------------------------------------------------------------------------
 # Tests: metadata ↔ BIDS event alignment
@@ -483,72 +253,6 @@ class TestMetadataAlignment:
         assert len(corrupted_df) > original_df_len, (
             "Plain write_raw_bids should add the BAD annotation as an event row"
         )
-
-    def test_metadata_preserved_with_wrapper(self, tmp_path):
-        """Using write_raw_bids_preserve_events, metadata alignment is kept."""
-        n_trials = 20
-        raw = _make_raw_with_events(n_trial_events=n_trials)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        metadata = pd.DataFrame({"word": [f"word_{i}" for i in range(n_trials)]})
-
-        # Simulate 3 pipeline steps
-        for _ in range(3):
-            raw_read = mne_bids.read_raw_bids(bp)
-            raw_read.load_data()
-            raw_read.annotations.append(5.0, 0.3, "bad_segment_mag")
-            bp.split = None
-            write_raw_bids_preserve_events(
-                raw=raw_read,
-                bids_path=bp,
-                allow_preload=True,
-                overwrite=True,
-                format="FIF",
-            )
-
-        n_bids_trials = _count_trial_events(_read_events_tsv(bp))
-        assert len(metadata) == n_bids_trials, (
-            f"After 3 pipeline steps with preserve-events wrapper, "
-            f"metadata ({len(metadata)}) should still match "
-            f"BIDS trials ({n_bids_trials})"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Tests: events.json preservation
-# ---------------------------------------------------------------------------
-
-
-class TestEventsJsonPreservation:
-    """Verify that events.json sidecar is also preserved."""
-
-    def test_events_json_unchanged(self, tmp_path):
-        """events.json should be byte-identical after preserve-events rewrite."""
-        raw = _make_raw_with_events(n_trial_events=10)
-        bp = _write_initial_bids(raw, tmp_path / "bids")
-
-        events_json = bp.copy().update(suffix="events", extension=".json").fpath
-        if events_json.exists():
-            original_content = events_json.read_text()
-        else:
-            pytest.skip("No events.json generated by mne_bids")
-
-        raw_read = mne_bids.read_raw_bids(bp)
-        raw_read.load_data()
-        raw_read.annotations.append(1.0, 0.5, "bad_segment_mag")
-
-        bp.split = None
-        write_raw_bids_preserve_events(
-            raw=raw_read,
-            bids_path=bp,
-            allow_preload=True,
-            overwrite=True,
-            format="FIF",
-        )
-
-        restored_content = events_json.read_text()
-        assert original_content == restored_content
-
 
 # ---------------------------------------------------------------------------
 # Tests: post-write event-count verification helpers
