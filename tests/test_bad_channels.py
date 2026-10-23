@@ -1,10 +1,10 @@
-"""Tests for bad_channels.py — multi-detector consensus bad channel detection.
+"""Tests for bad_channels.py — PCA-whitened GESD bad channel detection.
 
-Exercises the individual detectors (full-recording GESD, time-resolved GESD,
-PSD, LOF), the consensus vote that splits confirmed vs candidate channels, the
-candidates sidecar, the run() accumulation across tasks, and the module-level
-run(cfg) entry point.  BIDS I/O is mocked; the statistical detection itself runs
-on synthetic data.
+Exercises detection through run() on synthetic data (whole-recording variance
+outliers, intermittent outliers via the windowed outlier fraction, the
+configurable filter band), the run() accumulation across tasks, and the
+module-level run(cfg) entry point.  BIDS I/O is mocked; the statistical
+detection itself runs on synthetic data.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import pytest
 
 from custom.preprocessing.bad_channels import (
     BadChannelsAnalysis,
-    candidates_sidecar_path,
     run,
 )
 
@@ -46,51 +45,50 @@ def bad_ch_cfg(tmp_path):
     )
 
 
+def _detect(cfg, raw):
+    """Run detection on a single recording and return the flagged channels."""
+    return BadChannelsAnalysis(cfg).run({cfg.task: raw})["bads"]
+
+
 # ---------------------------------------------------------------------------
-# Detectors — core per-recording logic
+# Detection — core per-recording logic
 # ---------------------------------------------------------------------------
 
 
 class TestDetectBadChannels:
-    """Test the detectors on synthetic data."""
+    """Test PCA→GESD detection on synthetic data."""
 
     def test_detects_bad_channel_with_high_variance(
         self, raw_with_bad_channel, bad_ch_cfg
     ):
-        """A channel with 100x higher variance should be flagged by detectors."""
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        results = analysis._detect_all_methods(raw_with_bad_channel)
-        flagged = set().union(*results.values()) if results else set()
-        # MEG001 has 100x variance — multiple detectors should catch it
-        assert "MEG001" in flagged
-        assert "gesd" in results and "MEG001" in results["gesd"]
+        """A channel with 100x higher variance should be flagged."""
+        assert "MEG001" in _detect(bad_ch_cfg, raw_with_bad_channel)
 
     def test_clean_data_has_few_or_no_confirmed_bads(self, raw_meg, bad_ch_cfg):
-        """Homogeneous random data should yield no confirmed (consensus) bads."""
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        results = analysis._detect_all_methods(raw_meg)
-        confirmed, _ = analysis._combine_votes(results, analysis._consensus_n())
-        # Consensus of >=2 detectors on iid data should confirm nothing.
-        assert len(confirmed) == 0
+        """Homogeneous random data should yield no flagged channels."""
+        assert _detect(bad_ch_cfg, raw_meg) == []
 
     def test_filtering_applied_before_detection(self, raw_with_bad_channel, bad_ch_cfg):
-        """Detection should use data filtered at cfg.l_freq / h_freq."""
-        bad_ch_cfg.l_freq = 5.0
-        bad_ch_cfg.h_freq = 40.0
+        """Detection should run with the configured _bad_channel_* band."""
+        bad_ch_cfg._bad_channel_lfreq = 5.0
+        bad_ch_cfg._bad_channel_hfreq = 40.0
         analysis = BadChannelsAnalysis(bad_ch_cfg)
-        # Should not crash, and still detect the outlier
-        results = analysis._detect_all_methods(raw_with_bad_channel)
-        flagged = set().union(*results.values()) if results else set()
-        assert "MEG001" in flagged
+        with patch.object(
+            mne.io.BaseRaw, "filter", autospec=True, side_effect=mne.io.BaseRaw.filter
+        ) as mock_filter:
+            bads = analysis.run({bad_ch_cfg.task: raw_with_bad_channel})["bads"]
+        assert mock_filter.call_args.kwargs["l_freq"] == 5.0
+        assert mock_filter.call_args.kwargs["h_freq"] == 40.0
+        assert "MEG001" in bads
 
 
 # ---------------------------------------------------------------------------
-# Time-resolved detector — intermittent bad channels
+# Windowed outlier fraction — intermittent bad channels
 # ---------------------------------------------------------------------------
 
 
 class TestTimeResolvedDetection:
-    """The time-resolved detector should catch intermittent bad channels."""
+    """The logit_outlier_frac metric should catch intermittent bad channels."""
 
     def _make_intermittent(self, meg_info, bad_frac=0.3):
         """Raw where MEG002 is bad in only `bad_frac` of the recording."""
@@ -104,15 +102,10 @@ class TestTimeResolvedDetection:
         return mne.io.RawArray(data, meg_info)
 
     def test_timeresolved_catches_intermittent(self, meg_info, bad_ch_cfg):
-        """A channel bad in ~30% of windows is flagged by time-resolved."""
-        bad_ch_cfg.l_freq = 1.0
-        bad_ch_cfg.h_freq = 100.0
+        """A channel bad in ~30% of windows is flagged by the outlier fraction."""
         raw = self._make_intermittent(meg_info, bad_frac=0.3)
-
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        filt = raw.copy().filter(l_freq=1.0, h_freq=100.0, method="iir")
-        tr = analysis._detect_timeresolved(filt, "mag")
-        assert "MEG002" in tr
+        bad_ch_cfg._channel_metrics = ["logit_outlier_frac"]
+        assert "MEG002" in _detect(bad_ch_cfg, raw)
 
     def _make_heterogeneous_intermittent(self, bad_frac=0.3):
         """Raw with a realistic spread of channel noise levels, plus an
@@ -120,9 +113,9 @@ class TestTimeResolvedDetection:
 
         Real OPM arrays have heterogeneous per-channel noise floors.  A channel
         that is only intermittently disruptive has a whole-recording std that
-        sits within that natural spread (so full-recording GESD misses it), yet
+        sits within that natural spread (so the log_std metric misses it), yet
         in its bad windows it transiently exceeds even the noisiest channels (so
-        the time-resolved detector catches it).
+        the windowed outlier fraction catches it).
         """
         n_meg = 40
         info = mne.create_info(
@@ -145,88 +138,16 @@ class TestTimeResolvedDetection:
         return mne.io.RawArray(data, info)
 
     def test_full_gesd_misses_intermittent(self, bad_ch_cfg):
-        """Whole-recording GESD misses the intermittent channel that the
-        time-resolved detector catches (the core motivation)."""
+        """Whole-recording log_std misses the intermittent channel that the
+        windowed outlier fraction catches (the core motivation)."""
         raw = self._make_heterogeneous_intermittent(bad_frac=0.3)
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        filt = raw.copy().filter(l_freq=1.0, h_freq=100.0, method="iir")
-        full = analysis._detect_gesd_full(filt, "mag")
-        tr = analysis._detect_timeresolved(filt, "mag")
-        # The time-resolved detector catches it even when full-recording does not.
+        bad_ch_cfg._channel_metrics = ["log_std"]
+        full = _detect(bad_ch_cfg, raw)
+        bad_ch_cfg._channel_metrics = ["logit_outlier_frac"]
+        tr = _detect(bad_ch_cfg, raw)
+        # The outlier fraction catches it even when whole-recording std does not.
         assert "MEG002" in tr
         assert "MEG002" not in full
-
-
-# ---------------------------------------------------------------------------
-# Consensus voting
-# ---------------------------------------------------------------------------
-
-
-class TestConsensusVoting:
-    """Test _combine_votes confirmed/candidate split."""
-
-    def test_consensus_two_confirms_multi_method(self, bad_ch_cfg):
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        method_results = {
-            "gesd": {"MEG001"},
-            "timeresolved": {"MEG001"},
-            "lof": {"MEG005"},  # single method only
-        }
-        confirmed, candidates = analysis._combine_votes(method_results, 2)
-        assert "MEG001" in confirmed
-        assert "MEG005" in candidates
-        assert "MEG005" not in confirmed
-        assert "MEG001" not in candidates
-
-    def test_consensus_one_marks_any_flag(self, bad_ch_cfg):
-        """With consensus_n=1, any single flag confirms (no candidates)."""
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        method_results = {"lof": {"MEG005"}}
-        confirmed, candidates = analysis._combine_votes(method_results, 1)
-        assert "MEG005" in confirmed
-        assert candidates == {}
-
-
-# ---------------------------------------------------------------------------
-# Candidates sidecar — written here, consumed by manual_channel
-# ---------------------------------------------------------------------------
-
-
-class TestCandidatesSidecar:
-    """Single-method flags are written to a sidecar and not auto-marked."""
-
-    def test_sidecar_written_and_readable(self, tmp_path, bad_ch_cfg):
-        """_write_candidates_sidecar writes a TSV that manual_channel can read."""
-        # Lightweight stand-in for a BIDSPath with directory + basename.
-        fake_bp = SimpleNamespace(
-            directory=str(tmp_path),
-            basename="sub-001_ses-01_task-restingstate_meg",
-        )
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        analysis._write_candidates_sidecar(
-            fake_bp, {"MEG004": ["lof"], "MEG006": ["psd"]}
-        )
-
-        sidecar = candidates_sidecar_path(fake_bp)
-        assert sidecar.exists()
-
-        import pandas as pd
-
-        df = pd.read_csv(sidecar, sep="\t")
-        assert set(df["channel"]) == {"MEG004", "MEG006"}
-
-    def test_empty_candidates_removes_stale_sidecar(self, tmp_path, bad_ch_cfg):
-        """An empty candidate set clears any stale sidecar from a prior run."""
-        fake_bp = SimpleNamespace(
-            directory=str(tmp_path),
-            basename="sub-001_ses-01_task-restingstate_meg",
-        )
-        analysis = BadChannelsAnalysis(bad_ch_cfg)
-        analysis._write_candidates_sidecar(fake_bp, {"MEG004": ["lof"]})
-        assert candidates_sidecar_path(fake_bp).exists()
-
-        analysis._write_candidates_sidecar(fake_bp, {})
-        assert not candidates_sidecar_path(fake_bp).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -298,8 +219,9 @@ class TestBadChannelsLoadData:
     @patch("custom.preprocessing.bad_channels.read_raw_bids_with_retry")
     @patch("custom.preprocessing.bad_channels.find_custom_input_paths")
     def test_load_with_empty_room(self, mock_find, mock_read, raw_meg, bad_ch_cfg):
-        """When process_empty_room=True, load noise + task."""
+        """With process_empty_room and _bad_channel_emptyroom, load noise + task."""
         bad_ch_cfg.process_empty_room = True
+        bad_ch_cfg._bad_channel_emptyroom = True
         mock_bp = MagicMock()
         mock_find.return_value = [mock_bp]
         mock_read.return_value = raw_meg
