@@ -1697,8 +1697,8 @@ wheels = [
 
 [[package]]
 name = "mne"
-version = "0.1.0.dev19158+gab5e0e8fd"
-source = { git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm#ab5e0e8fd9de9852bda5ff89430a070f5d6b90cb" }
+version = "0.1.0.dev19160+g35baa0810"
+source = { git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm#35baa081031aea945792d69352e63e2ec9ff383b" }
 dependencies = [
     { name = "decorator" },
     { name = "jinja2" },
@@ -1740,8 +1740,8 @@ full = [
 
 [[package]]
 name = "mne-bids-pipeline"
-version = "0.1.0.dev1170+ge317fda2c"
-source = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm#e317fda2ccd4736eb28cf2534254eb0495375371" }
+version = "0.1.0.dev1171+gda9717a1e"
+source = { git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm#da9717a1ea5354b1eb583ff0cbd7be5463ace483" }
 dependencies = [
     { name = "annotated-types" },
     { name = "autoreject" },
