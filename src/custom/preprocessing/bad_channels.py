@@ -398,8 +398,8 @@ class BadChannelsAnalysis(BaseAnalysis):
                 skip_by_annotation=("edge", "bad"),
             )
             .filter(
-                l_freq=self.cfg._bad_channel_lfreq,
-                h_freq=self.cfg._bad_channel_hfreq,
+                l_freq=getattr(self.cfg, "_bad_channel_lfreq", _DEFAULT_PSD_FMIN),
+                h_freq=getattr(self.cfg, "_bad_channel_hfreq", _DEFAULT_PSD_FMAX),
                 method="iir",
                 n_jobs=-1,
                 skip_by_annotation=("edge", "bad"),
