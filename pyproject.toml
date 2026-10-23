@@ -26,6 +26,7 @@ dependencies = [
     "gedai>=0.1.0",
     "imageio[ffmpeg]>=2.37.2",
     "ipykernel>=7.1.0",
+    "jamica>=0.3.0",
     "mne",
     "mne-bids",
     "mne-bids-pipeline",

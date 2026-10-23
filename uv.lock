@@ -1235,6 +1235,19 @@ wheels = [
 ]
 
 [[package]]
+name = "jamica"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/4f/46f4e38f0904fa794541fdc5225d78c9f2d8947296eb98452eba83da19ee/jamica-0.3.0.tar.gz", hash = "sha256:06ee3a5b8aee630bddd2edb2d59412c309b0a37882ec5ee2cc8d1bf7d6aa8094", size = 139192, upload-time = "2026-08-28T20:42:34.753Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/f3/57e3401b6041d91af95346883513802ef62843ffee206e368d5cc89eadf2/jamica-0.3.0-py3-none-any.whl", hash = "sha256:a185ed9a847512bcf2250e47b2b154f471ad8b9f93373eea08bff2eb4c5a8f1d", size = 101730, upload-time = "2026-08-28T20:42:33.132Z" },
+]
+
+[[package]]
 name = "jedi"
 version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1684,8 +1697,8 @@ wheels = [
 
 [[package]]
 name = "mne"
-version = "0.1.0.dev19104+g41790c77e"
-source = { git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm#41790c77edd2bfc1b044591ac59bd03b9de08f21" }
+version = "0.1.0.dev19158+gab5e0e8fd"
+source = { git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm#ab5e0e8fd9de9852bda5ff89430a070f5d6b90cb" }
 dependencies = [
     { name = "decorator" },
     { name = "jinja2" },
@@ -1808,6 +1821,7 @@ dependencies = [
     { name = "gedai" },
     { name = "imageio", extra = ["ffmpeg"] },
     { name = "ipykernel" },
+    { name = "jamica" },
     { name = "mne" },
     { name = "mne-bids", extra = ["full"] },
     { name = "mne-bids-pipeline" },
@@ -1846,6 +1860,7 @@ requires-dist = [
     { name = "gedai", specifier = ">=0.1.0" },
     { name = "imageio", extras = ["ffmpeg"], specifier = ">=2.37.2" },
     { name = "ipykernel", specifier = ">=7.1.0" },
+    { name = "jamica", specifier = ">=0.3.0" },
     { name = "mne", git = "https://github.com/harrisonritz/mne-python.git?branch=mne-opm" },
     { name = "mne-bids", git = "https://github.com/harrisonritz/mne-bids.git?branch=mne-opm" },
     { name = "mne-bids-pipeline", git = "https://github.com/harrisonritz/mne-bids-pipeline.git?branch=mne-opm" },
@@ -2428,7 +2443,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "ptyprocess" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
@@ -2708,7 +2723,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/75/76/49c6da2c6a831020b4854ba20079d5a1030474bffc776b7b73c2eeff8c15/pyobjc_framework_cocoa-12.2.2.tar.gz", hash = "sha256:c96c0ef69a71afbbb0e6a7d594b455c5fe47d62e0db376ee7a2b4b828c16ace9", size = 3132831, upload-time = "2026-08-11T19:44:02.288Z" }
 wheels = [
