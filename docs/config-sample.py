@@ -276,12 +276,15 @@ print(f"    - spatial filter: {_spatial_filter}")
 _hfc_order = 3
 
 # -- AMM parameters (only used when _spatial_filter == "AMM") --
-# Defaults are SPM's (spm_opm_amm).  Order 9 internal harmonics need about
+# Implemented by mne.preprocessing.apply_amm.  Orders and temporal-extension
+# defaults are SPM's (spm_opm_amm).  Order 9 internal harmonics need about
 # 100 channels; the paper ran the temporal extension with corr_lim 0.98.
 _amm_li = 9  # internal harmonic order
 _amm_le = 2  # external harmonic order
 _amm_corr_lim = 1.0  # temporal extension correlation limit (1 = off)
 _amm_window = 10.0  # temporal extension window (s)
+_amm_coord_frame = "head"  # frame the spheroid is fitted in ("head" or "meg")
+_amm_center_basis = False  # True: centre the basis across channels, as SPM does
 
 # -- ZCA parameters (only used when _spatial_filter == "ZCA") --
 _zca_method = "zca"  # toggle between 'zca' and 'gedai'
