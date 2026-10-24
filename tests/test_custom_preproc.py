@@ -49,6 +49,7 @@ class TestAnalysisRegistry:
             "badchannels",
             "manualchannel",
             "applyhfc",
+            "applyamm",
             "zcafilter",
             "badepochs",
             "badICs",

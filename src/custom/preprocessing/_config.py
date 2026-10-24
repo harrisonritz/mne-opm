@@ -18,6 +18,8 @@ Constants
 ---------
 ANALYSIS_CONFIG_FLAGS
     Mapping of analysis keys to their configuration enable flags.
+DEFAULT_ON_ANALYSES
+    Flag-gated analyses that run when their flag is not set.
 
 Author: Harrison Ritz, 2025
 """
@@ -41,8 +43,13 @@ ANALYSIS_CONFIG_FLAGS: dict[str, str] = {
     "badICs": "_bad_ICs",
     "manualica": "_manual_ica",
     "applyhfc": "_do_HFC",
+    "applyamm": "_do_AMM",
     "zcafilter": "_do_ZCA",
+    "badepochs": "_bad_epochs",
 }
+
+# Flag-gated analyses that run when the config does not set their flag.
+DEFAULT_ON_ANALYSES: set[str] = {"badepochs"}
 
 # Analyses that require spatial_filter="ica" to be set
 ICA_ANALYSES: set[str] = {"badICs", "manualica"}
@@ -157,7 +164,9 @@ def check_analysis_enabled(cfg: SimpleNamespace, analysis_key: str) -> bool:
     Notes
     -----
     Analyses without a config flag in ANALYSIS_CONFIG_FLAGS are always
-    considered enabled (e.g., 'badsegments', 'badchannels').
+    considered enabled (e.g., 'badsegments', 'badchannels').  A missing flag
+    disables its analysis, except for those in DEFAULT_ON_ANALYSES
+    (e.g., 'badepochs').
 
     Examples
     --------
@@ -170,7 +179,7 @@ def check_analysis_enabled(cfg: SimpleNamespace, analysis_key: str) -> bool:
     # Check for analysis-specific enable flag
     flag = get_analysis_config_flag(analysis_key)
     if flag is not None:
-        if not getattr(cfg, flag, False):
+        if not getattr(cfg, flag, analysis_key in DEFAULT_ON_ANALYSES):
             return False
 
     # ICA analyses require spatial_filter='ica'

@@ -63,10 +63,12 @@ _version = "sample"  # ← bump this to start a fresh derivatives folder
 _ANALYSIS_NAME = f"{os.environ.get('ANALYSIS')}__{_version}"
 print(f"\n[loading configuration]: {_ANALYSIS_NAME}")
 
-# Primary spatial filter method.  Exactly one of {"maxwell", "HFC", "ZCA", "none"}.
+# Primary spatial filter method.  Exactly one of
+# {"maxwell", "HFC", "AMM", "ZCA", "none"}.
 # Controls which spatial filter is applied during preprocessing.
 #   "maxwell" : Maxwell / Signal Space Separation (SSS)
 #   "HFC"     : Homogeneous Field Correction
+#   "AMM"     : Adaptive Multipole Models (Tierney et al., 2024)
 #   "ZCA"     : Zero-phase Component Analysis / GEDAI-based artifact removal
 #   "none"    : No spatial filtering (raw sensor data)
 _spatial_filter = "HFC"
@@ -241,23 +243,30 @@ ch_types = ["mag"]  # OPM sensors are magnetometers
 #
 #   HFC     — recommended; removes low-order external fields without a
 #             calibration file or reference array.
+#   AMM     — prolate spheroidal harmonic models of the brain and of external
+#             interference, fitted to the array (Tierney et al., 2024,
+#             https://doi.org/10.1002/hbm.26596).  Keeps only the part of the
+#             data the internal model explains, so it can remove some brain
+#             signal on radial or dual-axis arrays (see the paper).
 #   ZCA     — data-driven noise suppression via GED; good for high channel count.
 #   maxwell — designed for SQUID MEG; generally NOT recommended for OPM.
 #   none    — skip spatial filtering (useful for debugging).
 # ================================================================
 
 # Flags derived from _spatial_filter — do not edit directly.
-use_maxwell_filter, _do_HFC, _do_ZCA = False, False, False
+use_maxwell_filter, _do_HFC, _do_AMM, _do_ZCA = False, False, False, False
 if _spatial_filter.lower() == "maxwell":
     use_maxwell_filter = True
 elif _spatial_filter.upper() == "HFC":
     _do_HFC = True
+elif _spatial_filter.upper() == "AMM":
+    _do_AMM = True
 elif _spatial_filter.upper() == "ZCA":
     _do_ZCA = True
 elif _spatial_filter.lower() != "none":
     raise ValueError(
         f'Unknown _spatial_filter value: "{_spatial_filter}". '
-        f'Must be one of: "maxwell", "HFC", "ZCA", "none".'
+        f'Must be one of: "maxwell", "HFC", "AMM", "ZCA", "none".'
     )
 print(f"    - spatial filter: {_spatial_filter}")
 
@@ -265,6 +274,14 @@ print(f"    - spatial filter: {_spatial_filter}")
 # Spherical harmonic order for homogeneous field correction.
 # Order 1 = uniform field; order 3 also removes first-order gradients.
 _hfc_order = 3
+
+# -- AMM parameters (only used when _spatial_filter == "AMM") --
+# Defaults are SPM's (spm_opm_amm).  Order 9 internal harmonics need about
+# 100 channels; the paper ran the temporal extension with corr_lim 0.98.
+_amm_li = 9  # internal harmonic order
+_amm_le = 2  # external harmonic order
+_amm_corr_lim = 1.0  # temporal extension correlation limit (1 = off)
+_amm_window = 10.0  # temporal extension window (s)
 
 # -- ZCA parameters (only used when _spatial_filter == "ZCA") --
 _zca_method = "zca"  # toggle between 'zca' and 'gedai'
@@ -300,6 +317,7 @@ find_bad_channels_extra_kws = {"ignore_ref": True}
 _manual_channels = False  # pause to inspect bad channels interactively
 _bad_ICs = True  # run automated ICA component classification
 _manual_ica = False  # pause for manual inspection / override of ICA labels
+_bad_epochs = True  # run the OSL GESD bad_epochs step (False skips it)
 
 # Skip a pipeline step if its derivatives folder already exists (resume runs).
 _skip_on_deriv = True
@@ -787,7 +805,7 @@ if l_freq is not None:
     )
 
 # -- Spatial filter exclusivity --
-assert sum([use_maxwell_filter, _do_HFC, _do_ZCA]) <= 1, (
+assert sum([use_maxwell_filter, _do_HFC, _do_AMM, _do_ZCA]) <= 1, (
     "More than one spatial filter is active.  Check _spatial_filter."
 )
 

@@ -18,6 +18,7 @@ from custom.preprocessing.bad_segments import BadSegmentsAnalysis
 from custom.preprocessing.bad_channels import BadChannelsAnalysis
 from custom.preprocessing.bad_epochs import BadEpochsAnalysis
 from custom.preprocessing.manual_channel import ManualChannelAnalysis
+from custom.preprocessing.apply_amm import ApplyAMMAnalysis
 from custom.preprocessing.apply_hfc import ApplyHFCAnalysis
 from custom.preprocessing.zca_filter import ZCAFilterAnalysis
 from custom.preprocessing.bad_ICs import BadICAnalysis
@@ -42,6 +43,7 @@ class TestAnalysisClassConstants:
             (BadEpochsAnalysis, "badepochs", "bad_epochs"),
             (ManualChannelAnalysis, "manualchannel", "manual_channel"),
             (ApplyHFCAnalysis, "applyhfc", "apply_hfc"),
+            (ApplyAMMAnalysis, "applyamm", "apply_amm"),
             (ZCAFilterAnalysis, "zcafilter", "zca_filter"),
             (BadICAnalysis, "badICs", "bad_ICs"),
             (ManualICAAnalysis, "manualica", "manual_ica"),
@@ -60,11 +62,11 @@ class TestAnalysisClassConstants:
 
 
 class TestAlwaysEnabled:
-    """bad_segments, bad_channels, bad_epochs, coreg are always enabled."""
+    """bad_segments, bad_channels, coreg are always enabled."""
 
     @pytest.mark.parametrize(
         "cls",
-        [BadSegmentsAnalysis, BadChannelsAnalysis, BadEpochsAnalysis, CoregAnalysis],
+        [BadSegmentsAnalysis, BadChannelsAnalysis, CoregAnalysis],
     )
     def test_always_enabled(self, cls):
         cfg = SimpleNamespace()
@@ -88,6 +90,10 @@ class TestFlagGatedEnabled:
         cfg = SimpleNamespace(_do_HFC=False)
         assert ApplyHFCAnalysis(cfg).is_enabled() is False
 
+    def test_amm_enabled(self):
+        assert ApplyAMMAnalysis(SimpleNamespace(_do_AMM=True)).is_enabled() is True
+        assert ApplyAMMAnalysis(SimpleNamespace()).is_enabled() is False
+
     def test_zca_enabled(self):
         cfg = SimpleNamespace(_do_ZCA=True)
         assert ZCAFilterAnalysis(cfg).is_enabled() is True
@@ -103,6 +109,14 @@ class TestFlagGatedEnabled:
     def test_manual_channel_disabled(self):
         cfg = SimpleNamespace(_manual_channels=False)
         assert ManualChannelAnalysis(cfg).is_enabled() is False
+
+    @pytest.mark.parametrize(
+        "flags, expected",
+        [({}, True), ({"_bad_epochs": True}, True), ({"_bad_epochs": False}, False)],
+    )
+    def test_bad_epochs_flag_defaults_on(self, flags, expected):
+        cfg = SimpleNamespace(**flags)
+        assert BadEpochsAnalysis(cfg).is_enabled() is expected
 
 
 # ---------------------------------------------------------------------------

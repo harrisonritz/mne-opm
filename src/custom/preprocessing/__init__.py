@@ -17,6 +17,8 @@ manual_channel
     Interactive visual marking of bad channels.
 apply_hfc
     Apply homogeneous field correction (HFC) projections.
+apply_amm
+    Apply adaptive multipole models (AMM).
 bad_epochs
     Drop bad epochs post-epoching using GESD.
 bad_ICs
@@ -48,6 +50,7 @@ from . import (
     bad_channels,
     manual_channel,
     apply_hfc,
+    apply_amm,
     zca_filter,
     select_trial_response,
     bad_epochs,
@@ -83,6 +86,7 @@ __all__ = [
     "bad_channels",
     "manual_channel",
     "apply_hfc",
+    "apply_amm",
     "zca_filter",
     "select_trial_response",
     "bad_epochs",
