@@ -25,6 +25,7 @@ Requires-Dist: dupy>=1.2105.11
 Requires-Dist: gedai>=0.1.0
 Requires-Dist: imageio[ffmpeg]>=2.37.2
 Requires-Dist: ipykernel>=7.1.0
+Requires-Dist: jamica>=0.3.0
 Requires-Dist: mne
 Requires-Dist: mne-bids
 Requires-Dist: mne-bids-pipeline
@@ -345,8 +346,8 @@ Example config snippet (from this repo's configs):
 ```python
 _skip_on_deriv = True  # if True, skip steps when derivatives exist
 process_empty_room = True
-subjects = ['007']
-task = 'TSX'  # experiment task name
+subjects = ["007"]
+task = "TSX"  # experiment task name
 ```
 
 Notes:
