@@ -78,6 +78,7 @@ mne-opm adds several flags (prefixed with `_`) to control custom steps:
 | `_manual_channels`  | `bool` | `False` | Enable interactive bad channel GUI        |
 | `_bad_ICs`          | `bool` | `False` | Enable automatic ICA labeling             |
 | `_manual_ica`       | `bool` | `False` | Enable interactive ICA review             |
+| `_bad_epochs`       | `bool` | `True`  | Run the GESD bad epoch step               |
 
 :::{note}
 ICA-related flags (`_bad_ICs`, `_manual_ica`) also require

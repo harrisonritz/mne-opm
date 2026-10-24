@@ -64,11 +64,11 @@ class TestGetAnalysisConfigFlag:
         assert get_analysis_config_flag("badICs") == "_bad_ICs"
         assert get_analysis_config_flag("manualica") == "_manual_ica"
         assert get_analysis_config_flag("manualchannel") == "_manual_channels"
+        assert get_analysis_config_flag("badepochs") == "_bad_epochs"
 
     def test_unknown_keys_return_none(self):
         assert get_analysis_config_flag("badsegments") is None
         assert get_analysis_config_flag("badchannels") is None
-        assert get_analysis_config_flag("badepochs") is None
         assert get_analysis_config_flag("coreg") is None
 
     def test_nonexistent_key(self):
@@ -95,8 +95,12 @@ class TestCheckAnalysisEnabled:
         cfg = SimpleNamespace()
         assert check_analysis_enabled(cfg, "badsegments") is True
         assert check_analysis_enabled(cfg, "badchannels") is True
-        assert check_analysis_enabled(cfg, "badepochs") is True
         assert check_analysis_enabled(cfg, "coreg") is True
+
+    def test_bad_epochs_flag_defaults_on(self):
+        assert check_analysis_enabled(SimpleNamespace(), "badepochs") is True
+        cfg = SimpleNamespace(_bad_epochs=False)
+        assert check_analysis_enabled(cfg, "badepochs") is False
 
     def test_flag_gated_enabled(self):
         cfg = SimpleNamespace(_do_HFC=True)

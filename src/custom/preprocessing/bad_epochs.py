@@ -20,6 +20,10 @@ Programmatic:
 
 Configuration Attributes
 ------------------------
+Optional:
+    _bad_epochs : bool
+        Run the step (default True); ``_bad_epochs = False`` skips it.
+
 Required:
     ch_types : list
         Channel types to process (e.g., ['mag']).
@@ -57,6 +61,8 @@ class BadEpochsAnalysis(BaseAnalysis):
     is robust to multiple outliers and removes trials that would
     negatively impact subsequent analyses.
 
+    Enabled by default; set ``_bad_epochs = False`` in the config to skip it.
+
     Attributes
     ----------
     ANALYSIS_KEY : str
@@ -78,9 +84,9 @@ class BadEpochsAnalysis(BaseAnalysis):
         Returns
         -------
         enabled : bool
-            Always True (no config flag required for this analysis).
+            ``cfg._bad_epochs``, True when the config does not set it.
         """
-        return True
+        return getattr(self.cfg, "_bad_epochs", True)
 
     def load_data(self) -> Dict[str, Any]:
         """Load epoched data for bad epoch detection.

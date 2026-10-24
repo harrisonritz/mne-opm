@@ -60,11 +60,11 @@ class TestAnalysisClassConstants:
 
 
 class TestAlwaysEnabled:
-    """bad_segments, bad_channels, bad_epochs, coreg are always enabled."""
+    """bad_segments, bad_channels, coreg are always enabled."""
 
     @pytest.mark.parametrize(
         "cls",
-        [BadSegmentsAnalysis, BadChannelsAnalysis, BadEpochsAnalysis, CoregAnalysis],
+        [BadSegmentsAnalysis, BadChannelsAnalysis, CoregAnalysis],
     )
     def test_always_enabled(self, cls):
         cfg = SimpleNamespace()
@@ -103,6 +103,14 @@ class TestFlagGatedEnabled:
     def test_manual_channel_disabled(self):
         cfg = SimpleNamespace(_manual_channels=False)
         assert ManualChannelAnalysis(cfg).is_enabled() is False
+
+    @pytest.mark.parametrize(
+        "flags, expected",
+        [({}, True), ({"_bad_epochs": True}, True), ({"_bad_epochs": False}, False)],
+    )
+    def test_bad_epochs_flag_defaults_on(self, flags, expected):
+        cfg = SimpleNamespace(**flags)
+        assert BadEpochsAnalysis(cfg).is_enabled() is expected
 
 
 # ---------------------------------------------------------------------------

@@ -10,10 +10,14 @@ steps must:
 
 When ``cfg.custom_proc`` is unset / ``None``, inputs are read from
 ``bids_root`` and any write raises, so the raw BIDS data are never overwritten.
+
+A branch run (``custom.trunk``) seeds its ``deriv_root`` with a trunk's
+``proc-<custom_proc>`` files, so its custom steps continue from there.
 """
 
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -567,3 +571,207 @@ class TestLoadDataPrefersDeriv:
         assert cfg.task in data
         # The loaded raw should reflect the bads tagged by step 1
         assert "MEG001" in data[cfg.task].info["bads"]
+
+
+# ---------------------------------------------------------------------------
+# Trunk / branch: state file and seeding a variant (custom.trunk)
+# ---------------------------------------------------------------------------
+
+
+def _make_trunk(tmp_path, raw, monkeypatch):
+    """Build a trunk deriv_root the way the trunk steps and save-state do."""
+    from custom.trunk import save_trunk_state
+
+    bids_root = tmp_path / "bids"
+    bids_root.mkdir()
+    source_bp = _write_minimal_raw_to_bids(bids_root, raw, task="restingstate")
+    cfg = _make_cfg(tmp_path, deriv_root=str(tmp_path / "trunk"), custom_proc="init")
+    written = write_raw_bids_custom_step(raw, cfg, source_bp)
+    meg = written.fpath.parent
+    for split in ("01", "02"):  # empty-room derivative split across two files
+        (meg / f"sub-001_ses-01_task-noise_proc-init_split-{split}_raw.fif").write_text(
+            split
+        )
+    monkeypatch.setenv("MNE_OPM_BREAKS_ALREADY_ANNOTATED", "1")
+    monkeypatch.setenv("MNE_OPM_REQUIRE_RESPONSE_METADATA", "1")
+    monkeypatch.delenv("MNE_OPM_STAGE1_BREAKS_SAVED", raising=False)
+    (state_path,) = save_trunk_state(cfg)
+    return cfg, meg, state_path
+
+
+def _snapshot(root: Path) -> dict:
+    return {
+        p.relative_to(root): (p.read_bytes(), p.stat().st_mtime_ns)
+        for p in root.rglob("*")
+        if p.is_file()
+    }
+
+
+class TestTrunkState:
+    """The trunk state file records the env flags run_preproc.sh exported."""
+
+    def test_round_trip_atomic_and_cleared_by_init(self, tmp_path):
+        from custom.preprocessing import init_derivatives
+        from custom.trunk import read_trunk_state, trunk_state_path, write_trunk_state
+
+        cfg = _make_cfg(tmp_path, custom_proc="init")
+        path = trunk_state_path(cfg.deriv_root, "001", "01", "restingstate", "init")
+        assert (
+            path.name
+            == "sub-001_ses-01_task-restingstate_proc-init_desc-trunk_state.json"
+        )
+        env = {
+            "MNE_OPM_BREAKS_ALREADY_ANNOTATED": "1",
+            "MNE_OPM_STAGE1_BREAKS_SAVED": "0",
+        }
+        state = write_trunk_state(path, "init", environ=env)
+        assert state == {
+            "custom_proc": "init",
+            "flags": {
+                "MNE_OPM_BREAKS_ALREADY_ANNOTATED": True,
+                "MNE_OPM_REQUIRE_RESPONSE_METADATA": False,
+                "MNE_OPM_STAGE1_BREAKS_SAVED": False,
+            },
+        }
+        assert read_trunk_state(path) == state
+        assert list(path.parent.iterdir()) == [path]  # no temp file left behind
+        # Re-running the trunk's INIT clears it with the files it describes.
+        init_derivatives.run(cfg)
+        assert not path.exists()
+
+    def test_read_errors(self, tmp_path):
+        from custom.trunk import read_trunk_state
+
+        with pytest.raises(FileNotFoundError, match="PREPROC_STAGE=trunk"):
+            read_trunk_state(tmp_path / "missing.json")
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"custom_proc": "init", "flags": {}}')
+        with pytest.raises(ValueError, match="Malformed"):
+            read_trunk_state(bad)
+
+
+class TestSeedFromTrunk:
+    """A branch copies the trunk's proc-init files into its own deriv_root."""
+
+    def test_copies_proc_files_and_overwrites_stale(
+        self, tmp_path, raw_meg, monkeypatch
+    ):
+        from custom.trunk import seed_from_trunk
+
+        trunk_cfg, trunk_meg, state_path = _make_trunk(tmp_path, raw_meg, monkeypatch)
+        trunk_root = Path(trunk_cfg.deriv_root)
+        before = _snapshot(trunk_root)
+        cfg = _make_cfg(
+            tmp_path, deriv_root=str(tmp_path / "variant"), custom_proc="init"
+        )
+        meg = Path(cfg.deriv_root) / trunk_meg.relative_to(trunk_root)
+        meg.mkdir(parents=True)
+        task_fif = meg / "sub-001_ses-01_task-restingstate_proc-init_raw.fif"
+        task_fif.write_text("stale")
+        stale_split = (
+            meg / "sub-001_ses-01_task-restingstate_proc-init_split-03_raw.fif"
+        )
+        stale_split.write_text("stale")
+        keep = meg / "sub-001_ses-01_task-restingstate_proc-filt_raw.fif"
+        keep.write_text("keep")
+
+        flags = seed_from_trunk(cfg, trunk_root)
+
+        assert flags == {
+            "MNE_OPM_BREAKS_ALREADY_ANNOTATED": True,
+            "MNE_OPM_REQUIRE_RESPONSE_METADATA": True,
+            "MNE_OPM_STAGE1_BREAKS_SAVED": False,
+        }
+        assert _snapshot(trunk_root) == before  # the trunk is only read
+        copied = {rel for rel in before if rel.name != state_path.name}
+        names = {rel.name for rel in copied}
+        for suffix in ("raw.fif", "channels.tsv", "meg.json"):
+            assert f"sub-001_ses-01_task-restingstate_proc-init_{suffix}" in names
+        assert "sub-001_ses-01_task-noise_proc-init_split-02_raw.fif" in names
+        assert Path("participants.tsv") in copied
+        variant = Path(cfg.deriv_root)
+        for rel in copied:
+            assert (variant / rel).read_bytes() == before[rel][0], rel
+        assert not (meg / state_path.name).exists()
+        assert not stale_split.exists() and keep.read_text() == "keep"
+        assert not list(variant.rglob(".*.tmp"))
+        (found,) = find_custom_input_paths(cfg, task="restingstate")
+        assert found.fpath == task_fif
+        assert mne.io.read_raw_fif(task_fif).n_times == raw_meg.n_times
+
+        task_fif.write_text("rewritten by a branch step")
+        seed_from_trunk(cfg, trunk_root)
+        assert task_fif.read_bytes() == before[task_fif.relative_to(variant)][0]
+
+    @pytest.mark.parametrize(
+        "case, exc, match",
+        [
+            ("no_state", FileNotFoundError, "PREPROC_STAGE=trunk"),
+            ("no_fif", FileNotFoundError, "no proc-init raw FIF"),
+            ("unset", ValueError, "MNE_OPM_TRUNK_DERIV must be set"),
+            ("relative", ValueError, "must be absolute"),
+            ("same_root", ValueError, "its own deriv_root"),
+            ("other_proc", ValueError, "custom_proc"),
+        ],
+    )
+    def test_refuses_before_touching_variant(
+        self, tmp_path, raw_meg, monkeypatch, case, exc, match
+    ):
+        from custom.trunk import seed_from_trunk, write_trunk_state
+
+        trunk_cfg, trunk_meg, state_path = _make_trunk(tmp_path, raw_meg, monkeypatch)
+        trunk_root = Path(trunk_cfg.deriv_root)
+        cfg = _make_cfg(
+            tmp_path, deriv_root=str(tmp_path / "variant"), custom_proc="init"
+        )
+        stale = Path(cfg.deriv_root) / "sub-001" / "ses-01" / "meg"
+        stale.mkdir(parents=True)
+        stale = stale / "sub-001_ses-01_task-restingstate_proc-init_raw.fif"
+        stale.write_text("stale")
+        if case == "no_state":
+            state_path.unlink()
+        elif case == "no_fif":
+            for fif in trunk_meg.glob("*.fif"):
+                fif.unlink()
+        elif case == "unset":
+            trunk_root = None
+        elif case == "relative":
+            trunk_root = Path(os.path.relpath(trunk_root))
+        elif case == "same_root":
+            cfg.deriv_root = str(trunk_root)
+        elif case == "other_proc":
+            write_trunk_state(state_path, "other")
+
+        with pytest.raises(exc, match=match):
+            seed_from_trunk(cfg, trunk_root)
+        assert stale.read_text() == "stale"
+
+    def test_cli_prints_only_set_flags(self, tmp_path, raw_meg, monkeypatch, capsys):
+        from custom import trunk
+
+        trunk_cfg, _, _ = _make_trunk(tmp_path, raw_meg, monkeypatch)
+        cfg = _make_cfg(
+            tmp_path, deriv_root=str(tmp_path / "variant"), custom_proc="init"
+        )
+        seen = []
+        monkeypatch.setattr(
+            trunk,
+            "load_config",
+            lambda path: seen.append(os.environ.get("MNE_OPM_SKIP_METADATA")) or cfg,
+        )
+        monkeypatch.delenv("MNE_OPM_SKIP_METADATA", raising=False)
+        monkeypatch.setenv("MNE_OPM_TRUNK_DERIV", trunk_cfg.deriv_root)
+        capsys.readouterr()
+
+        assert trunk.main(["seed", "--config", "variant.py"]) == 0
+        out = capsys.readouterr().out
+        assert out.splitlines() == [
+            "MNE_OPM_BREAKS_ALREADY_ANNOTATED",
+            "MNE_OPM_REQUIRE_RESPONSE_METADATA",
+        ]
+        assert seen == ["1"] and "MNE_OPM_SKIP_METADATA" not in os.environ
+
+        monkeypatch.setenv("MNE_OPM_TRUNK_DERIV", str(tmp_path / "nowhere"))
+        assert trunk.main(["seed", "--config", "variant.py"]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == "" and "[trunk] ERROR" in captured.err

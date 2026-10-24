@@ -1,5 +1,12 @@
 # run preprocessing
 # Harrison Ritz 2025
+#
+# PREPROC_STAGE selects the steps to run (default: all):
+#   all     every step below
+#   trunk   INIT through bad_channels, then save the trunk state and stop
+#   branch  seed this config's deriv_root from the trunk's (MNE_OPM_TRUNK_DERIV,
+#           an absolute path), then run manual_channel onwards
+# RUN_BEAMFORMER=0 skips the final BEAMFORMER step.  See src/run/README.md.
 
 
 # fail on first crash
@@ -15,6 +22,15 @@ export CONFIG_PATH="$CONFIG_DIR/config-$ANALYSIS.py"
 unset MNE_OPM_REQUIRE_RESPONSE_METADATA
 unset MNE_OPM_BREAKS_ALREADY_ANNOTATED
 unset MNE_OPM_STAGE1_BREAKS_SAVED
+
+PREPROC_STAGE="${PREPROC_STAGE:-all}"
+case "$PREPROC_STAGE" in
+	all|trunk|branch) ;;
+	*)
+		echo "[ERROR] PREPROC_STAGE must be all, trunk or branch (got '$PREPROC_STAGE')." >&2
+		exit 1
+		;;
+esac
 
 
 # timing helpers
@@ -61,68 +77,115 @@ echo "CONFIG_PATH: $CONFIG_PATH"
 echo "RAW_DIR: $RAW_DIR"
 echo "BIDS_DIR: $BIDS_DIR"
 echo "SUBJECTS_DIR: $SUBJECTS_DIR"
+echo "PREPROC_STAGE: $PREPROC_STAGE"
 echo "--------------------------"
 echo ""
 
 
 
-STEP_START=$SECONDS
-echo ""
-echo "======================= INIT: clear stale custom derivatives =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=init --config=$CONFIG_PATH
-_print_timing "INIT: clear stale custom derivatives" $STEP_START
-rank_check init
+if [ "$PREPROC_STAGE" = "branch" ]; then
+
+	# Clears this config's stale proc-<custom_proc> files (as INIT does), copies
+	# the trunk's into its deriv_root, and prints the names of the flags the
+	# trunk steps exported, which are exported again here.
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= BRANCH: init + seed from trunk =============================================="
+	echo ""
+	if ! TRUNK_FLAGS=$(python "$ROOT_DIR/src/custom/trunk.py" seed --config="$CONFIG_PATH"); then
+		echo "[ERROR] Could not seed from the trunk at '${MNE_OPM_TRUNK_DERIV:-}'; stopping." >&2
+		exit 1
+	fi
+	while IFS= read -r line; do
+		case "$line" in
+			MNE_OPM_BREAKS_ALREADY_ANNOTATED|MNE_OPM_REQUIRE_RESPONSE_METADATA|MNE_OPM_STAGE1_BREAKS_SAVED)
+				export "$line=1"
+				echo "[branch] export $line=1"
+				;;
+			*)
+				if [ -n "$line" ]; then echo "$line"; fi
+				;;
+		esac
+	done <<< "$TRUNK_FLAGS"
+	_print_timing "BRANCH: init + seed from trunk" $STEP_START
+	rank_check init
+
+else
+
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= INIT: clear stale custom derivatives =============================================="
+	echo ""
+	python $ROOT_DIR/src/custom/custom_preproc.py --analysis=init --config=$CONFIG_PATH
+	_print_timing "INIT: clear stale custom derivatives" $STEP_START
+	rank_check init
 
 
 
-# Breaks are annotated once, first, in proc-init, so segment and channel
-# scoring and mne-bids-pipeline all see the same BAD_break spans.  The step is
-# a no-op when the config sets find_breaks=False; the config turns its own
-# find_breaks off once these variables are exported, so MNE adds no duplicates.
-STEP_START=$SECONDS
-echo ""
-echo "======================= CUSTOM: annotate recording breaks =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=annotate_breaks --config=$CONFIG_PATH
-if [ "$?" -eq 0 ]; then
-	export MNE_OPM_BREAKS_ALREADY_ANNOTATED=1
+	# Breaks are annotated once, first, in proc-init, so segment and channel
+	# scoring and mne-bids-pipeline all see the same BAD_break spans.  The step is
+	# a no-op when the config sets find_breaks=False; the config turns its own
+	# find_breaks off once these variables are exported, so MNE adds no duplicates.
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= CUSTOM: annotate recording breaks =============================================="
+	echo ""
+	python $ROOT_DIR/src/custom/custom_preproc.py --analysis=annotate_breaks --config=$CONFIG_PATH
+	if [ "$?" -eq 0 ]; then
+		export MNE_OPM_BREAKS_ALREADY_ANNOTATED=1
+	fi
+	_print_timing "CUSTOM: annotate recording breaks" $STEP_START
+
+
+
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= CUSTOM: select first response per trial =============================================="
+	echo ""
+	python $ROOT_DIR/src/custom/custom_preproc.py --analysis=select_trial_response --config=$CONFIG_PATH
+	_print_timing "CUSTOM: select first response per trial" $STEP_START
+	rank_check init
+	export MNE_OPM_REQUIRE_RESPONSE_METADATA=1
+
+
+
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= OSL: bad segment 1 =============================================="
+	echo ""
+	python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH
+	if [ "$?" -eq 0 ]; then
+		export MNE_OPM_STAGE1_BREAKS_SAVED=1
+	fi
+	_print_timing "OSL: bad segment 1" $STEP_START
+	rank_check init
+
+
+
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= OSL: bad channels =============================================="
+	echo ""
+	python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
+	_print_timing "OSL: bad channels" $STEP_START
+	rank_check init
 fi
-_print_timing "CUSTOM: annotate recording breaks" $STEP_START
 
 
 
-STEP_START=$SECONDS
-echo ""
-echo "======================= CUSTOM: select first response per trial =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=select_trial_response --config=$CONFIG_PATH
-_print_timing "CUSTOM: select first response per trial" $STEP_START
-rank_check init
-export MNE_OPM_REQUIRE_RESPONSE_METADATA=1
-
-
-
-STEP_START=$SECONDS
-echo ""
-echo "======================= OSL: bad segment 1 =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_segments_1 --config=$CONFIG_PATH
-if [ "$?" -eq 0 ]; then
-	export MNE_OPM_STAGE1_BREAKS_SAVED=1
+if [ "$PREPROC_STAGE" = "trunk" ]; then
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= TRUNK: save state =============================================="
+	echo ""
+	if ! python "$ROOT_DIR/src/custom/trunk.py" save-state --config="$CONFIG_PATH"; then
+		echo "[ERROR] Could not save the trunk state; stopping." >&2
+		exit 1
+	fi
+	_print_timing "TRUNK: save state" $STEP_START
+	echo "[trunk] Done; run each variant with PREPROC_STAGE=branch."
+	return 0 2>/dev/null || exit 0
 fi
-_print_timing "OSL: bad segment 1" $STEP_START
-rank_check init
-
-
-
-STEP_START=$SECONDS
-echo ""
-echo "======================= OSL: bad channels =============================================="
-echo ""
-python $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_channels --config=$CONFIG_PATH
-_print_timing "OSL: bad channels" $STEP_START
-rank_check init
 
 
 
@@ -224,9 +287,14 @@ _print_timing "MNE: prep source space" $STEP_START
 
 
 
-STEP_START=$SECONDS
-echo ""
-echo "======================= BEAMFORMER =============================================="
-echo ""
-source "$ROOT_DIR/src/run/run_beamformer.sh"
-_print_timing "BEAMFORMER" $STEP_START
+if [ "${RUN_BEAMFORMER:-1}" = "0" ]; then
+	echo ""
+	echo "[BEAMFORMER] Skipped (RUN_BEAMFORMER=0)."
+else
+	STEP_START=$SECONDS
+	echo ""
+	echo "======================= BEAMFORMER =============================================="
+	echo ""
+	source "$ROOT_DIR/src/run/run_beamformer.sh"
+	_print_timing "BEAMFORMER" $STEP_START
+fi
