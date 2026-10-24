@@ -300,6 +300,7 @@ find_bad_channels_extra_kws = {"ignore_ref": True}
 _manual_channels = False  # pause to inspect bad channels interactively
 _bad_ICs = True  # run automated ICA component classification
 _manual_ica = False  # pause for manual inspection / override of ICA labels
+_bad_epochs = True  # run the OSL GESD bad_epochs step (False skips it)
 
 # Skip a pipeline step if its derivatives folder already exists (resume runs).
 _skip_on_deriv = True

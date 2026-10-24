@@ -164,7 +164,7 @@ Opens an interactive GUI for reviewing and selecting ICA components to exclude.
 
 Detects and drops bad epochs using GESD-based statistical tests.
 
-**Always enabled** -- no config flag required.
+**Config flag:** `_bad_epochs = True` (the default; `False` skips the step)
 
 **What it does:**
 1. Loads epoched data from derivatives
