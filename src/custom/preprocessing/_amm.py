@@ -225,17 +225,17 @@ def prolate_coordinates(v, c):
     return mu, nu, phi
 
 
-def _legendre_p_series(w, l, m):
+def _legendre_p_series(w, deg, m):
     """``q(w) = sum_k C_k w^k`` and ``q'(w)``, with ``P_l^m(xi) ∝ (xi^2-1)^{m/2} xi^{l-m} q(1/xi^2)``.
 
     ``C_k = (-1)^k (2l-2k)! / (k! (l-k)! (l-2k-m)!)``, scaled so ``C_0 = 1``.
     """
-    k = np.arange((l - m) // 2 + 1)
+    k = np.arange((deg - m) // 2 + 1)
     log_c = (
-        gammaln(2 * l - 2 * k + 1)
+        gammaln(2 * deg - 2 * k + 1)
         - gammaln(k + 1)
-        - gammaln(l - k + 1)
-        - gammaln(l - 2 * k - m + 1)
+        - gammaln(deg - k + 1)
+        - gammaln(deg - 2 * k - m + 1)
     )
     coef = (-1.0) ** k * np.exp(log_c - log_c[0])
     powers = np.asarray(w)[..., None] ** k
@@ -244,13 +244,13 @@ def _legendre_p_series(w, l, m):
     return value, deriv
 
 
-def _hypergeometric_ratio(mu, a, c, l, m):
+def _hypergeometric_ratio(mu, a, c, deg, m):
     """``h = F(c^2/mu^2) / F(c^2/a^2)`` and ``dh/dmu`` for ``Q_l^m``.
 
     ``Q_l^m(xi) ∝ (xi^2-1)^{m/2} xi^{-l-m-1} F(1/xi^2)`` with
     ``F = 2F1((l+m+1)/2, (l+m+2)/2; l+3/2; .)``.
     """
-    alpha, beta, gamma = (l + m + 1) / 2, (l + m + 2) / 2, l + 1.5
+    alpha, beta, gamma = (deg + m + 1) / 2, (deg + m + 2) / 2, deg + 1.5
     w = (c / mu) ** 2
     ref = hyp2f1(alpha, beta, gamma, (c / a) ** 2)
     h = hyp2f1(alpha, beta, gamma, w) / ref
@@ -258,7 +258,7 @@ def _hypergeometric_ratio(mu, a, c, l, m):
     return h, dfdw * (-2 * c**2 / mu**3) / ref
 
 
-def _radial(kind, mu, a, c, l, m):
+def _radial(kind, mu, a, c, deg, m):
     """Radial function ``R(mu) / R(a)`` and its derivative.
 
     ``kind="internal"``: ``Q_l^m(mu/c)``, decaying away from the spheroid;
@@ -266,19 +266,19 @@ def _radial(kind, mu, a, c, l, m):
     to 1 on the spheroid ``mu = a``.  Written as ``g(mu) h(mu)`` with
     ``g = ((mu^2-c^2)/(a^2-c^2))^{m/2} (mu/a)^p`` and ``h`` the series ratio.
     """
-    p = (l - m) if kind == "external" else (-l - m - 1)
+    p = (deg - m) if kind == "external" else (-deg - m - 1)
     g = ((mu**2 - c**2) / (a**2 - c**2)) ** (m / 2) * (mu / a) ** p
     dg = g * (m * mu / (mu**2 - c**2) + p / mu)
     if kind == "external":
-        q, dq = _legendre_p_series((c / mu) ** 2, l, m)
-        q_ref, _ = _legendre_p_series((c / a) ** 2, l, m)
+        q, dq = _legendre_p_series((c / mu) ** 2, deg, m)
+        q_ref, _ = _legendre_p_series((c / a) ** 2, deg, m)
         h, dh = q / q_ref, dq * (-2 * c**2 / mu**3) / q_ref
     else:
-        h, dh = _hypergeometric_ratio(mu, a, c, l, m)
+        h, dh = _hypergeometric_ratio(mu, a, c, deg, m)
     return g * h, dg * h + g * dh
 
 
-def _angular(nu, phi, l, m):
+def _angular(nu, phi, deg, m):
     """Real spherical harmonic of ``(nu, phi)`` and its two angular derivatives.
 
     ``m > 0``: ``P_l^m(cos nu) cos(m phi)``; ``m < 0``: ``P_l^|m| sin(|m| phi)``.
@@ -286,11 +286,13 @@ def _angular(nu, phi, l, m):
     """
     am = abs(m)
     x = np.cos(nu)
-    p = lpmv(am, l, x)  # with the Condon-Shortley phase
+    p = lpmv(am, deg, x)  # with the Condon-Shortley phase
     if am == 0:
-        dp = lpmv(1, l, x)
+        dp = lpmv(1, deg, x)
     else:
-        dp = -0.5 * ((l + am) * (l - am + 1) * lpmv(am - 1, l, x) - lpmv(am + 1, l, x))
+        dp = -0.5 * (
+            (deg + am) * (deg - am + 1) * lpmv(am - 1, deg, x) - lpmv(am + 1, deg, x)
+        )
     if m > 0:
         trig, dtrig = np.cos(am * phi), -am * np.sin(am * phi)
     elif m < 0:
@@ -325,10 +327,10 @@ def _harmonic_fields(v, n, a, b, order, kind):
     with np.errstate(divide="ignore", invalid="ignore"):
         w_phi = np.where(h_phi > 0, n_phi / h_phi, 0.0)  # on the axis: no phi term
     columns = []
-    for l in range(1, order + 1):
-        for m in range(-l, l + 1):
-            r, dr = _radial(kind, mu, a, c, l, abs(m))
-            ang, dang_phi, dang_nu = _angular(nu, phi, l, m)
+    for deg in range(1, order + 1):
+        for m in range(-deg, deg + 1):
+            r, dr = _radial(kind, mu, a, c, deg, abs(m))
+            ang, dang_phi, dang_nu = _angular(nu, phi, deg, m)
             columns.append(
                 n_mu / h_mu * dr * ang
                 + n_nu / h_nu * r * dang_nu

@@ -137,7 +137,7 @@ def spm_mode(monkeypatch):
     monkeypatch.setattr(
         _amm,
         "_hypergeometric_ratio",
-        lambda mu, a, c, l, m: (real(mu, a, c, l, m)[0], 0 * mu),
+        lambda mu, a, c, deg, m: (real(mu, a, c, deg, m)[0], 0 * mu),
     )
 
 
@@ -203,10 +203,10 @@ def synthetic_data(pos, ori, n_times, seed=1):
 def _potential(v, a, c, order, kind):
     mu, nu, phi = _amm.prolate_coordinates(v, c)
     cols = []
-    for l in range(1, order + 1):
-        for m in range(-l, l + 1):
-            r, _ = _amm._radial(kind, mu, a, c, l, abs(m))
-            cols.append(r * _amm._angular(nu, phi, l, m)[0])
+    for deg in range(1, order + 1):
+        for m in range(-deg, deg + 1):
+            r, _ = _amm._radial(kind, mu, a, c, deg, abs(m))
+            cols.append(r * _amm._angular(nu, phi, deg, m)[0])
     return np.column_stack(cols)
 
 
