@@ -41,6 +41,7 @@ ANALYSIS_CONFIG_FLAGS: dict[str, str] = {
     "badICs": "_bad_ICs",
     "manualica": "_manual_ica",
     "applyhfc": "_do_HFC",
+    "applyamm": "_do_AMM",
     "zcafilter": "_do_ZCA",
 }
 

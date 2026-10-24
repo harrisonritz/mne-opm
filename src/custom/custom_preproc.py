@@ -15,6 +15,7 @@ Provided analyses (CLI --analysis):
     bad_channels   -> Statistical detection of bad channels
     manual_channel -> Interactive visual marking of bad channels
     apply_hfc      -> Apply homogeneous field correction (HFC) projections
+    apply_amm      -> Apply adaptive multipole models (AMM)
     select_trial_response -> Keep only the first response following each trial
                       (response-locked analyses; gated by _select_trial_response)
     bad_epochs     -> Drop bad epochs post-epoching
@@ -80,6 +81,7 @@ ANALYSIS_REGISTRY: dict[str, str] = {
     "badchannels": "bad_channels",
     "manualchannel": "manual_channel",
     "applyhfc": "apply_hfc",
+    "applyamm": "apply_amm",
     "zcafilter": "zca_filter",
     "applyzca": "zca_filter",  # Alias for zca_filter
     "selecttrialresponse": "select_trial_response",
@@ -103,6 +105,7 @@ ANALYSIS_CHOICES: list[str] = [
     "bad_ICs",
     "manual_channel",
     "apply_hfc",
+    "apply_amm",
     "zca_filter",
     "apply_zca",  # Alias for zca_filter
     "select_trial_response",

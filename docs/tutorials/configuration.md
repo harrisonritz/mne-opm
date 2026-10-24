@@ -74,6 +74,7 @@ mne-opm adds several flags (prefixed with `_`) to control custom steps:
 |---------------------|--------|---------|------------------------------------------|
 | `_skip_on_deriv`    | `bool` | `False` | Skip steps when derivatives already exist |
 | `_do_HFC`           | `bool` | `False` | Apply homogeneous field correction        |
+| `_do_AMM`           | `bool` | `False` | Apply adaptive multipole models (AMM)     |
 | `_do_ZCA`           | `bool` | `False` | Apply ZCA spatial filter                  |
 | `_manual_channels`  | `bool` | `False` | Enable interactive bad channel GUI        |
 | `_bad_ICs`          | `bool` | `False` | Enable automatic ICA labeling             |

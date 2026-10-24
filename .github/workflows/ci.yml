@@ -42,6 +42,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: pyvista/setup-headless-display-action@v5
+      - name: Install Octave (tests/test_amm.py runs SPM's AMM as the reference)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends octave
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true

@@ -18,6 +18,7 @@ from custom.preprocessing.bad_segments import BadSegmentsAnalysis
 from custom.preprocessing.bad_channels import BadChannelsAnalysis
 from custom.preprocessing.bad_epochs import BadEpochsAnalysis
 from custom.preprocessing.manual_channel import ManualChannelAnalysis
+from custom.preprocessing.apply_amm import ApplyAMMAnalysis
 from custom.preprocessing.apply_hfc import ApplyHFCAnalysis
 from custom.preprocessing.zca_filter import ZCAFilterAnalysis
 from custom.preprocessing.bad_ICs import BadICAnalysis
@@ -42,6 +43,7 @@ class TestAnalysisClassConstants:
             (BadEpochsAnalysis, "badepochs", "bad_epochs"),
             (ManualChannelAnalysis, "manualchannel", "manual_channel"),
             (ApplyHFCAnalysis, "applyhfc", "apply_hfc"),
+            (ApplyAMMAnalysis, "applyamm", "apply_amm"),
             (ZCAFilterAnalysis, "zcafilter", "zca_filter"),
             (BadICAnalysis, "badICs", "bad_ICs"),
             (ManualICAAnalysis, "manualica", "manual_ica"),
@@ -87,6 +89,10 @@ class TestFlagGatedEnabled:
     def test_hfc_disabled(self):
         cfg = SimpleNamespace(_do_HFC=False)
         assert ApplyHFCAnalysis(cfg).is_enabled() is False
+
+    def test_amm_enabled(self):
+        assert ApplyAMMAnalysis(SimpleNamespace(_do_AMM=True)).is_enabled() is True
+        assert ApplyAMMAnalysis(SimpleNamespace()).is_enabled() is False
 
     def test_zca_enabled(self):
         cfg = SimpleNamespace(_do_ZCA=True)

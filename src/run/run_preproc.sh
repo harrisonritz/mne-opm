@@ -148,6 +148,16 @@ rank_check init hfc
 
 STEP_START=$SECONDS
 echo ""
+echo "======================= CUSTOM: adaptive multipole models (AMM) =============================================="
+echo ""
+python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_amm --config=$CONFIG_PATH
+_print_timing "CUSTOM: adaptive multipole models (AMM)" $STEP_START
+rank_check init
+
+
+
+STEP_START=$SECONDS
+echo ""
 echo "======================= CUSTOM: Common Spatial Filter (ZCA) =============================================="
 echo ""
 python $ROOT_DIR/src/custom/custom_preproc.py --analysis=apply_zca --config=$CONFIG_PATH
