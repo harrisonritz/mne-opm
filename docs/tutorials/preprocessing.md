@@ -77,14 +77,16 @@ to the array (Tierney et al., 2024, https://doi.org/10.1002/hbm.26596):
 internal harmonics for the brain and external harmonics for interference.
 The data are projected onto the internal space after removing the external
 space, and, with `_amm_corr_lim < 1`, interference that neither model
-captures is removed by a temporal extension, as in tSSS.  An independent
-implementation of SPM's `spm_opm_amm`, checked against SPM itself; see
-`src/custom/preprocessing/_amm.py` for the differences.
+captures is removed by a temporal extension, as in tSSS.  Uses MNE's
+`mne.preprocessing.apply_amm` / `compute_proj_amm`, an independent
+implementation of SPM's `spm_opm_amm` checked against SPM itself
+(`tests/test_amm.py`).
 
 **Config flag:** `_do_AMM = True` (set by `_spatial_filter = "AMM"`)
 
 **Parameters:** `_amm_li` (9), `_amm_le` (2), `_amm_corr_lim` (1.0, off),
-`_amm_window` (10 s), `_amm_reducerank` (0, off).
+`_amm_window` (10 s), `_amm_coord_frame` ("head"), `_amm_center_basis`
+(False; True centres the basis across channels as SPM does).
 
 **What it does:**
 1. Fits a prolate spheroid to the positions of the good channels
