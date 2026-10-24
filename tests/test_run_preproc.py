@@ -49,6 +49,7 @@ TRUNK = [
 BRANCH = [
     "manual_channel",
     "apply_hfc",
+    "apply_amm",
     "apply_zca",
     "preprocessing",
     "ica_convergence",
