@@ -91,6 +91,36 @@ def _meg_dirs_for_subject(deriv_root: Path, subject: str, sessions: list) -> lis
     return sorted(d for d in meg_dirs if d.is_dir())
 
 
+def custom_proc_files(
+    deriv_root: Path, subject: str, sessions: list, proc: str
+) -> list[Path]:
+    """List one subject's ``proc-<proc>`` derivative files (what init clears).
+
+    Parameters
+    ----------
+    deriv_root : Path
+        Root of the analysis derivatives tree.
+    subject : str
+        Subject label without the ``sub-`` prefix (e.g. ``"011"``).
+    sessions : list
+        Session labels without the ``ses-`` prefix (empty: every session).
+    proc : str
+        The ``custom_proc`` label (e.g. ``"init"``).
+
+    Returns
+    -------
+    list of Path
+        The matching files, sorted within each ``meg`` folder.
+    """
+    files: list[Path] = []
+    for meg_dir in _meg_dirs_for_subject(Path(deriv_root), subject, sessions):
+        # Restrict to this subject's files so a shared folder (should not
+        # happen, but be safe) cannot match another subject's data.
+        sub_pattern = f"sub-{subject}_*_proc-{proc}_*"
+        files.extend(p for p in sorted(meg_dir.glob(sub_pattern)) if p.is_file())
+    return files
+
+
 def run(cfg: SimpleNamespace) -> None:
     """Remove stale ``proc-<custom_proc>`` derivatives before preprocessing.
 
@@ -130,15 +160,10 @@ def run(cfg: SimpleNamespace) -> None:
 
     n_removed = 0
     for subject in subjects:
-        for meg_dir in _meg_dirs_for_subject(deriv_root, subject, sessions):
-            # Restrict to this subject's files so a shared folder (should not
-            # happen, but be safe) cannot delete another subject's data.
-            sub_pattern = f"sub-{subject}_*_proc-{proc}_*"
-            for path in sorted(meg_dir.glob(sub_pattern)):
-                if path.is_file():
-                    print(f"[init_derivatives] removing {path}")
-                    path.unlink()
-                    n_removed += 1
+        for path in custom_proc_files(deriv_root, subject, sessions, proc):
+            print(f"[init_derivatives] removing {path}")
+            path.unlink()
+            n_removed += 1
 
     print(
         f"[init_derivatives] removed {n_removed} stale proc-{proc} file(s) for "

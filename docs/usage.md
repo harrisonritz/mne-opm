@@ -102,6 +102,26 @@ The main preprocessing stage. Runs the following steps in order:
 9. **MNE ICA application** -- apply ICA, SSP, peak-to-peak rejection
 10. **bad_epochs** -- GESD-based bad epoch detection
 
+#### Trunk and branch runs
+
+To run several variants of a subject's preprocessing without repeating the
+first steps, set `PREPROC_STAGE` (default `all`, every step):
+
+- `PREPROC_STAGE=trunk` runs init, annotate_breaks, select_trial_response,
+  bad_segments_1 and bad_channels, writes
+  `sub-<S>_ses-<X>_task-<T>_proc-<custom_proc>_desc-trunk_state.json` (the
+  environment flags those steps exported) next to the derivatives, and stops.
+- `PREPROC_STAGE=branch` with `MNE_OPM_TRUNK_DERIV=<trunk deriv_root>`
+  (absolute) clears the variant config's own `proc-<custom_proc>` files, copies
+  the trunk's (task and empty-room raw files, split files and sidecars) and its
+  `participants.tsv`/`.json` into the variant's `deriv_root`, exports the
+  recorded flags, and runs manual_channel onwards.
+
+Trunk and variant configs must use the same `custom_proc` and different
+`deriv_root`s. `RUN_BEAMFORMER=0` skips the final beamformer step; the
+source-space preparation (evoked, covariance, BEM, source space, forward)
+still runs. The seeding is done by `python src/custom/trunk.py seed`.
+
 ### sensor / source
 
 Sensor-level and source-level analyses via mne-bids-pipeline.
