@@ -4,8 +4,10 @@ Projects the data onto the internal space of a prolate spheroidal harmonic
 model fitted to the sensor array, after removing its external space, and
 optionally removes the remaining interference with a temporal extension
 (Tierney et al., 2024).  The projection is stored as SSP projectors, so the
-forward model sees it too.  See ``_amm.py`` for the method, its attribution
-and how it relates to SPM's ``spm_opm_amm``.
+forward model sees it too.  The method is MNE's
+(``mne.preprocessing.apply_amm`` and ``compute_proj_amm``, an independent
+implementation of SPM's ``spm_opm_amm`` by Tim Tierney); see their docstrings
+for the details and attribution.
 
 Usage
 -----
@@ -33,9 +35,11 @@ Optional:
         Default: 1.0 (SPM's default; the paper used 0.98).
     _amm_window : float
         Window of the temporal extension in seconds. Default: 10.
-    _amm_reducerank : float
-        Keep the internal directions whose cumulative share of the singular
-        values stays below this; 0 keeps them all. Default: 0.
+    _amm_coord_frame : str
+        Frame the spheroid is fitted in, "head" or "meg". Default: "head".
+    _amm_center_basis : bool
+        Centre the basis across channels, as SPM does. Default: False (the
+        paper's equations).
     process_empty_room : bool
         Apply the task's projection to the noise recording. Default: False.
 
@@ -53,7 +57,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Dict
 
-from ._amm import apply_amm
+from mne.preprocessing import apply_amm, compute_proj_amm
+
 from .apply_hfc import ApplyHFCAnalysis
 
 
@@ -95,27 +100,31 @@ class ApplyAMMAnalysis(ApplyHFCAnalysis):
         cfg = self.cfg
         corr_lim = getattr(cfg, "_amm_corr_lim", 1.0)
         window = getattr(cfg, "_amm_window", 10.0)
-        raw, model = apply_amm(
-            data[cfg.task],
-            li=getattr(cfg, "_amm_li", 9),
-            le=getattr(cfg, "_amm_le", 2),
-            corr_lim=corr_lim,
-            window=window,
-            reducerank=getattr(cfg, "_amm_reducerank", 0.0),
+        kwargs = dict(
+            int_order=getattr(cfg, "_amm_li", 9),
+            ext_order=getattr(cfg, "_amm_le", 2),
+            coord_frame=getattr(cfg, "_amm_coord_frame", "head"),
+            center_basis=getattr(cfg, "_amm_center_basis", False),
         )
-        sph = model.spheroid
+        task = data[cfg.task]
+        projs = compute_proj_amm(task.info, **kwargs)
+        raw = apply_amm(
+            task,
+            st_duration=window if corr_lim < 1 else None,
+            st_correlation=corr_lim,
+            copy=False,
+            **kwargs,
+        )
+        n_chan = len(projs[0]["data"]["col_names"]) if projs else 0
         self.log(
-            f"AMM li={model.li} le={model.le}: spheroid a={sph.a * 1e3:.1f} mm, "
-            f"b={sph.b * 1e3:.1f} mm; keeps {model.rank} of {len(model.ch_names)} "
-            f"dimensions; temporal extension "
+            f"AMM int_order={kwargs['int_order']} ext_order={kwargs['ext_order']}: "
+            f"keeps {n_chan - len(projs)} of {n_chan} dimensions; temporal extension "
             + (f"corr_lim={corr_lim}, window={window} s" if corr_lim < 1 else "off")
         )
         results: Dict[str, Any] = {"bads": [], cfg.task: raw}
         if data.get("noise") is not None:
-            results["noise"], _ = apply_amm(
-                data["noise"], model=model, corr_lim=corr_lim, window=window
-            )
-            self.log("Applied the task's AMM projection to the noise recording")
+            results["noise"] = data["noise"].add_proj(projs).apply_proj()
+            self.log("Applied the task's AMM projectors to the noise recording")
         return results
 
 
