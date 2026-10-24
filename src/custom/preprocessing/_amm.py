@@ -314,8 +314,12 @@ def _harmonic_fields(v, n, a, b, order, kind):
     sin_nu, cos_nu = np.sin(nu), np.cos(nu)
     cos_phi, sin_phi = np.cos(phi), np.sin(phi)
     # orientation . unit vectors, divided by the scale factors
-    n_mu = (mu * sin_nu * (cos_phi * n[:, 0] + sin_phi * n[:, 2]) + s * cos_nu * n[:, 1]) / d
-    n_nu = (s * cos_nu * (cos_phi * n[:, 0] + sin_phi * n[:, 2]) - mu * sin_nu * n[:, 1]) / d
+    n_mu = (
+        mu * sin_nu * (cos_phi * n[:, 0] + sin_phi * n[:, 2]) + s * cos_nu * n[:, 1]
+    ) / d
+    n_nu = (
+        s * cos_nu * (cos_phi * n[:, 0] + sin_phi * n[:, 2]) - mu * sin_nu * n[:, 1]
+    ) / d
     n_phi = cos_phi * n[:, 2] - sin_phi * n[:, 0]
     h_mu, h_nu, h_phi = d / s, d, s * sin_nu
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -326,7 +330,9 @@ def _harmonic_fields(v, n, a, b, order, kind):
             r, dr = _radial(kind, mu, a, c, l, abs(m))
             ang, dang_phi, dang_nu = _angular(nu, phi, l, m)
             columns.append(
-                n_mu / h_mu * dr * ang + n_nu / h_nu * r * dang_nu + w_phi * r * dang_phi
+                n_mu / h_mu * dr * ang
+                + n_nu / h_nu * r * dang_nu
+                + w_phi * r * dang_phi
             )
     return np.column_stack(columns)
 
@@ -521,7 +527,9 @@ def apply_amm(raw, model=None, li=9, le=2, corr_lim=1.0, window=10.0, reducerank
         data = raw.get_data(picks)
         n_window = int(round(window * raw.info["sfreq"]))
         for start, stop in window_bounds(data.shape[1], n_window):
-            data[:, start:stop] = temporal_extension(data[:, start:stop], model, corr_lim)
+            data[:, start:stop] = temporal_extension(
+                data[:, start:stop], model, corr_lim
+            )
     raw.add_proj(amm_projs(model))
     raw.apply_proj()
     if corr_lim < 1:
