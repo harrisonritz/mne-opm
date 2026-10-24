@@ -177,7 +177,7 @@ python src/custom/custom_preproc.py \
 ```
 
 Available steps: `bad_segments`, `bad_channels`,
-`manual_channel`, `apply_hfc`, `zca_filter`, `apply_zca`, `bad_epochs`,
+`manual_channel`, `apply_hfc`, `apply_amm`, `zca_filter`, `apply_zca`, `bad_epochs`,
 `bad_ICs`, `manual_ica`, `coreg`.
 
 ## Data layout
