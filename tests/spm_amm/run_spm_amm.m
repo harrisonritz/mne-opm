@@ -1,5 +1,8 @@
 function run_spm_amm(infile, outfile)
 % Run SPM's spm_opm_amm, spm_ipharm and spm_epharm on the inputs in INFILE.
+if exist('OCTAVE_VERSION', 'builtin')
+    addpath(fullfile(fileparts(mfilename('fullpath')), 'octave'));
+end
 in = load(infile);
 labels = cellstr(in.labels);
 n = numel(labels);
@@ -18,5 +21,5 @@ out.tra = g.tra;
 out.balance = g.balance.current;
 out.internal = spm_ipharm(in.v, in.n, in.a, in.b, in.li);
 out.external = spm_epharm(in.v, in.n, in.a, in.b, in.le);
-save('-mat7-binary', outfile, '-struct', 'out');
+save(outfile, '-struct', 'out', '-v7');
 end

@@ -1,9 +1,10 @@
 # SPM reference for the AMM tests
 
-`tests/test_amm.py` compares `custom.preprocessing._amm` with SPM's own
+`tests/test_amm.py` compares `mne.preprocessing` AMM with SPM's own
 implementation of adaptive multipole models by Tim Tierney (Tierney et al.,
 2024, https://doi.org/10.1002/hbm.26596). It runs SPM's functions unmodified
-in Octave.
+in MATLAB or Octave, preferring MATLAB when it is on `PATH`. MATLAB runs
+with `-batch`; otherwise the tests use `octave-cli` or `octave`.
 
 - SPM's files (`spm_opm_amm.m`, `spm_ipharm.m`, `spm_epharm.m`, `spm_slm.m`,
   `spm_match_str.m`) are downloaded at test time from
@@ -16,8 +17,19 @@ in Octave.
   - `run_spm_amm.m`: runs `spm_opm_amm`, `spm_ipharm` and `spm_epharm` on the
     inputs the test writes, and saves their outputs;
   - `spm.m`: `spm('time')`;
-  - `std.m`: MATLAB's `'omitnan'` flag, which Octave 8's `std` lacks;
+  - `octave/std.m`: MATLAB's `'omitnan'` flag, which Octave 8's `std` lacks;
+    this shim is added to the path only for Octave, so MATLAB uses its native
+    standard deviation;
   - `figure.m`, `plot3.m`, `daspect.m`, `hold.m`, `ellipsoid.m`: no-ops, so
     the spheroid plot `spm_opm_amm` draws for rotated arrays needs no display.
 
-The tests are skipped when `octave-cli` is not installed or the download fails.
+The tests are skipped when neither runtime is installed or the download fails.
+A failure of an installed runtime (including a MATLAB license error) fails
+the comparison instead of silently switching runtimes.
+
+To compare the local MNE checkout from TSX, with a MATLAB module loaded:
+
+```bash
+PYTHONPATH="$PWD/mne" mne-opm/.venv/bin/python -m pytest \
+  mne-opm/tests/test_amm.py -k matches_spm -v
+```

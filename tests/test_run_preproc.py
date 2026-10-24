@@ -84,7 +84,12 @@ def _run(tmp_path, **env):
         "MNE_OPM_STAGE1_BREAKS_SAVED": "1",
         **env,
     }
-    for name in ("PREPROC_STAGE", "RUN_BEAMFORMER", "FAIL_ON_FIRST_CRASH"):
+    for name in (
+        "PREPROC_STAGE",
+        "RUN_BEAMFORMER",
+        "FAIL_ON_FIRST_CRASH",
+        "TSX_COMPARE_DRIVER",
+    ):
         if name not in env:
             full_env.pop(name, None)
     proc = subprocess.run(
@@ -137,3 +142,31 @@ def test_stage_errors_stop_the_script(tmp_path, env):
     assert proc.returncode == 1
     assert "[ERROR]" in proc.stderr
     assert order == (["trunk:seed"] if "STUB_SEED_FAIL" in env else [])
+
+
+def test_comparison_driver_replaces_redundant_steps(tmp_path):
+    proc, order, _ = _run(
+        tmp_path,
+        PREPROC_STAGE="branch",
+        RUN_BEAMFORMER="0",
+        TSX_COMPARE_DRIVER="/tmp/run_preprocessing.py",
+        FAIL_ON_FIRST_CRASH="1",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert order == [
+        "trunk:seed",
+        "manual_channel",
+        "apply_hfc",
+        "apply_amm",
+        "apply_zca",
+        "/tmp/run_preprocessing.py",
+        "ica_convergence",
+        "/tmp/run_preprocessing.py",
+        "manual_ica",
+        "/tmp/run_preprocessing.py",
+        "preprocessing/apply_ssp",
+        "bad_epochs",
+        "/tmp/run_preprocessing.py",
+    ]
+    assert "preprocessing" not in order and "preprocessing/apply_ica" not in order
+    assert "sensor/make_evoked" not in order

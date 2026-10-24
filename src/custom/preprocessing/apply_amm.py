@@ -49,7 +49,7 @@ Tierney, T. M., Seedat, Z., St Pier, K., Mellor, S., & Barnes, G. R. (2024).
 Adaptive multipole models of optically pumped magnetometer data. Human Brain
 Mapping, 45(4), e26596. https://doi.org/10.1002/hbm.26596
 
-Author: Harrison Ritz, 2025
+Author: Harrison Ritz, 2026
 """
 
 from __future__ import annotations

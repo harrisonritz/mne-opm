@@ -3,12 +3,12 @@
 AMM is implemented in MNE (``mne.preprocessing.compute_proj_amm`` and
 ``apply_amm``), whose own tests check the physics and behaviour.  Here the
 same synthetic arrays and data also go through SPM's ``spm_opm_amm.m``
-(unmodified, downloaded at a pinned commit and run in Octave on a minimal
+(unmodified, downloaded at a pinned commit and run in MATLAB or Octave on a minimal
 stand-in for SPM's data object, ``tests/spm_amm/``).  With MNE in SPM's
 configuration (``center_basis=True``, point coils, the device frame) and the
 one term SPM drops from the internal harmonics' radial derivative set to zero
 here too, bases, spheroid, projector and filtered data agree.  Skipped when
-``octave-cli`` or the download is unavailable.
+neither MATLAB nor Octave is installed, or the download is unavailable.
 """
 
 from __future__ import annotations
@@ -225,11 +225,52 @@ def test_apply_amm_step(capsys):
 # ---------------------------------------------------------------------------
 
 
+def _spm_command():
+    """Prefer MATLAB, then Octave's CLI, then its general executable."""
+    for executable, args in (
+        ("matlab", ["-batch"]),
+        ("octave-cli", ["--no-gui", "--quiet", "--eval"]),
+        ("octave", ["--no-gui", "--quiet", "--eval"]),
+    ):
+        path = shutil.which(executable)
+        if path is not None:
+            return [path, *args]
+    return None
+
+
+@pytest.mark.parametrize(
+    "available, expected",
+    [
+        (("matlab", "octave-cli", "octave"), ["/tools/matlab", "-batch"]),
+        (("matlab",), ["/tools/matlab", "-batch"]),
+        (
+            ("octave-cli", "octave"),
+            ["/tools/octave-cli", "--no-gui", "--quiet", "--eval"],
+        ),
+        (("octave",), ["/tools/octave", "--no-gui", "--quiet", "--eval"]),
+        ((), None),
+    ],
+)
+def test_spm_runtime_selection(monkeypatch, available, expected):
+    """Select the preferred installed runtime without requiring either one."""
+    monkeypatch.setattr(
+        shutil, "which", lambda name: f"/tools/{name}" if name in available else None
+    )
+    assert _spm_command() == expected
+
+
 @pytest.fixture(scope="module")
-def spm_dir(tmp_path_factory):
-    if shutil.which("octave-cli") is None:
-        pytest.skip("octave-cli is not installed")
+def spm_runtime():
+    command = _spm_command()
+    if command is None:
+        pytest.skip("neither MATLAB nor Octave is installed")
+    return command
+
+
+@pytest.fixture(scope="module")
+def spm_dir(tmp_path_factory, spm_runtime):
     cache = Path(os.environ.get("SPM_AMM_CACHE", tmp_path_factory.mktemp("spm")))
+    cache.mkdir(parents=True, exist_ok=True)
     for name in SPM_FILES:
         target = cache / name
         if not target.exists():
@@ -241,8 +282,8 @@ def spm_dir(tmp_path_factory):
     return cache
 
 
-def run_spm(spm_dir, tmp_path, pos, ori, data, bad, corr_lim, window):
-    """Run SPM's spm_opm_amm (and its basis functions on MNE's spheroid) in Octave."""
+def run_spm(spm_dir, spm_runtime, tmp_path, pos, ori, data, bad, corr_lim, window):
+    """Run SPM's spm_opm_amm and basis functions in MATLAB or Octave."""
     info = make_info(pos, ori, bads=[bad])
     rotation, center, radii = hfc._fit_spheroid(np.delete(pos, bad, axis=0))
     v = pos @ rotation.T - center
@@ -267,16 +308,21 @@ def run_spm(spm_dir, tmp_path, pos, ori, data, bad, corr_lim, window):
             b=b * 1000,
         ),
     )
+    spm_path, harness_path, infile, outfile = (
+        str(path).replace("'", "''")
+        for path in (spm_dir, HARNESS, tmp_path / "in.mat", tmp_path / "out.mat")
+    )
     cmd = (
-        f"addpath('{spm_dir}'); addpath('{HARNESS}'); "
-        f"run_spm_amm('{tmp_path / 'in.mat'}', '{tmp_path / 'out.mat'}')"
+        f"addpath('{spm_path}'); addpath('{harness_path}'); "
+        f"run_spm_amm('{infile}', '{outfile}')"
     )
     result = subprocess.run(
-        ["octave-cli", "--no-gui", "--quiet", "--eval", cmd],
+        [*spm_runtime, cmd],
         capture_output=True,
         text=True,
+        timeout=300,
     )
-    assert result.returncode == 0, result.stderr[-2000:]
+    assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-4000:]
     out = scipy.io.loadmat(tmp_path / "out.mat")
     return info, v, n, np.r_[center, a, b], out
 
@@ -284,13 +330,13 @@ def run_spm(spm_dir, tmp_path, pos, ori, data, bad, corr_lim, window):
 @pytest.mark.parametrize(
     "radii", [(0.075, 0.095, 0.085), (0.095, 0.075, 0.085)], ids=["y-long", "x-long"]
 )
-def test_matches_spm(spm_dir, tmp_path, monkeypatch, radii):
+def test_matches_spm(spm_dir, spm_runtime, tmp_path, monkeypatch, radii):
     pos, ori = opm_array(radii=radii)
     n_win = 1000  # long enough that rounding adds no dimension in SPM's orth
     data, _ = synthetic_data(pos, ori, 3 * n_win + 1)
     bad = 7
     info, v, n, spheroid, out = run_spm(
-        spm_dir, tmp_path, pos, ori, data, bad, 0.98, n_win / SFREQ
+        spm_dir, spm_runtime, tmp_path, pos, ori, data, bad, 0.98, n_win / SFREQ
     )
     a, b = spheroid[3:]
 

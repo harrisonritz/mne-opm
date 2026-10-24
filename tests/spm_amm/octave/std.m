@@ -1,6 +1,7 @@
 function s = std(x, varargin)
 % Column-wise sample standard deviation, accepting MATLAB's 'omitnan' flag,
 % which Octave 8's std does not (spm_ipharm uses it).
+% Only added to the path when running under Octave; MATLAB uses its own std.
 omit = any(strcmp(varargin, 'omitnan'));
 if isvector(x)
   x = x(:);

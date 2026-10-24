@@ -233,7 +233,11 @@ STEP_START=$SECONDS
 echo ""
 echo "======================= MNE: preprocessing =============================================="
 echo ""
-mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
+if [ -n "${TSX_COMPARE_DRIVER:-}" ]; then
+	python "$TSX_COMPARE_DRIVER" initial --config="$CONFIG_PATH"
+else
+	mne_bids_pipeline --steps=preprocessing --config=$CONFIG_PATH
+fi
 _print_timing "MNE: preprocessing" $STEP_START
 rank_check filt sss hfc zca
 
@@ -252,7 +256,11 @@ STEP_START=$SECONDS
 echo ""
 echo "======================= CUSTOM: Automatic ICA rejection =============================================="
 echo ""
-python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_ICs --config=$CONFIG_PATH
+if [ -n "${TSX_COMPARE_DRIVER:-}" ]; then
+	python "$TSX_COMPARE_DRIVER" bad-ics --config="$CONFIG_PATH"
+else
+	python  $ROOT_DIR/src/custom/custom_preproc.py --analysis=bad_ICs --config=$CONFIG_PATH
+fi
 _print_timing "CUSTOM: automatic ICA rejection" $STEP_START
 rank_check filt sss hfc zca
 
@@ -272,7 +280,12 @@ STEP_START=$SECONDS
 echo ""
 echo "======================= MNE: apply ICA =============================================="
 echo ""
-mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,preprocessing/ptp_reject --config=$CONFIG_PATH
+if [ -n "${TSX_COMPARE_DRIVER:-}" ]; then
+	python "$TSX_COMPARE_DRIVER" apply-ica --config="$CONFIG_PATH"
+	mne_bids_pipeline --steps=preprocessing/apply_ssp,preprocessing/ptp_reject --config="$CONFIG_PATH"
+else
+	mne_bids_pipeline --steps=preprocessing/apply_ica,preprocessing/apply_ssp,preprocessing/ptp_reject --config=$CONFIG_PATH
+fi
 _print_timing "MNE: apply ICA" $STEP_START
 rank_check clean
 
@@ -292,7 +305,11 @@ STEP_START=$SECONDS
 echo ""
 echo "======================= MNE: prep source space =============================================="
 echo ""
-mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
+if [ -n "${TSX_COMPARE_DRIVER:-}" ]; then
+	python "$TSX_COMPARE_DRIVER" source --config="$CONFIG_PATH"
+else
+	mne_bids_pipeline --steps=sensor/make_evoked,sensor/make_cov,source/make_bem_solution,source/setup_source_space,source/make_forward --config=$CONFIG_PATH
+fi
 _print_timing "MNE: prep source space" $STEP_START
 
 

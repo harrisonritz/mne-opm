@@ -30,6 +30,12 @@ share its first steps:
 
 `RUN_BEAMFORMER=0` skips the final BEAMFORMER step (default `1`).
 
+The TSX comparison harness also sets `TSX_COMPARE_DRIVER` to its Python
+preprocessing entry point. This hook runs preprocessing through epoch creation,
+then custom ICA labelling and one ICA application, and covariance/forward
+calculation without diagnostic rendering. When unset, the normal preprocessing
+commands below are used. The harness manages comparison intermediate retention.
+
 ```bash
 PREPROC_STAGE=trunk sh mne-opm.sh preproc --analysis trunk ...
 PREPROC_STAGE=branch MNE_OPM_TRUNK_DERIV=/abs/bids/derivatives/<trunk> \
