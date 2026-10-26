@@ -93,6 +93,7 @@ from mne_bids import BIDSPath, find_matching_paths
 
 from ._base import BaseAnalysis
 from ._io import get_ica_bids_path, save_ica_bids
+from ._spectral import fit_power_law
 from .pca_gesd import (
     MetricSpec,
     PCAGesdResult,
@@ -1055,16 +1056,9 @@ class BadICAnalysis(BaseAnalysis):
         # kurtosis of the residuals. Narrow-band artifacts create a concentrated
         # bump above the baseline → high residual kurtosis.
         freq_mask = (freqs >= fmin) & (freqs <= fmax)
-        log_freqs = np.log10(freqs[freq_mask])
-        log_psd = np.log10(psd[:, freq_mask] + 1e-20)
-        X = np.column_stack([log_freqs, np.ones_like(log_freqs)])
-        coeffs = np.linalg.lstsq(X, log_psd.T, rcond=None)[0]  # (2, n_components)
-        spectral_slope = coeffs[0]  # (n_components,)
-
-        # Residuals: how much each frequency deviates from the 1/f baseline
-        log_psd_fit = (X @ coeffs).T  # (n_components, n_freqs_masked)
-        residuals = log_psd - log_psd_fit  # (n_components, n_freqs_masked)
-        spectral_resid_kurtosis = kurtosis(residuals, axis=1, fisher=True)
+        spectral_slope, spectral_resid_kurtosis = fit_power_law(
+            freqs[freq_mask], psd[:, freq_mask]
+        )
 
         # Spatial kurtosis
         spatial_kurt = kurtosis(topos, axis=0, fisher=True)

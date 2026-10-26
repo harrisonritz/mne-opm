@@ -21,7 +21,16 @@ Available per-channel metrics (each selectable via ``cfg._channel_metrics``):
   relative to their spatial neighbours.  ``side=+1``.
 * **psd** — per-channel mean log10 power over ``[psd_fmin, psd_fmax]``;
   two-tailed (``side=0``) so both dead/low-power and noisy/high-power channels
-  are caught.
+  are caught.  ``psd_low``, ``psd_med`` and ``psd_high`` do the same over
+  ``[psd_fmin, 10]``, ``[10, 20]`` and ``[20, psd_fmax]`` Hz.
+* **psd_slope** — log-log slope of a ``1/f^n`` fit to the PSD over
+  ``[psd_fmin, psd_fmax]``, ignoring the line-noise bins.  Two-tailed: a flat
+  spectrum (dead sensor, white or broadband noise) and an unusually steep one
+  (low-frequency drift) are both bad.
+* **psd_resid_kurtosis** — signed square root of the kurtosis of the residuals
+  from that fit; narrow-band peaks (e.g. sensor vibration) make it high.
+  ``side=+1``.  Both spectral-shape metrics match the ``spectral_slope`` and
+  ``spectral_resid_kurtosis`` ICA metrics in :mod:`custom.preprocessing.bad_ICs`.
 
 Each selected metric becomes one row of a (metrics × channels) matrix that is
 z-scored, projected onto principal components, and GESD-tested per eigenscore
@@ -30,7 +39,9 @@ marked ``status="bad"`` in ``channels.tsv`` and added to ``raw.info['bads']``.
 
 Detection runs on bandpass-filtered data (using the global ``l_freq``/``h_freq``)
 for the variance/kurtosis/spatial metrics; the PSD metric runs on the unfiltered
-data so it sees the full spectrum / noise floor.
+data so it sees the full spectrum / noise floor.  The spectral-shape metrics
+leave out the bins within ±1 Hz of the 60 Hz harmonics that are notched for the
+other metrics, so mains pickup does not count as a sensor peak.
 
 Usage
 -----
@@ -65,7 +76,7 @@ Optional (with conservative defaults):
     _bad_channel_lfreq, _bad_channel_hfreq : float
         Frequency band (Hz) for filter + PSD metric. Defaults: 3.0, 90.0.
     _bad_channel_psd_nfft : int
-        FFT length for the PSD metric. Default: 2000.
+        FFT length for the PSD metrics. Default: 2048.
     _bad_channel_lof_neighbors : int
         Number of neighbours for the LOF metric. Default: 20.
 
@@ -93,6 +104,7 @@ from ._io import (
     read_raw_bids_with_retry,
     write_raw_bids_custom_step,
 )
+from ._spectral import fit_power_law, log10_power
 from .pca_gesd import (
     MetricSpec,
     log_transform,
@@ -111,6 +123,11 @@ _DEFAULT_PSD_FMAX: float = 90.0
 _DEFAULT_PSD_NFFT: int = 2048
 _DEFAULT_LOF_NEIGHBORS: int = 20
 _MIN_FILTER_SEGMENT_SAMPLES: int = 10
+
+# Mains harmonics notched before the time-domain metrics, and left out of the
+# spectral-shape fit (± _LINE_HALF_WIDTH Hz) for the same reason.
+_LINE_FREQS = np.arange(60, 241, 60)
+_LINE_HALF_WIDTH: float = 1.0
 
 # Fraction of outliers cap passed to GESD (channels are rarely >50% bad).
 _GESD_P_OUT: float = 0.5
@@ -202,6 +219,8 @@ class BadChannelsAnalysis(BaseAnalysis):
         "psd_low",
         "psd_med",
         "psd_high",
+        "psd_slope",
+        "psd_resid_kurtosis",
     ]
 
     def is_enabled(self) -> bool:
@@ -393,7 +412,7 @@ class BadChannelsAnalysis(BaseAnalysis):
                 "No unannotated segment is long enough for bad-channel filtering"
             )
         filt = filt.notch_filter(
-            np.arange(60, 241, 60),
+            _LINE_FREQS,
             method="spectrum_fit",
             n_jobs=-1,
             skip_by_annotation=("edge", "bad"),
@@ -427,22 +446,18 @@ class BadChannelsAnalysis(BaseAnalysis):
             if lof is not None:
                 specs.append(MetricSpec("lof", log_transform(lof), 1))
 
-        if (
-            "psd" in selected
-            or "psd_low" in selected
-            or "psd_med" in selected
-            or "psd_high" in selected
-        ):
-            (psd, psd_low, psd_med, psd_high) = self._psd_logpower(raw, ch_idx)
-            # Two-tailed: dead (low) and noisy (high) channels both flagged.
-            if psd is not None and "psd" in selected:
-                specs.append(MetricSpec("psd", psd, 0))
-            if psd_low is not None and "psd_low" in selected:
-                specs.append(MetricSpec("psd_low", psd_low, 0))
-            if psd_med is not None and "psd_med" in selected:
-                specs.append(MetricSpec("psd_med", psd_med, 0))
-            if psd_high is not None and "psd_high" in selected:
-                specs.append(MetricSpec("psd_high", psd_high, 0))
+        psd_names = [n for n in self.AVAILABLE_CHANNEL_METRICS if n.startswith("psd")]
+        if selected.intersection(psd_names):
+            psd_metrics = self._psd_metrics(raw, ch_idx)
+            for name in psd_names:
+                if name not in selected or name not in psd_metrics:
+                    continue
+                if name == "psd_resid_kurtosis":
+                    specs.append(MetricSpec(name, signed_sqrt(psd_metrics[name]), 1))
+                else:
+                    # Two-tailed: low and high power (or flat and steep
+                    # spectra) are both bad.
+                    specs.append(MetricSpec(name, psd_metrics[name], 0))
 
         del filt
         for s in specs:
@@ -513,10 +528,17 @@ class BadChannelsAnalysis(BaseAnalysis):
         lof = -scores
         return lof - lof.min() + 1.0
 
-    def _psd_logpower(
+    def _psd_metrics(
         self, raw: mne.io.BaseRaw, ch_idx: np.ndarray
-    ) -> "np.ndarray | None":
-        """Per-channel mean log10 PSD power over the configured band."""
+    ) -> Dict[str, np.ndarray]:
+        """Per-channel PSD metrics over the configured band.
+
+        Returns mean log10 power over the whole band (``psd``) and three
+        sub-bands (``psd_low``, ``psd_med``, ``psd_high``), plus the slope and
+        residual kurtosis of a ``1/f^n`` fit (``psd_slope``,
+        ``psd_resid_kurtosis``) with the line-noise bins left out.  Returns an
+        empty dict if the PSD cannot be computed.
+        """
         fmin = float(getattr(self.cfg, "_bad_channel_lfreq", _DEFAULT_PSD_FMIN))
         fmax = float(getattr(self.cfg, "_bad_channel_hfreq", _DEFAULT_PSD_FMAX))
         n_fft = int(getattr(self.cfg, "_bad_channel_psd_nfft", _DEFAULT_PSD_NFFT))
@@ -530,25 +552,34 @@ class BadChannelsAnalysis(BaseAnalysis):
                 reject_by_annotation=True,
                 verbose=False,
             )
-            pow_all = psd.get_data(picks="all", exclude=[""])  # (n_ch, n_freqs)
-            pow_low = psd.get_data(
-                picks="all", exclude=[""], fmin=0, fmax=10
-            )  # (n_ch, low freqs)
-            pow_med = psd.get_data(
-                picks="all", exclude=[""], fmin=10, fmax=20
-            )  # (n_ch, med freqs)
-            pow_high = psd.get_data(
-                picks="all", exclude=[""], fmin=20, fmax=fmax
-            )  # (n_ch, high freqs)
         except Exception as exc:
             self.log(f"  [psd] skipped ({exc})")
-            return None
-        return (
-            np.log10(pow_all + 1e-32).mean(axis=1),
-            np.log10(pow_low + 1e-32).mean(axis=1),
-            np.log10(pow_med + 1e-32).mean(axis=1),
-            np.log10(pow_high + 1e-32).mean(axis=1),
-        )
+            return {}
+        power = psd.get_data(picks="all", exclude=[""])  # (n_ch, n_freqs)
+        freqs = psd.freqs
+        log_power = log10_power(power)
+
+        metrics: Dict[str, np.ndarray] = {}
+        for name, lo, hi in (
+            ("psd", fmin, fmax),
+            ("psd_low", 0.0, 10.0),
+            ("psd_med", 10.0, 20.0),
+            ("psd_high", 20.0, fmax),
+        ):
+            band = (freqs >= lo) & (freqs <= hi)
+            if band.any():
+                metrics[name] = log_power[:, band].mean(axis=1)
+
+        fit = freqs > 0
+        for line in _LINE_FREQS:
+            fit &= np.abs(freqs - line) > _LINE_HALF_WIDTH
+        if fit.sum() >= 3:
+            slope, resid_kurtosis = fit_power_law(freqs[fit], power[:, fit])
+            metrics["psd_slope"] = slope
+            metrics["psd_resid_kurtosis"] = resid_kurtosis
+        else:
+            self.log("  [psd] too few frequency bins for the spectral-shape fit")
+        return metrics
 
     # ------------------------------------------------------------------
     # Figures

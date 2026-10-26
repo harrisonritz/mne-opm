@@ -113,7 +113,8 @@ _load_metadata = False
 # ================================================================
 
 # Which metrics to use (None = all available, [] = disable detection).
-# Available: "log_std", "logit_outlier_frac", "kurtosis", "lof", "psd".
+# Available: "log_std", "logit_outlier_frac", "kurtosis", "lof", "psd",
+#            "psd_low", "psd_med", "psd_high", "psd_slope", "psd_resid_kurtosis".
 _channel_metrics = [
     "log_std",
     "logit_outlier_frac",
@@ -123,8 +124,8 @@ _channel_metrics = [
 ]
 _bad_channel_significance_level = 0.05  # family-wise GESD alpha (+ per-window alpha)
 _bad_channel_window_sec = 2.0  # window length (s) for logit_outlier_frac
-_bad_channel_psd_fmin = 1.0  # PSD metric frequency band (Hz)
-_bad_channel_psd_fmax = 80.0
+_bad_channel_lfreq = 1.0  # filter + PSD metric frequency band (Hz)
+_bad_channel_hfreq = 80.0
 _bad_channel_psd_nfft = 2000  # PSD metric FFT length
 _bad_channel_lof_neighbors = 16  # LOF neighbours
 

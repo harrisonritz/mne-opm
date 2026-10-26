@@ -46,9 +46,19 @@ from osl_ephys.preprocessing.osl_wrappers import gesd as osl_gesd
 # ---------------------------------------------------------------------------
 
 
-def log_transform(x: np.ndarray, eps: float = 1e-10) -> np.ndarray:
-    """Natural log of a positive, right-skewed metric (``log(x + eps)``)."""
-    return np.log(np.asarray(x, dtype=float) + eps)
+def log_transform(x: np.ndarray, eps: Optional[float] = None) -> np.ndarray:
+    """Natural log of a positive, right-skewed metric (``log(x + eps)``).
+
+    ``eps`` keeps zeros finite.  By default it is 1e-6 of the median positive
+    value, so it stays negligible whatever the units of ``x``: a fixed offset
+    such as 1e-10 would swamp a channel std in tesla (~1e-12) and turn the log
+    into a linear rescaling.
+    """
+    x = np.asarray(x, dtype=float)
+    if eps is None:
+        positive = x[x > 0]
+        eps = 1e-6 * float(np.median(positive)) if positive.size else 1e-10
+    return np.log(x + eps)
 
 
 def signed_sqrt(x: np.ndarray, eps: float = 1e-10) -> np.ndarray:

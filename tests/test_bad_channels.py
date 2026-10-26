@@ -83,6 +83,75 @@ class TestDetectBadChannels:
 
 
 # ---------------------------------------------------------------------------
+# log_std and the spectral-shape metrics
+# ---------------------------------------------------------------------------
+
+
+def _pink_raw(n_ch=40, sfreq=300.0, seconds=60, seed=0, scales=None):
+    """Raw of 1/f noise at tesla scale, one row per channel."""
+    rng = np.random.default_rng(seed)
+    n = int(sfreq * seconds)
+    spec = np.fft.rfft(rng.standard_normal((n_ch, n)), axis=1)
+    freqs = np.fft.rfftfreq(n, 1 / sfreq)
+    spec[:, 1:] /= np.sqrt(freqs[1:])
+    spec[:, 0] = 0.0
+    data = np.fft.irfft(spec, n=n, axis=1)
+    data /= data.std(axis=1, keepdims=True)
+    if scales is not None:
+        data *= np.asarray(scales)[:, None]
+    info = mne.create_info([f"MEG{i:03d}" for i in range(n_ch)], sfreq, "mag")
+    return mne.io.RawArray(data * 1e-12, info, verbose="ERROR")
+
+
+class TestLogStd:
+    """log_std must be a log of the std whatever the units of the data."""
+
+    def test_log_std_spans_log_of_channel_scales(self, bad_ch_cfg):
+        scales = np.linspace(1.0, 3.0, 40)
+        raw = _pink_raw(scales=scales)
+        bad_ch_cfg._channel_metrics = ["log_std"]
+        _, specs = BadChannelsAnalysis(bad_ch_cfg)._compute_channel_metrics(raw)
+        # A fixed 1e-10 offset squashed this to ~0.02 for data near 1e-12 T.
+        assert np.ptp(specs[0].values) == pytest.approx(np.log(3.0), rel=0.1)
+
+    def test_dead_channel_flagged_by_log_std(self, bad_ch_cfg):
+        raw = _pink_raw(scales=np.linspace(1.0, 3.0, 40))
+        raw._data[5] = 0.0
+        bad_ch_cfg._channel_metrics = ["log_std"]
+        assert _detect(bad_ch_cfg, raw) == ["MEG005"]
+
+
+class TestSpectralShapeMetrics:
+    """psd_slope and psd_resid_kurtosis catch channels with an odd spectrum."""
+
+    def test_white_noise_channel_flagged_by_slope(self, bad_ch_cfg):
+        raw = _pink_raw()
+        rng = np.random.default_rng(1)
+        raw._data[3] = rng.standard_normal(raw.n_times) * 1e-12  # same std, flat
+        bad_ch_cfg._channel_metrics = ["psd_slope"]
+        assert _detect(bad_ch_cfg, raw) == ["MEG003"]
+
+    def test_narrowband_peak_flagged_by_resid_kurtosis(self, bad_ch_cfg):
+        raw = _pink_raw()
+        t = raw.times
+        raw._data[7] += 0.5e-12 * np.sin(2 * np.pi * 23.0 * t)
+        bad_ch_cfg._channel_metrics = ["psd_resid_kurtosis"]
+        assert _detect(bad_ch_cfg, raw) == ["MEG007"]
+
+    def test_line_noise_is_not_a_peak(self, bad_ch_cfg):
+        """Mains pickup of varying size is left out of the spectral-shape fit."""
+        raw = _pink_raw()
+        for line in (60.0, 120.0):
+            raw._data[4] += 2e-12 * np.sin(2 * np.pi * line * raw.times)
+        bad_ch_cfg._channel_metrics = ["psd_slope", "psd_resid_kurtosis"]
+        assert _detect(bad_ch_cfg, raw) == []
+
+    def test_clean_pink_noise_has_no_spectral_outliers(self, bad_ch_cfg):
+        bad_ch_cfg._channel_metrics = ["psd_slope", "psd_resid_kurtosis"]
+        assert _detect(bad_ch_cfg, _pink_raw()) == []
+
+
+# ---------------------------------------------------------------------------
 # Windowed outlier fraction — intermittent bad channels
 # ---------------------------------------------------------------------------
 
