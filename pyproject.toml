@@ -23,6 +23,7 @@ dependencies = [
     "dipy>=1.12.1",
     "dpca>=1.0.5",
     "dupy>=1.2105.11",
+    "formulaic>=1.1",
     "gedai>=0.1.0",
     "imageio[ffmpeg]>=2.37.2",
     "ipykernel>=7.1.0",
