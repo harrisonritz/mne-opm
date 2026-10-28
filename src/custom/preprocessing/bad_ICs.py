@@ -147,7 +147,12 @@ class BadICAnalysis(BaseAnalysis):
         return auto_enabled and ica_enabled
 
     def load_data(self) -> Dict[str, Any]:
-        """Load raw data and ICA solution.
+        """Load the filtered (pre-ICA) raw data and the ICA solution.
+
+        Scores are computed from the data before any ICA exclusion. In ICA-cleaned
+        data, components already excluded (e.g. by the pipeline's ECG detection)
+        have time courses that are zero to numerical precision, so their temporal
+        scores would describe rounding noise rather than the component.
 
         Returns
         -------
@@ -158,7 +163,7 @@ class BadICAnalysis(BaseAnalysis):
         """
         self.log("Loading data...")
 
-        # Construct BIDSPath for cleaned raw data
+        # Construct BIDSPath for filtered raw data
         subject = (
             self.cfg.subjects[0]
             if isinstance(self.cfg.subjects, list)
@@ -170,22 +175,24 @@ class BadICAnalysis(BaseAnalysis):
             else self.cfg.sessions
         )
 
-        # Find cleaned raw files using mne_bids
+        # Find filtered raw files using mne_bids
         matching_files = find_matching_paths(
             root=self.cfg.deriv_root,
             subjects=subject,
             sessions=session,
             tasks=self.cfg.task,
-            processings="clean",
+            processings="filt",
             suffixes="raw",
             extensions=".fif",
             datatypes="meg",
             check=False,  # Allow non-standard suffix 'raw' for derivatives
         )
+        # Long recordings are split; reading the first split loads the rest.
+        matching_files = [f for f in matching_files if f.split in (None, "01")]
 
         if len(matching_files) == 0:
             raise FileNotFoundError(
-                f"No cleaned raw files found for sub-{subject}/ses-{session}/task-{self.cfg.task}"
+                f"No filtered raw files found for sub-{subject}/ses-{session}/task-{self.cfg.task}"
             )
         elif len(matching_files) > 1:
             runs_found = [f.run for f in matching_files]
@@ -200,7 +207,7 @@ class BadICAnalysis(BaseAnalysis):
 
         bp_raw = matching_files[0]
         raw = mne.io.read_raw_fif(bp_raw.fpath, preload=True)
-        self.log("Loaded cleaned raw data")
+        self.log("Loaded filtered raw data")
 
         bp_ica = get_ica_bids_path(self.cfg)
         ica = mne.preprocessing.read_ica(bp_ica.fpath)
@@ -372,12 +379,12 @@ class BadICAnalysis(BaseAnalysis):
         (``ica.plot_overlay(inst=epochs.average())``), the magnetometer
         ``icafit`` epochs are loaded and averaged.  When that file is not
         available (e.g. in unit tests), fall back to averaging fixed-length
-        epochs cut from the cleaned raw.
+        epochs cut from the filtered raw.
 
         Parameters
         ----------
         raw : mne.io.BaseRaw
-            Cleaned raw data (fallback source for the Evoked).
+            Filtered raw data (fallback source for the Evoked).
 
         Returns
         -------
@@ -420,7 +427,7 @@ class BadICAnalysis(BaseAnalysis):
                 f"({type(exc).__name__}: {exc}); falling back to raw."
             )
 
-        # Fallback: fixed-length epochs from the cleaned raw.
+        # Fallback: fixed-length epochs from the filtered raw.
         try:
             raw_mag = raw.copy().pick("mag")
             duration = float(min(2.0, raw_mag.times[-1]))
@@ -595,7 +602,7 @@ class BadICAnalysis(BaseAnalysis):
         ica : mne.preprocessing.ICA
             ICA solution.
         raw : mne.io.BaseRaw
-            Cleaned raw data (sources, EOG/ECG/reference, topographies).
+            Filtered pre-ICA raw data (sources, EOG/ECG/reference, topographies).
 
         Returns
         -------
